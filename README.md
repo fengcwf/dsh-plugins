@@ -6,6 +6,7 @@ fengcwf 的 dsh 插件 monorepo。每个子目录一个可安装的 dsh 组合�
 |---|---|---|
 | [dsh-rtk-kit](dsh-rtk-kit/) | 0.2.0 | RTK 集成：bash 命令自动改写走 rtk 压缩（resolve 缝、fail-open）+ 会话 awareness + rtk_doctor 诊断 |
 | [dsh-github-ops](dsh-github-ops/) | 0.2.0 | GitHub 集成：GitHub 命令强制 token 模式 + web_fetch 匿名 API 门禁 + 11 个仓库管理工具（gh 后端） |
+| [dsh-login-gate](dsh-login-gate/) | 0.2.0 | 登录门禁：表单登录（scrypt + HMAC 会话）+ 认证反代 + 原生 DSH 会话 + WS tunnel 修复 |
 
 ## 版本纪律（强制，缺一不可）
 
@@ -23,6 +24,7 @@ fengcwf 的 dsh 插件 monorepo。每个子目录一个可安装的 dsh 组合�
 # 安装/更新 = 钉版本的 git 快照（升级 = 换新 tag 重执行同一条命令）
 dsh plugin --profile web add 'github:fengcwf/dsh-plugins#dsh-rtk-kit-v0.2.0&path:dsh-rtk-kit'
 dsh plugin --profile web add 'github:fengcwf/dsh-plugins#dsh-github-ops-v0.2.0&path:dsh-github-ops'
+dsh plugin --profile web add 'github:fengcwf/dsh-plugins#dsh-login-gate-v0.2.0&path:dsh-login-gate'
 /root/.dsh/start-dsh.sh        # 重启生效（会闪断会话，选空档执行）
 
 # 卸载
