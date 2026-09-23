@@ -1,0 +1,23 @@
+# dsh-rtk-kit 配置注入
+# 挂载本插件（⚠️ 此 insert 行是插件 apply 的入口——删除则插件不加载，自动改写静默消失）
+- insert:
+    - id: rtk-kit
+      name: 'dsh-rtk-kit'
+      config:
+        enabled: true
+        # rtk 可执行文件（不打包二进制；缺失时插件自动退化为恒等，不影响任何命令）
+        rtkBin: rtk
+        # `rtk rewrite` 超时（毫秒）。超时/异常一律原样放行（fail-open）
+        rewriteTimeoutMs: 150
+        # 保守模式：管道/重定向/命令替换/分号链不改写（它们的输出会被下游消费，压缩会改变语义）；
+        # `&&`/`||` 链不受影响（rtk rewrite 链式感知）。想激进省 token 可改 false
+        conservative: true
+        # 永不改写的命令前缀黑名单
+        exclude: []
+        # 会话启动注入的 awareness 档位：default | high | full | off
+        #   default —— 只教"输出已压缩、如何读、如何恢复"（推荐，自动改写场景足够）
+        #   high    —— + rtk gain / rtk proxy / RTK_DISABLED 逃生舱
+        #   full    —— + 手动 rtk 前缀（仅当自动改写不可靠时）
+        awareness: high
+        # 注册 rtk_doctor 诊断工具（模型可见，schema ≈ 百级 token；不需要可关）
+        registerDoctorTool: true

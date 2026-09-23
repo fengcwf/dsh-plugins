@@ -1,0 +1,25 @@
+# dsh-github-ops 配置注入
+# 挂载本插件（⚠️ 此 insert 行是插件 apply 的入口——删除则插件不加载，token 强制层静默消失）
+- insert:
+    - id: github-ops
+      name: 'dsh-github-ops'
+      config:
+        enabled: true
+        # gh CLI（token 由 ~/.config/gh/hosts.yml 托管；argv 永不含 token 明文）
+        ghBin: gh
+        # 命令强制层：curl/wget 打 GitHub API 自动注入 `Bearer $(gh auth token)` 头；
+        # git clone https://github.com/... 自动改走 `gh repo clone`（fail-open，不确定不改）
+        enforceCommands: true
+        # web_fetch 抓 api.github.com / *.githubusercontent.com 的门禁：
+        #   deny —— 直接拒绝并指路认证通道（强制 token 模式，默认）
+        #   ask  —— 交用户审批一次
+        #   off  —— 不管
+        webFetchPolicy: deny
+        # 注册 10 个 github_repo_* / github_auth_status 仓库管理工具（schema ≈ 2k token）
+        registerRepoTools: true
+        # ⚠️ github_repo_delete 的部署级总开关（默认关；confirm 参数是第二道门）
+        allowDelete: false
+        # 会话启动注入 GitHub 访问约定（教学层）
+        awareness: true
+        # 单条 gh 命令超时（毫秒）
+        ghTimeoutMs: 60000

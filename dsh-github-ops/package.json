@@ -1,0 +1,36 @@
+{
+  "name": "dsh-github-ops",
+  "version": "0.2.0",
+  "description": "DeepSeek Harness 的 GitHub 集成：GitHub 相关命令强制走 token 模式（curl 自动注入 $(gh auth token)、git clone 走 gh）+ web_fetch 匿名抓 API 门禁 + 10 个仓库管理工具（gh 后端）",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./enforce": "./lib/enforce.js",
+    "./repo-tools": "./lib/repo-tools.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["lib", "cordis.patch.yml", "dsh.plugin.json", "README.zh.md"],
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check lib/index.js && node --check lib/enforce.js && node --check lib/repo-tools.js && node --test"
+  },
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-llm": ">=0.1.0-rc.1 <0.2.0-0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-tools": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-tools",
+    "@deepseek-ai/dsh-llm": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": ["deepseek-harness", "dsh-plugin", "github", "gh-cli", "repository-management"],
+  "license": "MIT"
+}
