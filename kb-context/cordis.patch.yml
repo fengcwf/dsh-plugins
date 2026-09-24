@@ -1,0 +1,33 @@
+# kb-context 配置注入
+# 挂载本插件（⚠️ 此 insert 行是插件 apply 的入口——删除则插件不加载）
+# ⚠️ config 是整行替换语义（非深度合并）：profile 覆盖者必须在此基础上重述全部键。
+- insert:
+    - id: kb-context
+      name: 'kb-context'
+      config:
+        # 触发条件：词面（words）∪ 索引实体（entityPaths）；热改即时生效
+        triggers:
+          words: []
+          entityPaths: []
+        # 热图（vault 热点摘要）：默认关；开启后摘要长度上限（字符）
+        hotMap:
+          enabled: false
+          maxChars: 600
+        # 注入预算：单次最多片段数 / token 上限
+        budget:
+          maxSnippets: 3
+          maxTokens: 2000
+        # 检索总超时（毫秒）：超时 fail-open 降级，不阻塞会话
+        timeoutMs: 1500
+        # 作用域（相对 vault 根）：indexAll = FTS5 索引目录；grepOnDemand = 按需 grep 目录
+        scope:
+          indexAll:
+            - wiki
+            - raw
+          grepOnDemand:
+            - '01-客户资料'
+            - '02-致远OA'
+            - '03-帆软报表'
+            - '04-用友'
+            - '05-医院成本'
+            - '08-unraid'
