@@ -323,14 +323,33 @@ test('AbortSignal.any 超时：timeoutMs:0 立即超时（search 零调用）；
   assert.equal(h2.calls.search.length, 0)
 })
 
-test('AbortSignal.any 飞行中触发超时：异步检索被超时中止 → fail-open 不注入', async () => {
-  const h = harness({
+test('超时硬中断真验：search 永不返回也在超时预算内 fail-open（never-resolving stub，不寄生 T3 自觉限时）', async () => {
+  // 场景①（真验，spec §4 步骤 3「检索超时会话不阻塞」）：search 永不返回（never-resolving）——
+  // 挂死检索不得阻塞会话；旧实现（combined 只做事后 .aborted 检查、无 race）在此挂死，本用例即其反例
+  const timeoutMs = 40
+  const h = harness({ rawConfig: { timeoutMs }, search: () => new Promise(() => {}) })
+  const started = Date.now()
+  let watchdog
+  const a = await Promise.race([
+    run(h),
+    new Promise((_, rej) => { watchdog = setTimeout(() => rej(new Error('handler 挂死：search 不返回时未在超时预算内 fail-open')), 2_000) }),
+  ]).finally(() => clearTimeout(watchdog))
+  const elapsed = Date.now() - started
+  assert.equal(a.result.kind, a.decision.kind, '返回原 decision 形状')
+  assert.deepEqual(a.result.messages, a.decision.messages, '消息零新增（原 decision messages 原样）')
+  assert.deepEqual(a.result.kbContext, { injected: false, degraded: 'timeout' }, 'kbContext 留痕进返回不进会话')
+  assert.equal(h.calls.createUser.length, 0, 'fail-open 不构造注入消息')
+  assert.ok(elapsed < 1_000, `用例在超时预算内完成不死挂（实测 ${elapsed}ms < 1000ms）`)
+  assert.ok(h.calls.search[0].opts.signal instanceof AbortSignal, 'search opts 前瞻携带 combined signal（T3/T6 消费缝）')
+
+  // 场景②（原「飞行中触发超时中止」用例并入、名实修正）：search 超时后才 resolve（晚到命中）→ 同样不注入
+  const h2 = harness({
     rawConfig: { timeoutMs: 5 },
     search: () => new Promise((resolve) => setTimeout(() => resolve({ hits: [HIT] }), 60)),
   })
-  const { result, decision } = await run(h)
-  assert.deepEqual(result.messages, decision.messages)
-  assert.deepEqual(result.kbContext, { injected: false, degraded: 'timeout' })
+  const b = await run(h2)
+  assert.deepEqual(b.result.messages, b.decision.messages)
+  assert.deepEqual(b.result.kbContext, { injected: false, degraded: 'timeout' })
 })
 
 // ── S5：接线 / 热改 / 空态 ───────────────────────────────────────────────────
@@ -338,11 +357,15 @@ test('AbortSignal.any 飞行中触发超时：异步检索被超时中止 → fa
 test('热改：configSource 换值下次调用生效（budget/timeoutMs 逐次透传 search opts，T1 验收语义）', async () => {
   const h = harness({ rawConfig: { triggers: { words: ['wiki'] }, budget: { maxSnippets: 1, maxTokens: 500 }, timeoutMs: 100 } })
   await run(h, { turn: 1, text: 'wiki 成本核算' })
-  assert.deepEqual(h.calls.search[0].opts, { maxSnippets: 1, maxTokens: 500, timeoutMs: 100 })
+  const { signal: sig0, ...rest0 } = h.calls.search[0].opts
+  assert.deepEqual(rest0, { maxSnippets: 1, maxTokens: 500, timeoutMs: 100 })
+  assert.ok(sig0 instanceof AbortSignal, 'search opts 前瞻携带 combined signal（T3/T6 消费缝）')
 
   h.cfg.raw = { triggers: { words: ['wiki'] }, budget: { maxSnippets: 2 }, timeoutMs: 200 } // 热改
   await run(h, { turn: 2, text: 'wiki 病例首页' })
-  assert.deepEqual(h.calls.search[1].opts, { maxSnippets: 2, maxTokens: 2000, timeoutMs: 200 }, '改配置下次调用生效（禁启动冻结）')
+  const { signal: sig1, ...rest1 } = h.calls.search[1].opts
+  assert.deepEqual(rest1, { maxSnippets: 2, maxTokens: 2000, timeoutMs: 200 }, '改配置下次调用生效（禁启动冻结）')
+  assert.ok(sig1 instanceof AbortSignal, 'search opts 前瞻携带 combined signal（T3/T6 消费缝）')
 })
 
 test('config safeParse 失败 salvage 续用 + degraded:"config" 留痕（INV-15；坏键回退默认）', async () => {
@@ -350,7 +373,9 @@ test('config safeParse 失败 salvage 续用 + degraded:"config" 留痕（INV-15
   const { result, decision } = await run(h)
   assert.equal(result.messages.length, decision.messages.length + 1, 'salvage 后照常注入（保热改连续性）')
   assert.deepEqual(result.kbContext, { injected: true, degraded: 'config' })
-  assert.deepEqual(h.calls.search[0].opts, { maxSnippets: 2, maxTokens: 2000, timeoutMs: 1500 }, '坏 timeoutMs 回退默认 1500')
+  const { signal: sig2, ...rest2 } = h.calls.search[0].opts
+  assert.deepEqual(rest2, { maxSnippets: 2, maxTokens: 2000, timeoutMs: 1500 }, '坏 timeoutMs 回退默认 1500')
+  assert.ok(sig2 instanceof AbortSignal, 'search opts 前瞻携带 combined signal（T3/T6 消费缝）')
 })
 
 test('零命中不注入：search 空命中 identity（空态诊断留缝给 T7）', async () => {

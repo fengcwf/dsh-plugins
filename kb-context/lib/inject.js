@@ -1,6 +1,7 @@
 // inject — kb-context pre-step 注入体 + 三件套去重 + fail-open（T5）
 // 职责边界：注入体构造（<kb-context> 转义/出处/禁 model）、可见面 SHA-1 去重（纯函数 + 可注入观察器）、
-// 同 turn 一次 + 同 query 10s 去重、AbortSignal.any 超时 fail-open、trigger→search→注入接线体。
+// 同 turn 一次 + 同 query 10s 去重、超时 fail-open（AbortSignal.any 竞速 + handler 级 abort-rejecting
+//   Promise.race 硬中断）、trigger→search→注入接线体。
 // 触发判定归 lib/trigger.js（T4，经 matchTrigger 缝消费）；检索归 lib/search.js（T3，经 search 缝消费）；
 // 索引库归 lib/index-db.js（T2）——本文件不碰索引。
 // ⚠️ 官方姿势（dsh-time-context 范式，delta-spec §2）：先 `const decision = await next()`；
@@ -143,6 +144,22 @@ function diag(injected, degraded, reason, detail) {
   return out
 }
 
+/** 竞速中止可识别标记（Symbol）：combined 中止时 race reject 的错误携带——与 search 自身异常区分（后者落 degraded:'error'） */
+const RACE_ABORT = Symbol('kb-context.race-abort')
+
+/**
+ * abort-rejecting 竞速伴 promise：combined 一旦中止即以携带 RACE_ABORT 标记的错误 reject。
+ * handler 级超时硬中断（零 T3 依赖）——search 不自我限时/挂死也保证 timeoutMs 内 fail-open。
+ * race 落定后 Promise.race 已挂处理器，后续 reject 不构成 unhandledRejection。
+ */
+function rejectOnAbort(signal) {
+  return new Promise((_, reject) => {
+    const fail = () => reject(Object.assign(new Error('kb-context: search aborted'), { [RACE_ABORT]: true }))
+    if (signal.aborted) fail()
+    else signal.addEventListener('abort', fail, { once: true })
+  })
+}
+
 /**
  * agent/pre-step 注入 handler 工厂（官方 waterfall 姿势，注册 `{prepend:true}` 由 apply 负责）。
  *
@@ -164,9 +181,12 @@ function diag(injected, degraded, reason, detail) {
  * ① 可见面 SHA-1：见 lastRecallDigest（纯函数）——观察面经 observeSurface 缝注入（默认取
  *    decision.messages ?? payload.messages）。
  *
- * fail-open：`AbortSignal.any([signal, AbortSignal.timeout(config.timeoutMs)])` 包裹检索；
- * 任何异常/超时 → 原样 messages + degraded 留痕，会话不阻塞（A5）。timeoutMs:0（及负/非数 salvage 后）
- * = 立即超时，不检索。
+ * fail-open：`AbortSignal.any([signal, AbortSignal.timeout(config.timeoutMs)])` 构造 combined——
+ * 既前瞻作 `opts.signal` 传入 search（T3/T6 消费缝），又对 search(...) 做 **abort-rejecting
+ * `Promise.race` 硬中断**（不寄生 T3 自觉限时：search 挂死/不返回也在 timeoutMs 内 fail-open，
+ * spec §4 步骤 3「检索超时会话不阻塞」在 handler 边界成立）。combined 中止 → race 以可识别错误
+ * reject → 按 fail-open 口径原样 messages + degraded:'timeout' 留痕；其他异常照旧 degraded:'error'。
+ * timeoutMs:0（及负/非数 salvage 后）= 立即超时，不检索。
  *
  * 热改（T1 验收语义）：每次调用对 configSource 当前值 Config.safeParse——禁启动冻结；safeParse 失败
  * salvage raw 数值键（保热改连续性），坏键回退默认并留痕 degraded:'config'。
@@ -174,8 +194,8 @@ function diag(injected, degraded, reason, detail) {
  * @param {object} deps
  * @param {(message: object, configSource: object|Function) => {matched: boolean, query: string, degraded?: 'config'}} deps.matchTrigger
  *   T4 真件（apply 接 lib/trigger.js）。
- * @param {(query: string, opts: {maxSnippets: number, maxTokens: number, timeoutMs: number}) => Promise<{hits: Array, degraded?: string}>|object} deps.search
- *   T3 检索缝（apply 接真实索引读路径）。
+ * @param {(query: string, opts: {maxSnippets: number, maxTokens: number, timeoutMs: number, signal?: AbortSignal}) => Promise<{hits: Array, degraded?: string}>|object} deps.search
+ *   T3 检索缝（apply 接真实索引读路径）；opts.signal = combined（前瞻给 T3/T6 消费，超时硬中断不依赖它）。
  * @param {(input: object) => object} deps.createUserMessage 宿主缝（@deepseek-ai/dsh-llm）。
  * @param {object|Function} [deps.configSource] 当前 raw 配置（getter 形式优先，T4 建议）。
  * @param {(payload: object, decision: object) => Array} [deps.observeSurface] 可见面观察器（默认 decision.messages ?? payload.messages）。
@@ -256,12 +276,27 @@ export function createPreStepHandler({
       if (!(timeoutMs > 0)) return { ...decision, kbContext: diag(false, 'timeout') }
       const combined = AbortSignal.any([signal ?? new AbortController().signal, AbortSignal.timeout(timeoutMs)])
 
-      const result = await search(t.query, {
-        maxSnippets: budget.maxSnippets,
-        maxTokens: budget.maxTokens,
-        timeoutMs,
-      })
-      // 超时（飞行中被中止 / search 内置 deadline 降级）→ fail-open：不注入，留痕进返回
+      // 竞速接线（handler 级硬中断，零 T3 依赖）：combined 前瞻作 search opts.signal（T3/T6 消费缝），
+      // 同时对 search(...) 做 abort-rejecting Promise.race——search 挂死/不返回也在 timeoutMs 内 fail-open
+      let result
+      try {
+        result = await Promise.race([
+          search(t.query, {
+            maxSnippets: budget.maxSnippets,
+            maxTokens: budget.maxTokens,
+            timeoutMs,
+            signal: combined,
+          }),
+          rejectOnAbort(combined),
+        ])
+      } catch (e) {
+        // combined 中止（超时/取消）→ fail-open 口径留痕 timeout；其余异常交外层信封（degraded:'error'）
+        if (e?.[RACE_ABORT] === true || combined.aborted) {
+          return { ...decision, kbContext: diag(false, 'timeout') }
+        }
+        throw e
+      }
+      // 超时（晚到前已中止 / search 内置 deadline 降级）→ fail-open：不注入，留痕进返回
       if (combined.aborted || result?.degraded === 'timeout') {
         return { ...decision, kbContext: diag(false, 'timeout') }
       }
