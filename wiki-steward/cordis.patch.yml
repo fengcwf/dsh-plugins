@@ -5,6 +5,8 @@
     - id: wiki-steward
       name: 'wiki-steward'
       config:
+        # vault 根路径（T9 补键，kb-context R2 同名同默认）：捕获双轨落点根
+        vaultRoot: '/mnt/unraid_data/Obsidian'
         # 捕获：turn-stopping 收口进缓冲，每 bufferRounds 轮强制 flush 双轨落盘（T9）
         capture:
           bufferRounds: 3

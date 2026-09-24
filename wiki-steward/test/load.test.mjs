@@ -26,9 +26,12 @@ test('T8 裁定钉住：inject = []（壳期零宿主服务依赖，任何 dsh �
   assert.deepEqual(inject, [])
 })
 
-test('Config 全键默认值与契约精确一致（delta-spec §2 整行）', async () => {
+test('Config 全键默认值与契约精确一致（delta-spec §2 整行 + T9 vaultRoot 补键）', async () => {
   const { Config } = await import('../lib/index.js')
   const expected = {
+    // T9 裁定补键（task-9 报告申报）：delta-spec §2 未列 vaultRoot，但捕获必须落盘——
+    // 与 kb-context R2 同名同默认（单一来源 DEFAULT_VAULT_ROOT），测试临时 root 注入通道。
+    vaultRoot: '/mnt/unraid_data/Obsidian',
     capture: { bufferRounds: 3, enabled: true },
     write: { readOnly: true },
     queue: { maxRetries: 3, ttlDays: 7 },
@@ -55,6 +58,7 @@ test('Config 拒绝错误类型（schema 真校验，非透传）', async () => 
   assert.throws(() => Config.parse({ write: { readOnly: 'true' } }))
   assert.throws(() => Config.parse({ queue: { maxRetries: 'three' } }))
   assert.throws(() => Config.parse({ secrets: { enabled: 1 } }))
+  assert.throws(() => Config.parse({ vaultRoot: 1 }))
 })
 
 test('Config 默认值无可变共享引用（多次 parse 互不污染）', async () => {
@@ -70,7 +74,7 @@ test('Config 默认值无可变共享引用（多次 parse 互不污染）', asy
 test('apply：非法配置留痕不静默（INV-15），合法配置零告警', async () => {
   const { apply } = await import('../lib/index.js')
   const warnings = []
-  const ctx = { logger: { warn: (line) => warnings.push(line) } }
+  const ctx = { logger: { warn: (line) => warnings.push(line) }, on: () => {} } // T9：apply 注册三事件缝
   apply(ctx, { capture: { bufferRounds: '3' } })
   assert.equal(warnings.length, 1)
   assert.match(warnings[0], /bufferRounds/)
@@ -87,7 +91,7 @@ test('apply：无 logger 时回落 console.warn（行为不丢）', async () => 
   const orig = console.warn
   console.warn = (line) => recorded.push(line)
   try {
-    apply({}, { secrets: { enabled: 'on' } })
+    apply({ on: () => {} }, { secrets: { enabled: 'on' } })
   } finally {
     console.warn = orig
   }
