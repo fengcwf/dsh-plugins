@@ -78,7 +78,7 @@ test('apply：非法配置留痕不静默（INV-15），合法配置零告警', 
   const { apply } = await import('../lib/index.js')
   const warnings = []
   // 测试替身补宿主 ctx.on 缝（T5 apply 契约新增 pre-step 注册；告警断言零改动）
-  const ctx = { on: () => {}, logger: { warn: (line) => warnings.push(line) } }
+  const ctx = { on: () => {}, tools: { register: () => {} }, logger: { warn: (line) => warnings.push(line) } }
   apply(ctx, { timeoutMs: 'oops' })
   assert.equal(warnings.length, 1)
   assert.match(warnings[0], /timeoutMs/)
@@ -95,7 +95,7 @@ test('apply：无 logger 时回落 console.warn（行为不丢）', async () => 
   const orig = console.warn
   console.warn = (line) => recorded.push(line)
   try {
-    apply({ on: () => {} }, { budget: { maxSnippets: 'many' } })
+    apply({ on: () => {}, tools: { register: () => {} } }, { budget: { maxSnippets: 'many' } })
   } finally {
     console.warn = orig
   }

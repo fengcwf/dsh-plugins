@@ -391,7 +391,7 @@ test('零命中不注入：search 空命中 identity（空态诊断留缝给 T7�
 test('apply 接线：ctx.on("agent/pre-step", handler, {prepend:true}) 注册；ctx.on 缺失 fail-open 留痕', async () => {
   const { apply } = await import('../lib/index.js')
   const regs = []
-  apply({ on: (event, fn, opts) => regs.push({ event, fn, opts }), logger: { warn: () => {} } }, {})
+  apply({ on: (event, fn, opts) => regs.push({ event, fn, opts }), tools: { register: () => {} }, logger: { warn: () => {} } }, {})
   assert.equal(regs.length, 1)
   assert.equal(regs[0].event, 'agent/pre-step')
   assert.equal(typeof regs[0].fn, 'function')
@@ -399,7 +399,7 @@ test('apply 接线：ctx.on("agent/pre-step", handler, {prepend:true}) 注册；
   assert.deepEqual(regs[0].opts, { prepend: true }, '官方注册姿势 {prepend:true}')
 
   const warnings = []
-  assert.doesNotThrow(() => apply({ logger: { warn: (l) => warnings.push(l) } }, {}))
+  assert.doesNotThrow(() => apply({ tools: { register: () => {} }, logger: { warn: (l) => warnings.push(l) } }, {}))
   assert.equal(warnings.length, 1)
   assert.match(warnings[0], /ctx\.on/)
 })
@@ -422,7 +422,7 @@ test('apply 全链路集成：真 T2 索引 + 真 T3 search + 真 dsh-llm 注入
   db.close()
 
   const regs = []
-  apply({ on: (event, fn, opts) => regs.push({ event, fn, opts }), logger: { warn: () => {} } }, {})
+  apply({ on: (event, fn, opts) => regs.push({ event, fn, opts }), tools: { register: () => {} }, logger: { warn: () => {} } }, {})
   const payload = { agent: {}, messages: [user('wiki 成本核算口径')], turn: 1, step: 1, signal: new AbortController().signal }
   const decision = { kind: 'enter', messages: [...payload.messages] }
   const result = await regs[0].fn(payload, async () => decision)
@@ -448,7 +448,7 @@ test('apply 空索引：active.db 缺失零命中不注入、零落盘副作用�
   t.after(() => { process.env.HOME = origHome })
 
   const regs = []
-  apply({ on: (event, fn, opts) => regs.push({ event, fn, opts }), logger: { warn: () => {} } }, {})
+  apply({ on: (event, fn, opts) => regs.push({ event, fn, opts }), tools: { register: () => {} }, logger: { warn: () => {} } }, {})
   const payload = { agent: {}, messages: [user('wiki 成本核算口径')], turn: 1, step: 1, signal: new AbortController().signal }
   const decision = { kind: 'enter', messages: [...payload.messages] }
   const result = await regs[0].fn(payload, async () => decision)

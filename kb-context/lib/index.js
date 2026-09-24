@@ -7,15 +7,17 @@ import os from 'node:os'
 import path from 'node:path'
 import { z } from 'zod'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createPreStepHandler } from './inject.js'
 import { matchTrigger } from './trigger.js'
 import { search } from './search.js'
 import { openReadOnlyDb } from './index-db.js'
+import { buildTools, readPagesFromDb } from './tools.js'
 
 export const name = 'kb-context'
 
-// 暂不依赖宿主服务 API（后续注入/工具只走公开缝：pre-step、defineTool）
-export const inject = []
+// 宿主服务缝：ctx.tools（T6 工具注册）——工具定义只走公开缝 defineTool（@deepseek-ai/dsh-tools，dsh-rtk-kit 同款姿势）
+export const inject = ['tools']
 
 // Config 全键一次性定义；语义 = 可配置热改（后续 handler 每次调用读当前 config，不启动时冻结）
 // ⚠️ 嵌套对象默认值一律用 .prefault({})：zod v4（实测 4.6.5）的 .default({}) 短路直返、不填内层字段默认。
@@ -81,6 +83,20 @@ function runSearch(query, opts) {
   }
 }
 
+/**
+ * 读侧页面读取缝（T6 接线）：活跃库存在才只读打开（缺库=全缺失态，不建库零副作用——与 runSearch 同纪律）；
+ * readPagesFromDb 逐路径软错误不整体炸（detpecca 范式），意外读异常原样上抛由 defineTool 错误结果承载。
+ */
+function runReadPages(paths, opts) {
+  const dbPath = resolveIndexDbPath()
+  const db = fs.existsSync(dbPath) ? openReadOnlyDb(dbPath) : null
+  try {
+    return readPagesFromDb(db, paths, opts)
+  } finally {
+    try { db?.close() } catch { /* 尽力关闭 */ }
+  }
+}
+
 export function apply(ctx, rawConfig) {
   // 配置防御性校验：非法配置留痕告警后 fail-open（INV-15 禁静默）。
   // 热改语义：handler 每次调用读当前 config（safeParse 当前值），此处不做启动时冻结。
@@ -90,6 +106,20 @@ export function apply(ctx, rawConfig) {
       .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
       .join('; ')
     warn(ctx, `[kb-context] 配置校验失败，回退默认值（fail-open）：${detail}`)
+  }
+  // T6 主动检索工具接线（独立于 pre-step 缝：ctx.on 缺失也要注册工具）；
+  // 宿主工具缝缺失 fail-open 留痕不静默（INV-15），不阻断 pre-step 注册
+  if (typeof ctx?.tools?.register === 'function') {
+    for (const tool of buildTools({
+      defineTool,
+      search: runSearch,
+      readPages: runReadPages,
+      configSource: () => rawConfig,
+    })) {
+      ctx.tools.register(tool)
+    }
+  } else {
+    warn(ctx, '[kb-context] 宿主 ctx.tools 缺失，wiki_search/wiki_read 未注册（fail-open）')
   }
   // pre-step 注入接线（T4 trigger → T3 search → T5 注入，官方 waterfall 姿势）
   if (typeof ctx?.on !== 'function') {
