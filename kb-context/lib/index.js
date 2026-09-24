@@ -12,9 +12,12 @@ import { createPreStepHandler } from './inject.js'
 import { matchTrigger } from './trigger.js'
 import { search } from './search.js'
 import { openReadOnlyDb } from './index-db.js'
-import { buildTools, readPagesFromDb } from './tools.js'
+import { buildTools, readPagesFromFs } from './tools.js'
 
 export const name = 'kb-context'
+
+// vault 根路径出厂默认（R2 裁定 2026-09-24）：Config schema 默认值与 tools.js salvage 回退共用此单一来源
+export const DEFAULT_VAULT_ROOT = '/mnt/unraid_data/Obsidian'
 
 // 宿主服务缝：ctx.tools（T6 工具注册）——工具定义只走公开缝 defineTool（@deepseek-ai/dsh-tools，dsh-rtk-kit 同款姿势）
 export const inject = ['tools']
@@ -39,6 +42,8 @@ export const Config = z.object({
   }).prefault({}),
   // 检索总超时（毫秒）：超时 fail-open 降级，不阻塞会话
   timeoutMs: z.number().default(1500),
+  // vault 根路径（R2 裁定）：wiki_read fs 直读根——路径解析=vaultRoot 下相对路径 + realpath 防 symlink 逃逸
+  vaultRoot: z.string().default(DEFAULT_VAULT_ROOT),
   // 作用域（相对 vault 根）：indexAll = FTS5 索引目录；grepOnDemand = 按需 grep 目录
   scope: z.object({
     indexAll: z.array(z.string()).default(['wiki', 'raw']),
@@ -84,17 +89,12 @@ function runSearch(query, opts) {
 }
 
 /**
- * 读侧页面读取缝（T6 接线）：活跃库存在才只读打开（缺库=全缺失态，不建库零副作用——与 runSearch 同纪律）；
- * readPagesFromDb 逐路径软错误不整体炸（detpecca 范式），意外读异常原样上抛由 defineTool 错误结果承载。
+ * 读侧页面读取缝（T6 接线，R1 改判 2026-09-24：fs 直读磁盘现状，弃用索引重组）：root 取 opts.root
+ *（config vaultRoot，per-call 热改），缺省回退 DEFAULT_VAULT_ROOT；readPagesFromFs 逐路径软错误
+ * 不整体炸（detpecca 范式），意外读异常原样上抛由 defineTool 错误结果承载。读侧零写零建库不变。
  */
 function runReadPages(paths, opts) {
-  const dbPath = resolveIndexDbPath()
-  const db = fs.existsSync(dbPath) ? openReadOnlyDb(dbPath) : null
-  try {
-    return readPagesFromDb(db, paths, opts)
-  } finally {
-    try { db?.close() } catch { /* 尽力关闭 */ }
-  }
+  return readPagesFromFs(opts?.root ?? DEFAULT_VAULT_ROOT, paths, opts)
 }
 
 export function apply(ctx, rawConfig) {

@@ -33,6 +33,7 @@ test('Config 全键默认值与契约精确一致', async () => {
     hotMap: { enabled: false, maxChars: 600 },
     budget: { maxSnippets: 3, maxTokens: 2000 },
     timeoutMs: 1500,
+    vaultRoot: '/mnt/unraid_data/Obsidian',
     scope: {
       indexAll: ['wiki', 'raw'],
       grepOnDemand: ['01-客户资料', '02-致远OA', '03-帆软报表', '04-用友', '05-医院成本', '08-unraid'],
@@ -47,6 +48,7 @@ test('Config 部分覆盖只改触达键（热改语义：每次读当前 config
   const c = Config.parse({ triggers: { words: ['OA'] }, timeoutMs: 800 })
   assert.deepEqual(c.triggers, { words: ['OA'], entityPaths: [] })
   assert.equal(c.timeoutMs, 800)
+  assert.equal(c.vaultRoot, '/mnt/unraid_data/Obsidian', '未触达键 vaultRoot 保持默认（字面锁定）')
   assert.equal(c.hotMap.enabled, false)
   assert.equal(c.hotMap.maxChars, 600)
   assert.equal(c.budget.maxSnippets, 3)
@@ -62,6 +64,7 @@ test('Config 拒绝错误类型（schema 真校验，非透传）', async () => 
   assert.throws(() => Config.parse({ budget: { maxTokens: 'two-thousand' } }))
   assert.throws(() => Config.parse({ scope: { indexAll: 'wiki' } }))
   assert.throws(() => Config.parse({ triggers: { words: 'OA' } }))
+  assert.throws(() => Config.parse({ vaultRoot: 123 }), 'vaultRoot 非字符串必须拒（schema 真校验）')
 })
 
 test('Config 默认值无可变共享引用（多次 parse 互不污染）', async () => {

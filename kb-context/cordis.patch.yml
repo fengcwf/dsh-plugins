@@ -19,6 +19,8 @@
           maxTokens: 2000
         # 检索总超时（毫秒）：超时 fail-open 降级，不阻塞会话
         timeoutMs: 1500
+        # vault 根路径：wiki_read fs 直读根（相对此根解析路径，拒穿越/绝对/symlink 逃逸）
+        vaultRoot: '/mnt/unraid_data/Obsidian'
         # 作用域（相对 vault 根）：indexAll = FTS5 索引目录；grepOnDemand = 按需 grep 目录
         scope:
           indexAll:

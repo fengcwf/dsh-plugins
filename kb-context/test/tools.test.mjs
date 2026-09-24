@@ -1,7 +1,8 @@
-// tools 单测（T6）：真 defineTool（@deepseek-ai/dsh-tools 真件）+ 真 T2 索引库 + 真 T3 search——禁 mock 自嗨。
+// tools 单测（T6；R1 改判 2026-09-24）：真 defineTool（@deepseek-ai/dsh-tools 真件）+ 真 T2 索引库 + 真 T3 search
+// + 真临时 vault 目录 fs 直读——禁 mock 自嗨。
 // 必含反例（brief 钉住）：①description 含 score 语义字样（detpecca 教训）②wiki_read 三态（正文/
 //   (page not found)/(invalid or unreadable path)，含 ../ 穿越与绝对路径负例）③部分失败不整体炸
-//   ④JSON 无 -0/NaN（R12）⑤search degraded 两态透传。
+//   ④JSON 无 -0/NaN（R12）⑤search degraded 透传（lexical/timeout 两态 + config salvage 携带态）。
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -18,7 +19,7 @@ process.on('warning', (w) => {
 const { openDb, applyIncremental } = await import('../lib/index-db.js')
 const { search } = await import('../lib/search.js')
 const {
-  buildTools, readPagesFromDb, reassemblePage, isSafeRelPath, finiteScore,
+  buildTools, readPagesFromFs, currentConfig, isSafeRelPath, finiteScore,
   PAGE_NOT_FOUND, INVALID_PATH, TRUNCATED, MAX_PAGE_CHARS, MAX_TOTAL_CHARS,
 } = await import('../lib/tools.js')
 
@@ -38,25 +39,20 @@ function makeVault(t, files) {
   return dir
 }
 
-/** 真 vault + 真 T2 增量索引 → 搜索用库（集成口径，非构造内存行） */
-function mkdb(t, files) {
+/** 工具面构造：search 缝=真 T2 索引库 + 真 T3 search；readPages 缝=真临时 vault fs 直读（root 走 config） */
+function mktools(t, files, configSource = () => ({})) {
   const vault = makeVault(t, files)
   const db = openDb(path.join(tmpDir(t), 'idx.db'))
   t.after(() => db.close())
   applyIncremental(db, { vaultRoot: vault, scope: { indexAll: ['wiki'] }, files: Object.keys(files) })
-  return db
-}
-
-/** 工具面构造（缝=真件绑定真库；被测逻辑=工具定义与 execute，不模拟） */
-function mktools(t, files, configSource = () => ({})) {
-  const db = mkdb(t, files)
   const [wikiSearch, wikiRead] = buildTools({
     defineTool,
     search: (query, opts) => search(db, query, opts),
-    readPages: (paths, opts) => readPagesFromDb(db, paths, opts),
-    configSource,
+    readPages: (paths, opts) => readPagesFromFs(opts?.root, paths, opts),
+    // configSource 现读（per-call 热改真验）：vaultRoot 铺底（测试可用 config 覆盖），其余键测试给什么是什么
+    configSource: () => ({ vaultRoot: vault, ...(typeof configSource === 'function' ? configSource() : configSource) }),
   })
-  return { wikiSearch, wikiRead, db }
+  return { wikiSearch, wikiRead, db, vault }
 }
 
 const EXEC = { signal: new AbortController().signal }
@@ -104,6 +100,15 @@ test('wiki_search degraded 两态透传：纯短词=lexical、超时配置=timeo
   assert.deepEqual(slow.hits, [], '立即超时不产命中')
 })
 
+test("wiki_search degraded:'config' 携带（INV-15）：config salvage 留痕，与 lexical 并存 'config' 优先", async (t) => {
+  const { wikiSearch: ws } = mktools(t, FIXTURE, () => ({ timeoutMs: 'oops' })) // safeParse 失败 → salvage
+  const lex = await ws.execute({ query: '的' }, EXEC) // 纯短词 = lexical 路径
+  assert.equal(lex.degraded, 'config', "config salvage 留痕优先于 lexical（镜像 inject.js 'config' 优先序）")
+  const hit = await ws.execute({ query: '成本核算' }, EXEC)
+  assert.equal(hit.degraded, 'config', "BM25 路径同样携带 degraded:'config'（salvage 是调用级降级）")
+  assert.ok(hit.hits.length >= 1, 'salvage 后检索照常产命中（保热改连续性）')
+})
+
 test('wiki_search JSON 输出无 -0/NaN（R12）：数值遍历 + 序列化回读等值', async (t) => {
   const { wikiSearch: ws } = mktools(t, FIXTURE)
   for (const q of ['成本核算', '的', 'zzz_nomatch_qqq']) {
@@ -147,7 +152,7 @@ test('wiki_search limit：默认取 config budget.maxSnippets（per-call 热改�
   assert.equal(explicit.hits.length, 3, '显式 limit 覆盖默认')
 })
 
-// ── S2：wiki_read 软错误读（三态 + 截断） ────────────────────────────────────
+// ── S2：wiki_read 软错误读（fs 直读三态 + 截断） ──────────────────────────────
 
 test('wiki_read description 写明三态标记与截断语义（契约字面量对齐）', (t) => {
   const { wikiRead } = mktools(t, FIXTURE)
@@ -160,24 +165,69 @@ test('wiki_read description 写明三态标记与截断语义（契约字面量�
 })
 
 test('wiki_read 三态：正文 / (page not found) / (invalid or unreadable path)', async (t) => {
-  const db = mkdb(t, { 'wiki/ok.md': '第一行\n第二行' })
-  const pages = readPagesFromDb(db, ['wiki/ok.md', 'wiki/missing.md', '/etc/passwd']).pages
+  const vault = makeVault(t, { 'wiki/ok.md': '第一行\n第二行' })
+  const pages = readPagesFromFs(vault, ['wiki/ok.md', 'wiki/missing.md', '/etc/passwd']).pages
   assert.equal(pages['wiki/ok.md'], '第一行\n第二行', '正常页返回精确正文')
-  assert.equal(pages['wiki/missing.md'], PAGE_NOT_FOUND, '缺失页 → (page not found)')
+  assert.equal(pages['wiki/missing.md'], PAGE_NOT_FOUND, '磁盘无此文件 → (page not found)')
   assert.equal(pages['/etc/passwd'], INVALID_PATH, '绝对路径 → (invalid or unreadable path)')
 })
 
+test("wiki_read fs 直读磁盘现状：未索引/新改文件直读 + 尾随 '\\n' round-trip 不丢（重组丢尾坑回归）", async (t) => {
+  // 不建索引库（未索引）：文件写盘即可读（R1 改判①：数据源=磁盘现状）
+  const vault = makeVault(t, { 'wiki/fresh.md': '新鲜内容\n第二行\n\n' })
+  const pages = readPagesFromFs(vault, ['wiki/fresh.md']).pages
+  assert.equal(pages['wiki/fresh.md'], '新鲜内容\n第二行\n\n', 'round-trip 精确：尾随换行不丢')
+
+  // 新改文件即时可见（内容陈旧坑回归）：改盘不改索引，直读拿最新
+  fs.writeFileSync(path.join(vault, 'wiki', 'fresh.md'), '改后内容')
+  assert.equal(readPagesFromFs(vault, ['wiki/fresh.md']).pages['wiki/fresh.md'], '改后内容', '磁盘现状即时生效')
+
+  const { wikiRead } = mktools(t, FIXTURE, () => ({ vaultRoot: vault }))
+  const out = await wikiRead.execute({ paths: ['wiki/fresh.md'] }, EXEC)
+  assert.equal(out.pages['wiki/fresh.md'], '改后内容', '工具面同样直读磁盘现状')
+})
+
 test('wiki_read 路径负例全数拒：../ 穿越 / 绝对路径 / 反斜杠 / 空段 / 非字符串', async (t) => {
-  const db = mkdb(t, { 'wiki/ok.md': '正文' })
+  const vault = makeVault(t, { 'wiki/ok.md': '正文' })
   const bad = ['../x.md', 'a/../../b', '/etc/passwd', 'C:\\x', 'wiki\\x', '', 'wiki//x', './x', 'a/./b', 'wiki/']
   for (const p of bad) {
     assert.equal(isSafeRelPath(p), false, `必须判不安全：${JSON.stringify(p)}`)
-    assert.equal(readPagesFromDb(db, [p]).pages[p], INVALID_PATH, `必须标 invalid：${JSON.stringify(p)}`)
+    assert.equal(readPagesFromFs(vault, [p]).pages[p], INVALID_PATH, `必须标 invalid：${JSON.stringify(p)}`)
   }
   assert.equal(isSafeRelPath('wiki/ok.md'), true, 'vault 相对路径判安全')
-  const mixed = readPagesFromDb(db, [42, null]).pages
+  const mixed = readPagesFromFs(vault, [42, null]).pages
   assert.equal(mixed['42'], INVALID_PATH, '非字符串 → invalid（键取 String 化）')
   assert.equal(mixed['null'], INVALID_PATH, 'null → invalid')
+})
+
+test('wiki_read symlink 逃逸全形（INV-7）：活外指/dangling 外指/目录外指 → invalid；vault 内指归一正常读', async (t) => {
+  const outside = tmpDir(t, 'kb-out-')
+  fs.writeFileSync(path.join(outside, 'secret.md'), 'SECRET')
+  const vault = makeVault(t, { 'wiki/ok.md': '正文' })
+  fs.symlinkSync(path.join(outside, 'secret.md'), path.join(vault, 'wiki', 'leak.md')) // 活外指
+  fs.symlinkSync(path.join(outside, 'gone.md'), path.join(vault, 'wiki', 'dangle.md')) // dangling 外指
+  fs.symlinkSync(outside, path.join(vault, 'wiki', 'ext')) // 目录外指
+  fs.symlinkSync(path.join(vault, 'wiki', 'ok.md'), path.join(vault, 'wiki', 'alias.md')) // vault 内指
+
+  const pages = readPagesFromFs(vault, [
+    'wiki/leak.md', 'wiki/dangle.md', 'wiki/ext/secret.md', 'wiki/ext/gone.md', 'wiki/alias.md',
+  ]).pages
+  assert.equal(pages['wiki/leak.md'], INVALID_PATH, 'symlink 活外指 → invalid（不泄内容）')
+  assert.equal(pages['wiki/dangle.md'], INVALID_PATH, 'dangling 外指（逃逸意图）→ invalid，非 not found')
+  assert.equal(pages['wiki/ext/secret.md'], INVALID_PATH, '目录 symlink 外指（realpath 归一后判）→ invalid')
+  assert.equal(pages['wiki/ext/gone.md'], INVALID_PATH, '目录外指下缺失项同样按逃逸拒（walk 预验）')
+  assert.equal(pages['wiki/alias.md'], '正文', 'vault 内 symlink 归一后正常读')
+  assert.ok(!Object.values(pages).includes('SECRET'), '外指内容零泄漏')
+})
+
+test('wiki_read 读失败面：目录路径 → invalid；vaultRoot 缺失 → 全 invalid（读失败非页面缺失）', async (t) => {
+  const vault = makeVault(t, { 'wiki/ok.md': '正文' })
+  fs.mkdirSync(path.join(vault, 'wiki', 'adir'), { recursive: true })
+  assert.equal(readPagesFromFs(vault, ['wiki/adir']).pages['wiki/adir'], INVALID_PATH, '目录路径 EISDIR → invalid')
+
+  const pages = readPagesFromFs(path.join(vault, 'no-such-root'), ['wiki/ok.md', '../x']).pages
+  assert.equal(pages['wiki/ok.md'], INVALID_PATH, 'vaultRoot 坏了是读失败面（不能骗模型「页不存在」）')
+  assert.equal(pages['../x'], INVALID_PATH, '不安全形仍先拒')
 })
 
 test('wiki_read 部分失败不整体炸（detpecca 范式）：混合批量逐键标记', async (t) => {
@@ -195,12 +245,12 @@ test('wiki_read 部分失败不整体炸（detpecca 范式）：混合批量逐�
 
 test('wiki_read 截断：每页上限 + \n(truncated) 标记（默认 8000 锁定）', async (t) => {
   assert.equal(MAX_PAGE_CHARS, 8_000, '默认每页上限测试锁定')
-  // 小上限精确锁行为（含硬切段重组：9000 字符单行 → 12 段 → 重组精确 → 截断）
-  const db = mkdb(t, { 'wiki/big.md': '文'.repeat(9_000) })
-  const small = readPagesFromDb(db, ['wiki/big.md'], { maxPageChars: 10, maxTotalChars: 100 }).pages
+  // 小上限精确锁行为（fs 直读超长单行 → 截断标记保留）
+  const vault = makeVault(t, { 'wiki/big.md': '文'.repeat(9_000) })
+  const small = readPagesFromFs(vault, ['wiki/big.md'], { maxPageChars: 10, maxTotalChars: 100 }).pages
   assert.equal(small['wiki/big.md'], '文'.repeat(10) + '\n' + TRUNCATED)
 
-  // 默认上限走工具面（真库）
+  // 默认上限走工具面（真临时 vault）
   const { wikiRead } = mktools(t, { 'wiki/big.md': '文'.repeat(9_000) })
   const out = await wikiRead.execute({ paths: ['wiki/big.md'] }, EXEC)
   assert.equal(out.pages['wiki/big.md'].length, MAX_PAGE_CHARS + 1 + TRUNCATED.length)
@@ -210,42 +260,64 @@ test('wiki_read 截断：每页上限 + \n(truncated) 标记（默认 8000 锁�
 
 test('wiki_read 合计上限：跨页预算耗尽后置 (truncated)，不整体炸', async (t) => {
   assert.equal(MAX_TOTAL_CHARS, 32_000, '默认合计上限测试锁定')
-  const db = mkdb(t, { 'wiki/a.md': 'A'.repeat(50), 'wiki/b.md': 'B'.repeat(50) })
-  const pages = readPagesFromDb(db, ['wiki/a.md', 'wiki/b.md'], { maxPageChars: 100, maxTotalChars: 60 }).pages
+  const vault = makeVault(t, { 'wiki/a.md': 'A'.repeat(50), 'wiki/b.md': 'B'.repeat(50) })
+  const pages = readPagesFromFs(vault, ['wiki/a.md', 'wiki/b.md'], { maxPageChars: 100, maxTotalChars: 60 }).pages
   assert.equal(pages['wiki/a.md'], 'A'.repeat(50), '首篇全额')
   assert.equal(pages['wiki/b.md'], 'B'.repeat(10) + '\n' + TRUNCATED, '次篇压进剩余预算')
-  const pages2 = readPagesFromDb(db, ['wiki/a.md', 'wiki/b.md'], { maxPageChars: 30, maxTotalChars: 30 }).pages
+  const pages2 = readPagesFromFs(vault, ['wiki/a.md', 'wiki/b.md'], { maxPageChars: 30, maxTotalChars: 30 }).pages
   assert.equal(pages2['wiki/a.md'], 'A'.repeat(30) + '\n' + TRUNCATED)
   assert.equal(pages2['wiki/b.md'], TRUNCATED, '预算耗尽 → (truncated) 整值')
 })
 
-test('wiki_read 空页与缺库：空文本照实返回、缺库全 (page not found)（读侧零副作用）', async (t) => {
-  const db = mkdb(t, { 'wiki/empty.md': '', 'wiki/ok.md': '正文' })
-  assert.equal(readPagesFromDb(db, ['wiki/empty.md']).pages['wiki/empty.md'], '', '空页=空文本（非 not found）')
-
-  // 缺库（null 缝）：不建库零副作用，有效路径 → not found，不安全路径照旧 invalid
-  const pages = readPagesFromDb(null, ['wiki/ok.md', '../x']).pages
-  assert.equal(pages['wiki/ok.md'], PAGE_NOT_FOUND)
-  assert.equal(pages['../x'], INVALID_PATH)
+test('wiki_read 空页与缺失：空文本照实返回、磁盘无此文件 → (page not found)', async (t) => {
+  const vault = makeVault(t, { 'wiki/empty.md': '', 'wiki/ok.md': '正文' })
+  assert.equal(readPagesFromFs(vault, ['wiki/empty.md']).pages['wiki/empty.md'], '', '空页=空文本（非 not found）')
+  assert.equal(readPagesFromFs(vault, ['wiki/ok.md', 'wiki/missing.md']).pages['wiki/missing.md'], PAGE_NOT_FOUND)
 })
 
-test('reassemblePage 重组精确：重叠块幂等覆盖 + 硬切段同行拼接', () => {
-  // 行粒度重叠（T2 chunkText 口径）：共享行内容全等 → 覆盖幂等
-  assert.equal(reassemblePage([
-    { chunk_idx: 0, start_line: 1, end_line: 2, content: 'A\nB' },
-    { chunk_idx: 1, start_line: 2, end_line: 3, content: 'B\nC' },
-  ]), 'A\nB\nC')
-  // 硬切段（超长单行）：同行多段按 chunk_idx 拼接还原一行
-  assert.equal(reassemblePage([
-    { chunk_idx: 0, start_line: 5, end_line: 5, content: '12345' },
-    { chunk_idx: 1, start_line: 5, end_line: 5, content: '678' },
-  ]), '12345678')
-  // 整行单块（≤maxChars）后接他行块：不重复不追加
-  assert.equal(reassemblePage([
-    { chunk_idx: 0, start_line: 1, end_line: 1, content: 'X' },
-    { chunk_idx: 1, start_line: 2, end_line: 3, content: 'Y\nZ' },
-  ]), 'X\nY\nZ')
-  assert.equal(reassemblePage([]), '', '空文本 → 空串')
+test('wiki_read 键集安全化：__proto__ 路径键不丢（审中 finding 回归钉住）', async (t) => {
+  const vault = makeVault(t, { 'wiki/ok.md': '正文' })
+  const { pages } = readPagesFromFs(vault, ['__proto__', 'constructor', 'wiki/ok.md'])
+  assert.ok(Object.hasOwn(pages, '__proto__'), "'__proto__' 必须落 own key（禁 setter 静默丢键）")
+  assert.equal(pages.__proto__, PAGE_NOT_FOUND, '合法形式但缺失 → (page not found)')
+  assert.ok(Object.hasOwn(pages, 'constructor'))
+  assert.equal(pages.constructor, PAGE_NOT_FOUND)
+  assert.equal(pages['wiki/ok.md'], '正文')
+  assert.deepEqual(JSON.parse(JSON.stringify(pages)), pages, 'JSON 序列化回读键值全量保留')
+})
+
+// ── S2.5：vaultRoot 配置（R2 裁定） ─────────────────────────────────────────
+
+test('vaultRoot 默认值字面锁定 + currentConfig salvage 择取/回退 + salvaged 标记', () => {
+  const def = currentConfig(() => ({}))
+  assert.equal(def.salvaged, false)
+  assert.equal(def.cfg.vaultRoot, '/mnt/unraid_data/Obsidian', '默认 vaultRoot 字面锁定')
+
+  const over = currentConfig(() => ({ vaultRoot: '/custom/vault' }))
+  assert.equal(over.salvaged, false)
+  assert.equal(over.cfg.vaultRoot, '/custom/vault', '显式覆盖生效')
+
+  const bad = currentConfig(() => ({ timeoutMs: 'oops' }))
+  assert.equal(bad.salvaged, true, 'safeParse 失败 → salvaged 标记（INV-15 携带位判据）')
+  assert.equal(bad.cfg.vaultRoot, '/mnt/unraid_data/Obsidian', '坏配置无 vaultRoot → 回退默认')
+
+  const badKeepRoot = currentConfig(() => ({ timeoutMs: 'oops', vaultRoot: '/keep/me' }))
+  assert.equal(badKeepRoot.cfg.vaultRoot, '/keep/me', 'salvage raw vaultRoot 好值择取（保热改连续性）')
+
+  const badRoot = currentConfig(() => ({ vaultRoot: 123 }))
+  assert.equal(badRoot.salvaged, true)
+  assert.equal(badRoot.cfg.vaultRoot, '/mnt/unraid_data/Obsidian', '坏类型 vaultRoot 回退默认')
+})
+
+test('vaultRoot 覆盖与热改：工具面 per-call 现读 root，热改即时生效', async (t) => {
+  const a = makeVault(t, { 'wiki/a.md': 'A页' })
+  const b = makeVault(t, { 'wiki/a.md': 'B页' })
+  const raw = { vaultRoot: a }
+  const { wikiRead } = mktools(t, FIXTURE, () => raw)
+  assert.equal((await wikiRead.execute({ paths: ['wiki/a.md'] }, EXEC)).pages['wiki/a.md'], 'A页')
+
+  raw.vaultRoot = b // 热改（原位变更，per-call 读当前值）
+  assert.equal((await wikiRead.execute({ paths: ['wiki/a.md'] }, EXEC)).pages['wiki/a.md'], 'B页', '热改 root 即时生效')
 })
 
 // ── S3：apply 注册接线 ──────────────────────────────────────────────────────
@@ -267,7 +339,7 @@ test('apply 注册 wiki_search/wiki_read（ctx.tools.register；真 defineTool �
   )
 })
 
-test('apply e2e（HOME 隔离真活跃库）：注册工具真跑检索/读页，读侧零副作用', async (t) => {
+test('apply e2e（HOME 隔离真活跃库 + vaultRoot fs 直读）：注册工具真跑检索/读页，读侧零副作用', async (t) => {
   const { apply } = await import('../lib/index.js')
   const { openDb, registerScope, applyIncremental } = await import('../lib/index-db.js')
   const home = tmpDir(t, 'kb-home-')
@@ -275,7 +347,11 @@ test('apply e2e（HOME 隔离真活跃库）：注册工具真跑检索/读页�
   process.env.HOME = home
   t.after(() => { process.env.HOME = origHome })
 
-  const vault = makeVault(t, { 'wiki/cost.md': '医院成本核算口径说明\n第二行内容' })
+  // wiki/cost.md 入索引；wiki/fresh.md 只写盘不入索引（R1 改判①：未索引页照样直读）
+  const vault = makeVault(t, {
+    'wiki/cost.md': '医院成本核算口径说明\n第二行内容',
+    'wiki/fresh.md': '未索引新改文件',
+  })
   const dbPath = path.join(home, '.dsh', 'kb-index', 'active.db')
   fs.mkdirSync(path.dirname(dbPath), { recursive: true })
   const db = openDb(dbPath)
@@ -284,14 +360,15 @@ test('apply e2e（HOME 隔离真活跃库）：注册工具真跑检索/读页�
   db.close()
 
   const regs = []
-  apply({ on: () => {}, tools: { register: (tool) => regs.push(tool) }, logger: { warn: () => {} } }, {})
+  apply({ on: () => {}, tools: { register: (tool) => regs.push(tool) }, logger: { warn: () => {} } }, { vaultRoot: vault })
   const [ws, wr] = regs
   const out = await ws.execute({ query: '成本核算' }, EXEC)
   assert.equal(out.hits[0]?.path, 'wiki/cost.md', '经 index.js runSearch 真件检索真活跃库')
   assert.deepEqual(out.hits[0]?.lines, [1, 2])
 
-  const read = await wr.execute({ paths: ['wiki/cost.md', 'wiki/none.md', '../x'] }, EXEC)
-  assert.equal(read.pages['wiki/cost.md'], '医院成本核算口径说明\n第二行内容', '经 runReadPages 真件读真活跃库')
+  const read = await wr.execute({ paths: ['wiki/cost.md', 'wiki/fresh.md', 'wiki/none.md', '../x'] }, EXEC)
+  assert.equal(read.pages['wiki/cost.md'], '医院成本核算口径说明\n第二行内容', '经 runReadPages 真件 fs 直读')
+  assert.equal(read.pages['wiki/fresh.md'], '未索引新改文件', '未索引页直读磁盘现状（索引重组误报坑回归）')
   assert.equal(read.pages['wiki/none.md'], PAGE_NOT_FOUND)
   assert.equal(read.pages['../x'], INVALID_PATH)
 })
@@ -315,15 +392,4 @@ test('apply fail-open 双向（INV-15 禁静默）：缺 ctx.tools 留痕仍注�
   assert.equal(warnings2.length, 1)
   assert.match(warnings2[0], /ctx\.on/)
   assert.deepEqual(toolRegs.map((tool) => tool.name), ['wiki_search', 'wiki_read'])
-})
-
-test('wiki_read 键集安全化：__proto__ 路径键不丢（审中 finding 回归钉住）', async (t) => {
-  const db = mkdb(t, { 'wiki/ok.md': '正文' })
-  const { pages } = readPagesFromDb(db, ['__proto__', 'constructor', 'wiki/ok.md'])
-  assert.ok(Object.hasOwn(pages, '__proto__'), "'__proto__' 必须落 own key（禁 setter 静默丢键）")
-  assert.equal(pages.__proto__, PAGE_NOT_FOUND, '合法形式但缺失 → (page not found)')
-  assert.ok(Object.hasOwn(pages, 'constructor'))
-  assert.equal(pages.constructor, PAGE_NOT_FOUND)
-  assert.equal(pages['wiki/ok.md'], '正文')
-  assert.deepEqual(JSON.parse(JSON.stringify(pages)), pages, 'JSON 序列化回读键值全量保留')
 })
