@@ -10,10 +10,15 @@
 //   且 createUserMessage 缝产物若夹带 model 一律拒收（注入体带 model 必须拒，不进会话）。
 // ⚠️ INV-11 注入防伪造：片段文本 `<`→字面序列 `\u003c`（六字符，非真实 '<'）——伪闭合/开标签失去结构；
 //   source 属性值再加 `"`→`\u0022`（safeLabelValue 口径，防属性逃逸）。
+// ⚠️ INV-11 脱敏哨兵（delta-spec §4.4）：片段体注入前过 lib/redact.js 三层中和（PEM 整块 / 赋值形态保 key /
+//   token 形态）→ 占位符 `<redacted>` + 计数。redact 在 **raw 域先行**（先转义会黏合词边界，`<sk-…` 类哨兵
+//   漏检），占位符经 split/join 抽走回填保字面；框架标记（source 属性）**不过 redact**——防误伤出处（sk- 类
+//   路径名不得把 provenance 咬掉）。中和计数随 kbContext 状态返回（detail:{redacted:N}）。
 // ⚠️ timeoutMs:0（及负/非数）语义 = 立即超时而非不限时（与 T3 search 同语义）：不检索、fail-open 返回。
 // ⚠️ 去重①②③ 全部只在**实际注入**时占用名额：跳过不记录（compaction 自愈与后续重试由此成立）。
 import { createHash } from 'node:crypto'
 import { Config } from './index.js'
+import { redact, REDACTED } from './redact.js'
 
 /** 同 query 去重窗口（毫秒）：TECH §3「同 query 10s 去重」契约字面 */
 export const QUERY_DEDUP_MS = 10_000
@@ -37,25 +42,50 @@ export function escapeAttrValue(s) {
   return String(s).replace(/</g, '\\u003c').replace(/"/g, '\\u0022')
 }
 
-/** 单片段渲染：`<kb-context source="path:startLine-endLine">片段</kb-context>`（框架标签不转义，片段转义） */
+/**
+ * 片段体管线：redact（INV-11 脱敏哨兵，raw 域保词边界）→ escapeText（INV-11 防伪造）。
+ * 占位符 `<redacted>` 经 split/join 抽走回填保字面（测试断言注入文本含真实 `<redacted>`）。
+ */
+function safeBody(raw) {
+  const { text, count } = redact(raw)
+  return { body: text.split(REDACTED).map(escapeText).join(REDACTED), count }
+}
+
+/** 逐片段渲染 + 中和计数聚合（框架标记不过 redact——source 属性防误伤，provenance 保持精确） */
+function renderHits(hits) {
+  let redacted = 0
+  const blocks = hits.map((hit) => {
+    const [startLine, endLine] = hit.lines
+    const source = escapeAttrValue(`${hit.path}:${startLine}-${endLine}`)
+    const { body, count } = safeBody(hit.snippet)
+    redacted += count
+    return `<kb-context source="${source}">${body}</kb-context>`
+  })
+  return { text: blocks.join('\n'), redacted }
+}
+
+/** 单片段渲染：`<kb-context source="path:startLine-endLine">片段</kb-context>`（框架标签不转义，片段先中和再转义） */
 export function renderSnippet(hit) {
-  const [startLine, endLine] = hit.lines
-  const source = escapeAttrValue(`${hit.path}:${startLine}-${endLine}`)
-  return `<kb-context source="${source}">${escapeText(hit.snippet)}</kb-context>`
+  return renderHits([hit]).text
 }
 
 /** 注入文本体：各片段独立块拼接（不伪装正文，防混淆/防投毒审计面） */
 export function buildInjectionText(hits) {
-  return hits.map(renderSnippet).join('\n')
+  return renderHits(hits).text
 }
 
 /**
  * 注入输入（delta-spec §2 逐字形状）：`{content:[{type:'text', text}], source:{kind:'plugin',
  * plugin:'kb-context', form:'recall', sections:[{name:'kb-context', text}]}}`。
  * 键集精确闭合（content/source 两键）——**禁 model 字段**（INV-5 反例测试钉住）。
+ * ⚠️ text 进 createUserMessage 前已经 safeBody 中和（INV-11 §4.4）。
  */
 export function buildInjectionInput(hits) {
-  const text = buildInjectionText(hits)
+  return injectionInputFromText(renderHits(hits).text)
+}
+
+/** 文本体 → 注入输入（§2 形状单点）；handler 经 renderHits 拿中和计数后复用本函数 */
+function injectionInputFromText(text) {
   return {
     content: [{ type: 'text', text }],
     source: {
@@ -120,10 +150,12 @@ function diag(injected, degraded, reason, detail) {
  * - `decision.kind !== 'enter'` / 外层 signal 预中止 / 无 degraded 的良性跳过（未触发、去重①②③、零命中）
  *   → **原样返回同一 decision 引用**（0 触发 0 token，INV-4）；
  * - degraded 一律留痕进返回不进会话（INV-15 禁静默）：`{...decision, kbContext: {injected, degraded,
- *   reason?, detail?}}`，degraded ∈ 'timeout' | 'error' | 'config'；reason ∈ 'no-trigger' | 'zero-hits' |
- *   'dedup-turn' | 'dedup-query' | 'dedup-surface' | 'model-field'；detail 仅 'error'（异常信息）；
- * - 注入成功 → `{...decision, messages:[...decision.messages, 注入消息]}`（config 踩 salvage 时附
- *   `kbContext: {injected:true, degraded:'config'}` 留痕）。
+ *   reason?, detail?}}`，degraded ∈ 'timeout' | 'error' | 'config' | 'redacted'（注入前脱敏中和计数 >0）；
+ *   reason ∈ 'no-trigger' | 'zero-hits' | 'dedup-turn' | 'dedup-query' | 'dedup-surface' | 'model-field'；
+ *   detail：'error'→异常信息字符串；注入成功且中和 >0 → `{redacted: N}`（INV-11 §4.4 计数随状态返回）；
+ * - 注入成功 → `{...decision, messages:[...decision.messages, 注入消息]}`（config 踩 salvage **或** 中和计数
+ *   >0 时附 kbContext 留痕：degraded:'config' 优先、计数进 detail；N=0 干净注入不加键——沿「无 degraded
+ *   不留痕」，测试钉住）。
  *
  * 去重三件套（全部只在实际注入时占用名额）：
  * ② 同 turn 一次：以 payload.turn（Object.is）单槽记忆——恒占一槽，无 Map 泄漏面；
@@ -236,7 +268,8 @@ export function createPreStepHandler({
       const hits = Array.isArray(result?.hits) ? result.hits : []
       if (hits.length === 0) return skip(decision, configDegraded, 'zero-hits') // 零命中不注入（空态诊断留缝 T7）
 
-      const input = buildInjectionInput(hits)
+      const { text, redacted } = renderHits(hits)
+      const input = injectionInputFromText(text)
       const message = createUserMessage(input)
       // INV-5 必拒：缝产物夹带 model 字段（或非法产物）不得进会话
       if (message == null || typeof message !== 'object' || 'model' in message) {
@@ -255,7 +288,11 @@ export function createPreStepHandler({
       recentQueries.set(t.query, ts)
 
       const out = { ...decision, messages: [...(decision.messages ?? []), message] }
-      if (configDegraded !== null) out.kbContext = diag(true, 'config')
+      // 中和计数随 kbContext 状态返回（INV-11 §4.4）：N>0 才留痕（degraded:'redacted'）；
+      // config salvage 与中和并存时 degraded:'config' 优先、计数仍进 detail；N=0 不加键（无 degraded 不留痕）
+      if (configDegraded !== null || redacted > 0) {
+        out.kbContext = diag(true, configDegraded ?? 'redacted', undefined, redacted > 0 ? { redacted } : undefined)
+      }
       return out
     } catch (e) {
       // 任何异常 fail-open：messages 原样 + degraded:'error' 留痕（INV-15 禁静默）

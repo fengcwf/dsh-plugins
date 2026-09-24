@@ -432,3 +432,60 @@ test('apply 空索引：active.db 缺失零命中不注入、零落盘副作用�
   assert.equal(result.messages.length, 1)
   assert.ok(!fs.existsSync(path.join(home, '.dsh', 'kb-index', 'active.db')), '读侧不得创建索引库（零副作用）')
 })
+
+// ── S7：脱敏哨兵（INV-11 / delta-spec §4.4）────────────────────────────────────
+// 样例凭据全部为**假**哨兵值，非真实凭据。
+
+const FAKE_PEM = '-----BEGIN RSA PRIVATE KEY-----\nZZZZm9jYmFzZTY0ZmFrZXlzZWNyZXQ=\n-----END RSA PRIVATE KEY-----'
+const SENTINEL_HIT = {
+  path: 'wiki/凭据样例.md',
+  lines: [1, 8],
+  score: 0.1,
+  snippet: [
+    '本页是脱敏哨兵样例（假凭据，勿用）。',
+    'sk-fakeOpenAIKey123456',
+    FAKE_PEM,
+    'deploy note: ghp_FAKEGITHUBPAT0123456789',
+    'Authorization header: Bearer eyJhbGciOiFakeSig0123456789',
+    '非哨兵内容：医院成本核算口径说明保持原样。',
+  ].join('\n'),
+}
+
+test('§4.4 脱敏哨兵：假 sk-/PEM/ghp_/Bearer 注入前全中和为 <redacted>、非哨兵原样、计数进 kbContext.detail.redacted', async () => {
+  const h = harness({ hits: [SENTINEL_HIT] })
+  const { result, decision } = await run(h, { text: 'wiki 成本核算' })
+  assert.equal(result.messages.length, decision.messages.length + 1)
+  const msg = result.messages.at(-1)
+  const text = msg.content[0].text
+
+  // 进 createUserMessage 的输入已经中和（builder 内 redact，不是事后清洗）
+  assert.equal(h.calls.createUser.length, 1)
+  assert.equal(h.calls.createUser[0].content[0].text, text)
+
+  for (const leak of ['sk-fakeOpenAIKey123456', '-----BEGIN', 'ZZZZm9jYmFzZTY0', 'ghp_FAKEGITHUBPAT0123456789', 'eyJhbGciOiFakeSig0123456789']) {
+    assert.ok(!text.includes(leak), `哨兵必须中和：${leak}`)
+  }
+  assert.ok(text.includes('<redacted>'), '占位符字面 <redacted>')
+  assert.equal((text.split('<redacted>').length - 1), 4, '四处哨兵恰四个占位符（计数正确）')
+  assert.ok(text.includes('本页是脱敏哨兵样例（假凭据，勿用）。'), '非哨兵内容原样')
+  assert.ok(text.includes('医院成本核算口径说明保持原样。'), '非哨兵内容原样')
+  assert.ok(text.includes('source="wiki/凭据样例.md:1-8"'), '出处属性不受脱敏误伤（provenance 精确）')
+  assert.deepEqual(msg.source.sections, [{ name: 'kb-context', text }], 'sections 与 content 同文（同为中和后文本）')
+  assert.deepEqual(result.kbContext, { injected: true, degraded: 'redacted', detail: { redacted: 4 } }, '中和计数随 kbContext 状态返回')
+})
+
+test('§4.4 builder 级：文本体构建即中和（干净片段原样含框架标签）；零中和计数不留痕不加键', () => {
+  const input = buildInjectionInput([SENTINEL_HIT, HIT])
+  const text = input.content[0].text
+  assert.ok(!text.includes('sk-fakeOpenAIKey123456') && !text.includes('ghp_'), 'builder 产物进 createUserMessage 前已中和')
+  assert.ok(text.includes('<kb-context source="wiki/INDEX.md:3-12">索引目录总说明</kb-context>'), '干净片段原样（含框架标签）')
+  assert.equal((text.split('<redacted>').length - 1), 4)
+  assert.deepEqual(input.source.sections, [{ name: 'kb-context', text }])
+
+  // 计数 0 = 干净注入：沿 T5「无 degraded 不留痕（返回不加键）」语义
+  const h = harness()
+  return run(h, { text: 'wiki 成本核算' }).then(({ result, decision }) => {
+    assert.equal(result.messages.length, decision.messages.length + 1)
+    assert.ok(!('kbContext' in result), '零中和计数不留痕（N=0 不加键）')
+  })
+})
