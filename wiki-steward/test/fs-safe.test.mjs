@@ -200,6 +200,49 @@ test('realpathGuard 正例：普通/嵌套（exists:true）、新建路径（exi
   fs.rmSync(linkRoot, { recursive: true, force: true })
 })
 
+test('realpathGuard 负例（链式 symlink 逃逸，审查 Important #1）：两跳链末段缺失必拒 + 单跳/自环/深链；链全在 root 内不误拒', () => {
+  const dir = mkdtemp()
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-outside-'))
+  const rootReal = fs.realpathSync(dir)
+  try {
+    // 两跳链（审查同款探针）：a -> b（b 也在 root 内）、b -> root 外目录；末段缺失（outside/f.md 不存在）
+    fs.symlinkSync('b', path.join(dir, 'a'))
+    fs.symlinkSync(outside, path.join(dir, 'b'))
+    assert.deepEqual(realpathGuard(dir, 'a/f.md'), { ok: false, reason: 'symlink-escape' },
+      '两跳链围栏必须拒（修复前 {ok:true, exists:false} → 消费者按 real 写穿 root 外）')
+    // 同布景但末段存在：realpath 主判归一后越 root
+    fs.writeFileSync(path.join(outside, 'g.md'), 'OUT')
+    assert.deepEqual(realpathGuard(dir, 'a/g.md'), { ok: false, reason: 'outside-root' })
+    // 单跳：root 内 link -> root 外目录、末段缺失
+    fs.symlinkSync(outside, path.join(dir, 'one'))
+    assert.deepEqual(realpathGuard(dir, 'one/f.md'), { ok: false, reason: 'symlink-escape' })
+    // 自环：self -> self（与主判 ELOOP 同语义拒）
+    fs.symlinkSync('self', path.join(dir, 'self'))
+    assert.deepEqual(realpathGuard(dir, 'self/f.md'), { ok: false, reason: 'symlink-escape' })
+    assert.deepEqual(realpathGuard(dir, 'self'), { ok: false, reason: 'symlink-escape' })
+    // 深链（三跳）：x -> y -> z -> root 外目录、末段缺失
+    fs.symlinkSync('y', path.join(dir, 'x'))
+    fs.symlinkSync('z', path.join(dir, 'y'))
+    fs.symlinkSync(outside, path.join(dir, 'z'))
+    assert.deepEqual(realpathGuard(dir, 'x/f.md'), { ok: false, reason: 'symlink-escape' })
+    // 正例对照：链全在 root 内（p -> q -> sub）且末段缺失 → 放行 exists:false（fallback 不误拒）
+    fs.mkdirSync(path.join(dir, 'sub'))
+    fs.writeFileSync(path.join(dir, 'sub', 'ok.md'), 'x')
+    fs.symlinkSync('q', path.join(dir, 'p'))
+    fs.symlinkSync('sub', path.join(dir, 'q'))
+    assert.deepEqual(realpathGuard(dir, 'p/new.md'),
+      { ok: true, real: path.join(rootReal, 'p', 'new.md'), exists: false })
+    // 正例对照：链全在 root 内且末段存在 → 归一到真实路径
+    const e = realpathGuard(dir, 'p/ok.md')
+    assert.equal(e.ok, true)
+    assert.equal(e.exists, true)
+    assert.equal(e.real, path.join(rootReal, 'sub', 'ok.md'))
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+    fs.rmSync(outside, { recursive: true, force: true })
+  }
+})
+
 // ── ⑥ journal ────────────────────────────────────────────────────────────────
 
 test('journal 往返：既有文件 save → 改 → rollback 字节还原 + sha256/mode 对账', async () => {

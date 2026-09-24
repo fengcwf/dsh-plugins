@@ -10,7 +10,8 @@
 //                    永久持锁）。等待 waitMs 超时 → ELOCKTIMEOUT 上抛，临界区绝不执行。
 //   realpathGuard   — kb-context tools.js 同款围栏四步：形式拒 → realpath 归一（root 自身 symlink 也归一）
 //                    → root 归属判（path.relative 形防前缀拼接坑）→ dangling 外指逐段 lstat 判逃逸意图
-//                    （R17/INV-7：网络盘 symlink 逃逸必须拒）。返回软结果 {ok,…}，永不抛。
+//                    （R17/INV-7：网络盘 symlink 逃逸必须拒；链式多跳同样拒——fallback 对每跳归一目标
+//                    自身再 lstat 解到底，T8 fix round1 Important #1）。返回软结果 {ok,…}，永不抛。
 //   journalSave/Rollback — 改前快照/逆放最小原语（R19 dry-run 快照可逆、T12 journal 多文件事务由调用方
 //                    逐文件组合）：快照记 content+sha256+mode（hr98w 对账面），逆放经 writeAtomic 原子还原、
 //                    快照时不存在 → 逆放即删除（幂等）。
@@ -124,22 +125,37 @@ function isInsideRoot(rootReal, real) {
 }
 
 /**
- * dangling 外指面检查（目标缺失时启用）：现存段逐段 lstat，任一 symlink 的 readlink 解析点外指 root
- * （dangling 外指也算逃逸意图）判逃逸。已知限：链式 dangling 不递归展开——该角由 realpath 主判（文件存在时）兜住。
+ * dangling 外指面检查（目标缺失时启用；修复链式逃逸——审查 Important #1）：逐段行走，每段遇 symlink 就地
+ * 循环 readlink 归一，并对**归一目标自身**再 lstat 直至解到真实节点或越 root——绝不能在归一后直接跳到
+ * 下一段（修复前 `cur = resolved` 跳过对归一目标的 lstat，两跳链中间跳 b 指向 root 外时漏判，随后对
+ * 后代的 lstat 中间解引用后 ENOENT 被当"真缺失"放行 → 围栏写穿）。判据：
+ *   任一跳归一后越 root → 逃逸（dangling 外指也算逃逸意图）；
+ *   链内自环/互指（归一路径重复）或 lstat ELOOP → 与主判 ELOOP 同语义判逃逸；
+ *   lstat ENOENT/ENOTDIR 仅在链已全部解至真实节点后出现 → 真缺失、无外指面（放行 exists:false）。
+ * （修复前此处注释声称"链式 dangling 由 realpath 主判兜住"不实——外目录存在、仅末段缺失时 realpath
+ *   同样 ENOENT 走本 fallback。）
  */
 function symlinksEscape(rootReal, target) {
   let cur = rootReal
   for (const seg of path.relative(rootReal, target).split(path.sep)) {
     if (seg === '') continue
     cur = path.join(cur, seg)
-    let st
-    try { st = fs.lstatSync(cur) } catch { return false } // 该段起不存在：无外指面（真缺失）
-    if (!st.isSymbolicLink()) continue
-    let link
-    try { link = fs.readlinkSync(cur) } catch { return true } // 读不出链接：按不安全形拒
-    const resolved = path.resolve(path.dirname(cur), link)
-    if (!isInsideRoot(rootReal, resolved)) return true // 外指（dangling 也算逃逸意图）
-    cur = resolved // 单级归一后继续走剩余段
+    const seen = new Set() // 本段链内已归一路径（自环/互指判据）
+    for (;;) {
+      let st
+      try { st = fs.lstatSync(cur) } catch (e) {
+        if (e?.code === 'ELOOP') return true // 链内循环（与主判 ELOOP 同语义）
+        return false // 链已解尽后的真缺失：无外指面
+      }
+      if (!st.isSymbolicLink()) break // 本段解至真实节点 → 走下一段
+      let link
+      try { link = fs.readlinkSync(cur) } catch { return true } // 读不出链接：按不安全形拒
+      const resolved = path.resolve(path.dirname(cur), link)
+      if (!isInsideRoot(rootReal, resolved)) return true // 外指（dangling 也算逃逸意图）
+      if (seen.has(resolved)) return true // 自环/互指 → 与主判 ELOOP 同语义
+      seen.add(resolved)
+      cur = resolved // 归一后 **对归一目标自身继续 lstat**（链式下一跳在此暴露——不得跳段）
+    }
   }
   return false
 }

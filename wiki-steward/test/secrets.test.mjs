@@ -112,3 +112,32 @@ test('宁漏不误伤护栏：截断 PEM（有 BEGIN 无 END）不中和（已�
   assert.equal(out.text, truncated)
   assert.equal(out.count, 0)
 })
+
+test('②分级红action（审查 Important #2）：白名单高危 key 值贪心至空白边界全量中和，count 如实（!/& 不残留）', () => {
+  const cases = [
+    ['password=Tr0ub4dor&3', 'password=<redacted>', 1],
+    ['secret: p@ss!word', 'secret: <redacted>', 1],
+    ['token: abc!def&x 段尾散文', 'token: <redacted> 段尾散文', 1],
+    ['credential=x&y!', 'credential=<redacted>', 1],
+    ['形态：token: Bearer Tr0ub4dor&3', '形态：token: <redacted>', 1],
+  ]
+  for (const [input, want, count] of cases) {
+    const out = redact(input)
+    assert.equal(out.text, want, `全量中和失败（值尾残留）：${input}`)
+    assert.equal(out.count, count, `count 不如实：${input}`)
+    assert.ok(!out.text.includes('<redacted>&') && !out.text.includes('<redacted>!'),
+      `占位符后不得残留特殊字符开头值尾：${out.text}`)
+  }
+})
+
+test('②分级红action：白名单外 key 宁漏不动（db_password 等不回退）+ 词面提及（无分隔符）宁漏', () => {
+  for (const prose of [
+    'db_password=Sup3rVal&9',
+    'my_password_note=x!y 环境变量名非白名单',
+    'password 词面提及无分隔符不中和',
+  ]) {
+    const out = redact(prose)
+    assert.equal(out.text, prose, `白名单外/词面必须宁漏不动：${prose}`)
+    assert.equal(out.count, 0)
+  }
+})

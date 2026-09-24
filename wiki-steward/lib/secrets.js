@@ -3,12 +3,17 @@
 // 消费面（全量版）：capture 落盘前、alert 追加前、queue payload 序列化前、注入面统一走本函数（T9/T13 消费）。
 // 三层正则：
 //   ① PEM 整块（-----BEGIN<标签>----- … -----END<标签>-----）→ 整块 `<redacted>`
-//   ② 赋值形态（key 名白名单 × 分隔符 × 值）→ **只换值保 key 名**（`api_key=…` → `api_key=<redacted>`）
+//   ② 赋值形态（高危 key 白名单 × 分隔符 × 值）→ **只换值保 key 名**（`api_key=…` → `api_key=<redacted>`）
+//      分级红action（审查 Important #2 裁定）：白名单高危 key（ASSIGN_KEY 显式常量）值段**贪心吃至空白
+//      边界 `\S+`**——全量中和 + count 如实（密码含 !/& 极常见，删一半+谎报 count=假安全）；
+//      白名单外 key 维持宁漏不动（声明过的已知留白）。
 //   ③ token 形态（`sk-` / `gh[pousr]_` / `AKIA` / `xox[baprs]-` / `Bearer <token>`）→ 整段 `<redacted>`
 // 占位符 `<redacted>` + 计数返回（count = 中和次数，每次占位符写入计 1）。
 // ⚠️ 原则「over-redaction silently destroys memories」：中和面收窄到哨兵正则——非哨兵内容必须原样
-//   （disk-usage-20240101 / tokenizer: 词法分析 / task-sku 等不误伤）；②值限 ASCII token 字符（防把中文
-//   释义当值吞掉）+ `(?!<redacted>)` 重扫防护（防同一哨兵层间二次计数）+ `(?![\[{])` 不吞列表/映射值。
+//   （disk-usage-20240101 / tokenizer: 词法分析 / task-sku 等不误伤）；护栏：白名单外 key 与词面提及
+//   （无分隔符）宁漏不动 + `(?!<redacted>)` 重扫防护（防同一哨兵层间二次计数）+ `(?![\[{])` 不吞
+//   列表/映射结构值。分级裁定明示的代价：白名单 key 后以空白起头的说明文（如 `password: 必须 8 位`）
+//   会被当值首段吞——全量中和优先于防误伤（ruling 裁定）。
 // ⚠️ 顺序裁定：①→②→③。②在 ③前——`api_key=sk-…` 由 ②按赋值形态计 1 次（保 key 名），③不再重复匹配。
 // ⚠️ 已知留白（宁漏不误伤，与 kb-context redact.js 同表）：截断 PEM（有 BEGIN 无 END）、裸 base64/高熵段、
 //   小写 bearer、`github_pat_`、key 名不在白名单的赋值形态（如 authorization_code=）、③各形态尾长 <6。
@@ -21,21 +26,27 @@ export const REDACTED = '<redacted>'
 /** ① PEM 整块：BEGIN/END 标签内为非连字符字符（RSA PRIVATE KEY / PGP PRIVATE KEY BLOCK 等） */
 const PEM_BLOCK = /-----BEGIN[^-]*-----[\s\S]*?-----END[^-]*-----/g
 
-/** ② key 名白名单（\b 咬合防 my_token/嵌入词误伤）；长名优先（secret_key 先于 secret） */
+/**
+ * ② 高危 key 白名单（**分级红action 显式常量**，审查 Important #2 裁定：名单内值段贪心至空白边界全量
+ * 中和、名单外 key 宁漏不动）。`\b` 咬合防 my_token/嵌入词误伤；长名优先（secret_key 先于 secret）。
+ */
 const ASSIGN_KEY = [
   'api[_-]?keys?', 'apikeys?', 'secrets?[_-]?keys?', 'secrets?',
-  'access[_-]?keys?', 'private[_-]?keys?', 'client[_-]?secrets?',
+  'access[_-]?keys?', 'private[_-]?keys?', 'client[_-]?secrets?', 'credentials?',
   'access[_-]?tokens?', 'auth[_-]?tokens?', 'refresh[_-]?tokens?', 'tokens?',
   'passwords?', 'passwds?', 'pwds?', 'passphrases?', 'authorization',
 ].join('|')
 
 /**
- * ② 赋值形态：捕获组 1 = key 名+分隔符（整体保留）；值四选一整体中和——
- * 双引号整体 / 单引号整体 / Bearer 形（scheme 随值一起中和）/ ASCII token 裸值。
- * 防护：`(?!<redacted>)` 占位符不二次计数；`(?![\[{])` 不吞列表/映射；`(?!\bBearer\b)` 防裸值回退吞 scheme 单词。
+ * ② 赋值形态（分级红action，审查 Important #2）：捕获组 1 = key 名+分隔符（整体保留）；值四选一——
+ * 双引号整体 / 单引号整体 / Bearer 形（scheme 随值一起中和）/ 裸值；白名单高危 key 的值一律**贪心吃至
+ * 空白边界**（裸值与 Bearer 尾均为 `\S+`：`password=Tr0ub4dor&3` → `password=<redacted>` 全量中和
+ * count 如实，`!`/`&` 等特殊字符不再残留值尾）。
+ * 防护：`(?!<redacted>)` 占位符不二次计数；`(?![\[{])` 不吞列表/映射；`(?!\bBearer\b)` 防裸值回退吞 scheme 单词；
+ * Bearer 尾拒引号起头（引号起头归引号形/宁漏，防 `Bearer "a b"` 半截吞+谎报 count）。
  */
 const ASSIGN = new RegExp(
-  String.raw`(\b(?:${ASSIGN_KEY})\b\s*[:=：＝]+\s*)(?:"(?!<redacted>")[^"]*"|'(?!<redacted>')[^']*'|Bearer\s+(?!<redacted>)[A-Za-z0-9_\-./+~=@]{2,}|(?!<redacted>|Bearer\b|[\[{])[A-Za-z0-9_\-./+~=@]{2,})`,
+  String.raw`(\b(?:${ASSIGN_KEY})\b\s*[:=：＝]+\s*)(?:"(?!<redacted>")[^"]*"|'(?!<redacted>')[^']*'|Bearer\s+(?!<redacted>|["'])\S+|(?!<redacted>|Bearer\b|[\[{])\S+)`,
   'gi',
 )
 
