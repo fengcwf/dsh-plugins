@@ -1,8 +1,8 @@
-// diagnose — kb-context 空态五态诊断（T7，兑现验收 A4）：触发命中但检索零结果时给出可解释状态。
-// 职责边界：五态判定（纯函数）+ 信号提取 + hint 构造 + 观察面收集（fs 在场性 + 只读库查询）；
+// diagnose — kb-context 空态六态诊断（T7 + 调整轮：独立第六态 no-match 拆出，兑现验收 A4）：触发命中但检索零结果时给出可解释状态。
+// 职责边界：六态判定（纯函数）+ 信号提取 + hint 构造 + 观察面收集（fs 在场性 + 只读库查询）；
 // 检索归 lib/search.js（T3）、注入归 lib/inject.js（T5 缝 + T7 诊断消费）、索引构建归 lib/index-db.js（T2）
 // ——本文件只读观察，不建库、不迁移、不跑 validateIndex 全量校验（读路径零副作用纪律）。
-// ⚠️ 五态判据（确定性可测，A4 逐态有用例；优先级序 = 函数内判定顺序）：
+// ⚠️ 六态判据（确定性可测，A4 逐态有用例；优先级序 = 函数内判定顺序）：
 //   ① excluded — query 词元落 scope.grepOnDemand 根且**无一**落 scope.indexAll（T6：grepOnDemand=注册不索引；
 //      config scope 判、不依赖库健康——缺库也可判，建议动作是「用 wiki_read 直读」而非刷新）；
 //   ② indexing — `${activePath}.candidate` 候选库在场 = 构建进行中（copy-on-write：构建收尾自会清场，
@@ -12,18 +12,23 @@
 //      problems 非空 / degraded（refresh summary 位，当前读路径不跑全量校验、留缝给后续接线）；
 //   ④ no-text — 信号词元在 docs 有记录但该文档 chunk 全部空/仅空白（零 chunk 同判——空文件
 //      chunkText('') = []、仅空白文件 trim 后无实字）；
-//   ⑤ not-indexed — 兜底（**报告须写明的裁定**）：范围内信号无 docs 记录（判据字面）/ 索引库不存在 /
-//      docs 零记录 / 信号已索引有文本但查询词未命中（residual——诚实 hint 承载真相，状态收进同一桶）。
-// ⚠️ 优先级（裁定 2026-09-24）：excluded > indexing > failed > no-text > not-indexed。
+//   ⑤ not-indexed — 结构性缺索引：范围内信号无 docs 记录（判据字面）/ 索引库不存在 / docs 零记录 /
+//      观察面缺席但库在（防御兜底——docs 观察面不可用，无法证实「已入索引有文本」，不判 no-match）；
+//   ⑥ no-match（调整轮拆态，审前裁定① 2026-09-25）— **索引健康**（openDb 成功、无 openError/problems/
+//      degraded）且 docs 观察面在场证实：索引非空、范围内路径信号全有记录且非空白——此时零命中的唯一
+//      解释 = 词面未命中。**不并入 not-indexed**（错标：文件可能已被索引）。hint 给「改写关键词/确认主题在库」。
+// ⚠️ 优先级（裁定 2026-09-25 更新）：excluded > indexing > failed > no-text > not-indexed > no-match。
 //   excluded 最具体（等构建/修库都救不了 grep 目录）；indexing 压 failed（copy-on-write 构建正是在修坏库，
-//   「稍候」比「重建」可行动）；failed 压一切库观察面（打不开就没资格读 docs）；no-text 比缺记录更具体。
+//   「稍候」比「重建」可行动）；failed 压一切库观察面（打不开就没资格读 docs）；no-text 比缺记录更具体；
+//   no-match **垫底（第六位）**——它要求前五态全部不成立：任何结构性原因（缺库/缺文件/空文件/坏库/排除域）
+//   都比「检索系统一切正常、查询词没对上」更具体、更可行动。
 // ⚠️ hint 纪律：≤200 字符（EMPTY_STATE_HINT_MAX）+ 状态解释 + 建议动作；超长详情/信号 clip 后仍整体钳制。
 // ⚠️ normalizeEmptyState 是「wiki_search emptyState 软增、旧调用不破」的第一道闸：坏 state/坏 hint 一律丢弃，
-//   inject 零命中缝与 tools 执行层共用——消费侧永远只见合法五态。
+//   inject 零命中缝与 tools 执行层共用——消费侧永远只见合法六态。
 import fs from 'node:fs'
 
-/** 五态枚举（delta-spec 裁定口径字面） */
-export const EMPTY_STATES = Object.freeze(['not-indexed', 'indexing', 'failed', 'excluded', 'no-text'])
+/** 六态枚举（delta-spec 裁定口径字面 + 调整轮 no-match） */
+export const EMPTY_STATES = Object.freeze(['not-indexed', 'indexing', 'failed', 'excluded', 'no-text', 'no-match'])
 
 /** hint 上限（裁定：≤200 字符） */
 export const EMPTY_STATE_HINT_MAX = 200
@@ -98,7 +103,8 @@ export function classifySignals(query, scope = {}) {
 }
 
 /**
- * 五态判定（纯函数，永远返回 {state, hint}——绝不抛、绝不 null：兜底 not-indexed 承载 residual）。
+ * 六态判定（纯函数，永远返回 {state, hint}——绝不抛、绝不 null：词面未命中由 no-match 承载、
+ * 观察面缺席由 not-indexed 防御兜底）。
  * @param {string} query 零命中检索词（trigger 剥离后的 t.query）
  * @param {{
  *   scope?: {indexAll?: string[], grepOnDemand?: string[]},
@@ -163,26 +169,28 @@ export function diagnoseEmptyState(query, obs = {}) {
         hint: clampHint(`路径「${clip(missing.sig, SIG_CLIP)}」在索引范围内但未入索引。建议运行索引刷新。`),
       }
     }
-    // ⑤-c residual：已索引有文本但查询词未命中（诚实 hint 承载真相）
+    // ⑥ no-match（调整轮拆态，审前裁定①）：走到这里 = 索引健康（③ 无 openError/problems/degraded 已过）
+    //   + docs 在场证实非空、范围内路径全有记录非空白——词面未命中的终局解释（优先级垫底）
     return {
-      state: 'not-indexed',
-      hint: clampHint('查询词未在已索引内容中命中；若目标为新增/未索引文件，建议运行索引刷新。'),
+      state: 'no-match',
+      hint: clampHint('索引健康但查询词未命中。可改写关键词重试，或确认目标主题确在库中。'),
     }
   }
 
-  // ⑤-d 索引库不存在
+  // ⑤-c 索引库不存在
   if (obs.activeExists === false) {
     return { state: 'not-indexed', hint: clampHint('索引库不存在（尚未构建）。建议运行索引刷新。') }
   }
-  // ⑤-e 观察面缺席但库在（防御兜底）
+  // ⑤-d 观察面缺席但库在（防御兜底，生产不可达）：docs 观察面不可用 → 无法证实「已入索引有文本」，
+  //   不满足 no-match 判据前提，保持 not-indexed（刷新建议无害）
   return {
     state: 'not-indexed',
-    hint: clampHint('查询词未在已索引内容中命中；若目标为新增/未索引文件，建议运行索引刷新。'),
+    hint: clampHint('诊断观察面缺席（库在场但未读取 docs）；查询词未命中。建议运行索引刷新。'),
   }
 }
 
 /**
- * emptyState 软校验（消费侧唯一入口）：state ∈ 五态 且 hint 非空串 → 规范化（hint 钳 200）；否则 null。
+ * emptyState 软校验（消费侧唯一入口）：state ∈ 六态 且 hint 非空串 → 规范化（hint 钳 200）；否则 null。
  * wiki_search 旧调用/坏缝产物不破：非法值直接丢弃，消费侧按「无 emptyState」处理。
  */
 export function normalizeEmptyState(raw) {

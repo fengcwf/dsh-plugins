@@ -392,7 +392,7 @@ test('零命中回退缝：search 空命中且无 emptyState → identity（T5 �
   assert.equal(h.calls.createUser.length, 0, '零命中不得产生注入消息')
 })
 
-// ── S5b：T7 空态五态诊断注入（A4） ─────────────────────────────────────────────
+// ── S5b：T7 空态六态诊断注入（A4 + 调整轮裁定） ────────────────────────────────
 
 const EMPTY_STATE = { state: 'not-indexed', hint: '索引库不存在（尚未构建）。建议运行索引刷新。' }
 const EMPTY_SEARCH = async () => ({ hits: [], emptyState: EMPTY_STATE })
@@ -452,32 +452,66 @@ test('T7 INV-4 回归：未触发路径即使 search 将返回 emptyState → 0 
   assert.equal(h.calls.createUser.length, 0, '未触发 0 注入 0 token')
 })
 
-test('T7 去重三件套占名额：②同 turn ③同 query 10s ①可见面 SHA-1 各自拦截诊断重复注入', async () => {
-  // ② 同 turn 一次：第二次调用在检索前被挡
+test('T7 no-match 态注入（审前裁定①）：六态之一经 normalize 过闸照常注入，形状逐字钉住', async () => {
+  const es = { state: 'no-match', hint: '索引健康但查询词未命中。可改写关键词重试，或确认目标主题确在库中。' }
+  const h = harness({ search: async () => ({ hits: [], emptyState: es }) })
+  const { result, decision } = await run(h, { text: 'wiki 成本核算' })
+  assert.equal(result.messages.length, decision.messages.length + 1, 'no-match 诊断照常注入')
+  assert.equal(
+    result.messages.at(-1).content[0].text,
+    `<kb-context state="no-match" hint="${es.hint}">${es.hint}</kb-context>`,
+    'state="no-match" 属性 + hint 正文（裁定形状）',
+  )
+})
+
+test('T7 诊断注入不占②③ 名额（审前裁定②）：同 turn/同 query 不被②③预挡；① 可见面 SHA-1 仍防重复诊断', async () => {
+  // ②：诊断不记 turn 名额——同 turn 第二次不被②预挡（照常进入检索）
   const h = harness({ search: EMPTY_SEARCH })
   const a = await run(h, { turn: 1 })
-  assert.equal(a.result.messages.length, a.decision.messages.length + 1)
+  assert.equal(a.result.messages.length, a.decision.messages.length + 1, '首条诊断注入')
   const b = await run(h, { turn: 1 })
-  assert.equal(b.result, b.decision, '同 turn 第二次 identity')
-  assert.equal(h.calls.createUser.length, 1, '② 拦截后不再构造消息')
-  assert.equal(h.calls.search.length, 1, '② 挡在检索前（省多余检索）')
+  assert.equal(h.calls.search.length, 2, '② 未被诊断占用：同 turn 第二次照常进入检索（不再挡在检索前）')
 
-  // ③ 同 query 10s：换 turn 同 query 仍挡；窗口过期后放行
+  // ③：诊断不记 query 名额——换 turn 同 query、10s 窗口内照常进入检索
   const c = await run(h, { turn: 2 })
-  assert.equal(c.result, c.decision, '10s 窗口内同 query identity')
-  assert.equal(h.calls.search.length, 1, '③ 挡在检索前')
-  h.advance(10_000)
-  const d = await run(h, { turn: 3 })
-  assert.equal(d.result.messages.length, d.decision.messages.length + 1, '窗口过期重新注入')
-  assert.equal(h.calls.search.length, 2)
+  assert.equal(h.calls.search.length, 3, '③ 未被诊断占用：10s 窗内同 query 照常进入检索')
 
-  // ① 可见面 SHA-1：末条本插件消息与本次诊断同文 → identity（观察器缝注入首条产物）
-  const injected = d.result.messages.at(-1)
+  // ①：可见面末条同文诊断 → 仍拦截（防重复诊断刷屏——裁定保留①）
+  const injected = a.result.messages.at(-1)
   const h2 = harness({ search: EMPTY_SEARCH, surface: [injected] })
   const e = await run(h2, { turn: 9 })
   assert.equal(e.result, e.decision, '可见面已含同文诊断 → ① 拦截 identity')
   assert.equal(h2.calls.createUser.length, 1, '① 在构造后比对（createUser 调用过），但不再注入')
   assert.equal(e.result.messages.length, e.decision.messages.length, '消息零新增')
+})
+
+test('T7 诊断不占名额（审前裁定②）：同窗先诊断注入、随后真命中仍可注入；真片段注入才记名', async () => {
+  const replies = [
+    () => ({ hits: [], emptyState: EMPTY_STATE }), // 第一跳：零命中 → 诊断
+    () => ({ hits: [HIT] }), // 第二跳：真命中
+  ]
+  let i = 0
+  const h = harness({ search: async () => replies[Math.min(i++, replies.length - 1)]() })
+
+  // 同窗第一跳：诊断注入（同 turn=1、同 query、时钟不动 = 10s 窗内）
+  const a = await run(h, { turn: 1, text: 'wiki 成本核算' })
+  assert.equal(a.result.messages.length, a.decision.messages.length + 1)
+  assert.ok(a.result.messages.at(-1).content[0].text.startsWith('<kb-context state="not-indexed" hint='), '首条是诊断')
+
+  // 同窗第二跳：真命中照常注入——不被 ②（同 turn）/③（同 query 10s）挡（名额未被诊断占）
+  const b = await run(h, { turn: 1, text: 'wiki 成本核算' })
+  assert.notEqual(b.result, b.decision, '真片段注入不被诊断占的名额挡住')
+  assert.equal(b.result.messages.length, b.decision.messages.length + 1)
+  assert.ok(
+    b.result.messages.at(-1).content[0].text.includes('<kb-context source="wiki/INDEX.md:3-12">'),
+    '第二条是真片段注入（非诊断）',
+  )
+  assert.equal(h.calls.search.length, 2, '两跳都进入检索（诊断未写 ②③ 名额）')
+
+  // 真片段注入才记名：第三跳同 turn → ② 挡在检索前
+  const c = await run(h, { turn: 1, text: 'wiki 成本核算' })
+  assert.equal(c.result, c.decision, '真片段已占 ② 同 turn 名额 → 第三跳 identity')
+  assert.equal(h.calls.search.length, 2, '② 挡在检索前（0 多余检索）——仅真片段注入记名')
 })
 
 test('T7 config salvage + 零命中诊断：照常注入 + kbContext {injected:true, degraded:"config"}（INV-15）', async () => {

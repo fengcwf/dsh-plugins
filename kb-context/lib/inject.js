@@ -16,11 +16,13 @@
 //   漏检），占位符经 split/join 抽走回填保字面；框架标记（source 属性）**不过 redact**——防误伤出处（sk- 类
 //   路径名不得把 provenance 咬掉）。中和计数随 kbContext 状态返回（detail:{redacted:N}）。
 // ⚠️ timeoutMs:0（及负/非数）语义 = 立即超时而非不限时（与 T3 search 同语义）：不检索、fail-open 返回。
-// ⚠️ 去重①②③ 全部只在**实际注入**时占用名额：跳过不记录（compaction 自愈与后续重试由此成立）。
-// ⚠️ T7 空态五态诊断（A4）：触发命中+零命中+检索缝携带合法 emptyState → 注入一条短诊断
-//   `<kb-context state="五态" hint="≤200 解释+建议">…</kb-context>`（state/hint 属性 + hint 正文）；
+// ⚠️ 去重名额（调整轮裁定 2026-09-25）：②③（同 turn / 同 query 10s）只由**真片段注入**记名——诊断注入
+//   不写两槽（同窗随后真命中不被挡，与 T4「跳过不占名额」同精神）；①（可见面 SHA-1）无写入步骤、由可见面
+//   自然承载——同文诊断照旧被①拦（防重复诊断刷屏）；任何跳过路径不记录（compaction 自愈与后续重试由此成立）。
+// ⚠️ T7 空态六态诊断（A4 + 调整轮 no-match 拆态）：触发命中+零命中+检索缝携带合法 emptyState → 注入一条短诊断
+//   `<kb-context state="六态之一" hint="≤200 解释+建议">…</kb-context>`（state/hint 属性 + hint 正文）；
 //   **仅触发命中路径**——未触发仍 identity 早退 0 注入 0 token（INV-4 不破）；emptyState 缺位/非法
-//   （stub 或未诊断缝）回退 T5 零命中 identity；诊断消息与片段注入同纪律占①②③名额（实际注入才占）。
+//   （stub 或未诊断缝）回退 T5 零命中 identity；诊断注入不占 ②③ 名额（见上裁定），① 同文拦截仍生效。
 import { createHash } from 'node:crypto'
 import { Config, FACTORY_SCOPE } from './index.js'
 import { redact, REDACTED } from './redact.js'
@@ -81,7 +83,7 @@ export function buildInjectionText(hits) {
 }
 
 /**
- * T7 空态诊断文本体（裁定形状）：`<kb-context state="五态" hint="≤200 解释+建议">hint</kb-context>`。
+ * T7 空态诊断文本体（裁定形状）：`<kb-context state="六态之一" hint="≤200 解释+建议">hint</kb-context>`。
  * 属性走 escapeAttrValue（safeLabelValue 口径——hint 可含路径/引号，防属性逃逸与标签伪造）；
  * 正文走 safeBody 管线（redact 脱敏哨兵 → escapeText 防伪，与 T5 片段同管线）。返回中和计数供 kbContext 留痕。
  */
@@ -192,8 +194,8 @@ function rejectOnAbort(signal) {
  *   >0 时附 kbContext 留痕：degraded:'config' 优先、计数进 detail；N=0 干净注入不加键——沿「无 degraded
  *   不留痕」，测试钉住）。
  *
- * 去重三件套（全部只在实际注入时占用名额）：
- * ② 同 turn 一次：以 payload.turn（Object.is）单槽记忆——恒占一槽，无 Map 泄漏面；
+ * 去重三件套（②③ 只在真片段注入时记名——诊断不占，调整轮裁定）：
+ * ② 同 turn 一次：以 payload.turn（Object.is）单槽记忆——真片段注入占一槽，无 Map 泄漏面；
  * ③ 同 query 10s：query（trigger 剥离文本，delta-spec：直接作检索输入与去重键）→ 注入时刻表，
  *    每次访问剪除过期项（≤10s 流量窗口，有界）；
  * ① 可见面 SHA-1：见 lastRecallDigest（纯函数）——观察面经 observeSurface 缝注入（默认取
@@ -322,8 +324,8 @@ export function createPreStepHandler({
       }
       const hits = Array.isArray(result?.hits) ? result.hits : []
       if (hits.length === 0) {
-        // T7 空态五态诊断（仅触发命中路径，INV-4 不破）：合法 emptyState → 注入一条短诊断
-        //（与片段注入同管线：INV-5 键集 / INV-11 转义+中和 / ①②③ 同纪律占名额）；
+        // T7 空态六态诊断（仅触发命中路径，INV-4 不破）：合法 emptyState → 注入一条短诊断
+        //（与片段注入同管线：INV-5 键集 / INV-11 转义+中和）；
         // 缺位/非法（stub 或未诊断缝）→ 回退 T5 零命中 identity
         const es = normalizeEmptyState(result?.emptyState)
         if (es === null) return skip(decision, configDegraded, 'zero-hits')
@@ -336,10 +338,9 @@ export function createPreStepHandler({
         if (digestOf(visibleText(message)) === lastRecallDigest(surface)) {
           return skip(decision, configDegraded, 'dedup-surface')
         }
-        // 诊断是实际注入 → 占②③名额（与片段注入同纪律；跳过不记录语义不变）
-        hasInjectedTurn = true
-        lastInjectedTurn = payload?.turn
-        recentQueries.set(t.query, ts)
+        // 诊断不占 ②③ 名额（审前裁定②）：不写 turn/query 槽——同窗随后真命中仍可注入
+        //（仅真片段注入记名，与 T4「跳过不占名额」同精神）；① 可见面 SHA-1 无需写——
+        // 同文诊断由可见面自然拦截（上面 dedup-surface 检查），防重复诊断刷屏
         const out = { ...decision, messages: [...(decision.messages ?? []), message] }
         if (configDegraded !== null || redacted > 0) {
           out.kbContext = diag(true, configDegraded ?? 'redacted', undefined, redacted > 0 ? { redacted } : undefined)

@@ -1,7 +1,8 @@
-// diagnose 单测（T7 空态五态诊断）：五态确定性判据 + 优先级序 + hint ≤200 + 信号提取 + collector 真 T2 库集成。
-// 必含（brief 钉住 / A4 逐态用例）：①五态各 1 例（判据确定性、不依赖时钟/网络）②优先级序（excluded >
-//   indexing > failed > no-text > not-indexed）③hint ≤200 字符含建议动作 ④normalizeEmptyState 软校验
-//   （坏 state/hint 丢弃——旧调用不破的第一道闸）⑤collector 对缺库/空白文件/仅空白文件的真库实证。
+// diagnose 单测（T7 空态六态诊断，调整轮：独立第六态 no-match 拆出）：六态确定性判据 + 优先级序 +
+//   hint ≤200 + 信号提取 + collector 真 T2 库集成。
+// 必含（brief 钉住 / A4 逐态用例 + 审前裁定①）：①六态各 1 例（判据确定性、不依赖时钟/网络）
+//   ②优先级序（excluded > indexing > failed > no-text > not-indexed > no-match）③hint ≤200 字符含建议动作
+//   ④normalizeEmptyState 软校验（坏 state/hint 丢弃——旧调用不破的第一道闸）⑤collector 对缺库/空白文件/仅空白文件的真库实证。
 // stub 边界纪律：docs 观察面用纯函数替身（判定逻辑被测）；collector 集成走真 T2 openDb+applyIncremental。
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -56,7 +57,7 @@ function makeVault(t, files) {
   return dir
 }
 
-// ── 五态判据（A4 逐态用例） ────────────────────────────────────────────────────
+// ── 六态判据（A4 逐态用例 + 调整轮 no-match 拆态） ──────────────────────────────
 
 test('五态① excluded：query 词元落 grepOnDemand 且不落 indexAll——配置 scope 判、缺库也可判', () => {
   // activeExists:false（缺库）也必须判 excluded——excluded 不依赖索引库健康
@@ -107,7 +108,7 @@ test('五态④ no-text：docs 有记录但 chunk 空/仅空白（空文件与�
   assert.ok(b.hint.length <= EMPTY_STATE_HINT_MAX)
 })
 
-test('五态⑤ not-indexed 四变体：范围内无记录 / 缺库 / 空索引 / residual 兜底（各自 hint 可解释）', () => {
+test('五态⑤ not-indexed 三变体：范围内无记录 / 缺库 / 空索引（residual 已拆独立 no-match 态）', () => {
   // a. 路径在 scope 内但 docs 无此文件记录（判据字面）
   const a = diagnoseEmptyState('wiki/newpage.md', baseObs({
     docs: { count: 1, find: () => null },
@@ -126,16 +127,44 @@ test('五态⑤ not-indexed 四变体：范围内无记录 / 缺库 / 空索引 
   assert.equal(c.state, 'not-indexed')
   assert.ok(c.hint.includes('索引库为空'), '空索引变体 hint')
 
-  // d. residual：文件已索引有文本但查询词未命中（兜底，状态仍可解释 + 建议）
-  const d = diagnoseEmptyState('某种查不到的词', baseObs())
-  assert.equal(d.state, 'not-indexed')
-  assert.ok(d.hint.includes('未在已索引内容中命中'), 'residual hint 如实说明内容未命中')
-  for (const r of [a, b, c, d]) assert.ok(r.hint.length <= EMPTY_STATE_HINT_MAX)
+  for (const r of [a, b, c]) assert.ok(r.hint.length <= EMPTY_STATE_HINT_MAX)
+})
+
+test('六态⑥ no-match：索引健康（无 problems/degraded）+ 目标已入索引 + 词面未命中——独立判据 + 优先级垫底（审前裁定①）', () => {
+  assert.ok(EMPTY_STATES.includes('no-match'), 'no-match ∈ 六态枚举')
+
+  // 正例：健康索引、docs 有文本记录、范围内路径无缺——唯一解释 = 词面未命中（原 not-indexed residual 拆出）
+  const r = diagnoseEmptyState('某种查不到的词', baseObs())
+  assert.equal(r.state, 'no-match')
+  assert.ok(r.hint.includes('索引健康'), 'hint 点明索引健康前提')
+  assert.ok(r.hint.includes('未命中'), 'hint 说明词面未命中')
+  assert.match(r.hint, /改写关键词/, 'hint 给建议动作（改写关键词）')
+  assert.match(r.hint, /确认.*主题/, 'hint 给建议动作（确认主题在库）')
+  assert.ok(r.hint.length <= EMPTY_STATE_HINT_MAX)
+
+  // in-scope 路径已入索引有文本 + 混合信号（不判 excluded）→ no-match（域在索引范围）
+  const m = diagnoseEmptyState('wiki/cost 01-客户资料', baseObs())
+  assert.equal(m.state, 'no-match')
+
+  // 优先级垫底：任何结构性原因都压 no-match（逐对压制实证）
+  assert.equal(diagnoseEmptyState('wiki/newpage.md', baseObs({ docs: { count: 1, find: () => null } })).state, 'not-indexed', '缺记录压 no-match')
+  assert.equal(diagnoseEmptyState('wiki 成本', baseObs({ docs: { count: 0, find: () => null } })).state, 'not-indexed', '空库压 no-match')
+  assert.equal(diagnoseEmptyState('wiki 成本', baseObs({ activeExists: false, docs: null })).state, 'not-indexed', '缺库压 no-match')
+  assert.equal(
+    diagnoseEmptyState('wiki/blank.md', baseObs({ docs: { count: 1, find: () => ({ path: 'wiki/blank.md', blank: true }) } })).state,
+    'no-text', '空白文档压 no-match',
+  )
+  assert.equal(diagnoseEmptyState('wiki x', baseObs({ openError: 'boom', docs: null })).state, 'failed', '坏库压 no-match')
+  assert.equal(diagnoseEmptyState('01-客户资料 合同', baseObs({ docs: null })).state, 'excluded', '排除域压 no-match')
+  assert.equal(diagnoseEmptyState('wiki x', baseObs({ candidateExists: true, docs: null })).state, 'indexing', '构建中压 no-match')
+
+  // 观察面缺席但库在（⑤ 防御兜底，生产不可达）：docs 观察面缺席无法证实「已入索引有文本」→ 保持 not-indexed
+  assert.equal(diagnoseEmptyState('查不到的词', baseObs({ docs: null })).state, 'not-indexed', '观察面缺席不判 no-match')
 })
 
 // ── 优先级序 ───────────────────────────────────────────────────────────────────
 
-test('优先级：excluded > indexing > failed > no-text > not-indexed（逐对压制实证）', () => {
+test('优先级：excluded > indexing > failed > no-text > not-indexed > no-match（逐对压制实证）', () => {
   // excluded 压 indexing/failed（grep 目录等构建也没用——config 判据最具体）
   assert.equal(
     diagnoseEmptyState('01-客户资料/合同.md', baseObs({ candidateExists: true, openError: 'boom', docs: null })).state,
@@ -165,24 +194,25 @@ test('优先级：excluded > indexing > failed > no-text > not-indexed（逐对�
 test('excluded 判定否定面：query 同时落 indexAll（混合信号）不判 excluded——in-scope 优先走库判', () => {
   const r = diagnoseEmptyState('wiki/cost 01-客户资料', baseObs())
   assert.notEqual(r.state, 'excluded')
-  assert.equal(r.state, 'not-indexed', 'in-scope 信号已索引有文本 → residual')
+  assert.equal(r.state, 'no-match', 'in-scope 信号已索引有文本 → 词面未命中（调整轮拆态）')
 })
 
 // ── hint 纪律 ──────────────────────────────────────────────────────────────────
 
-test('hint 纪律：五态 hint 全部非空且 ≤200；病态长 query/长详情也钳制', () => {
+test('hint 纪律：六态 hint 全部非空且 ≤200；病态长 query/长详情也钳制', () => {
   const fixtures = [
     diagnoseEmptyState('01-客户资料/x', baseObs()),
     diagnoseEmptyState('wiki x', baseObs({ candidateExists: true })),
     diagnoseEmptyState('wiki x', baseObs({ openError: 'E'.repeat(500), docs: null })),
     diagnoseEmptyState('wiki/blank.md', baseObs({ docs: { count: 1, find: () => ({ path: 'wiki/blank.md', blank: true }) } })),
+    diagnoseEmptyState('wiki/newpage.md', baseObs({ docs: { count: 1, find: () => null } })),
     diagnoseEmptyState('查不到的词', baseObs()),
   ]
-  assert.deepEqual(fixtures.map((f) => f.state), ['excluded', 'indexing', 'failed', 'no-text', 'not-indexed'])
+  assert.deepEqual(fixtures.map((f) => f.state), ['excluded', 'indexing', 'failed', 'no-text', 'not-indexed', 'no-match'])
   for (const f of fixtures) {
     assert.ok(typeof f.hint === 'string' && f.hint.length > 0, 'hint 非空')
     assert.ok(f.hint.length <= EMPTY_STATE_HINT_MAX, `hint ≤200（${f.state}: ${f.hint.length}）`)
-    assert.ok(EMPTY_STATES.includes(f.state), 'state ∈ 五态枚举')
+    assert.ok(EMPTY_STATES.includes(f.state), 'state ∈ 六态枚举')
   }
   // 病态长 query（1000 字符信号）：仍钳制
   const long = diagnoseEmptyState(`wiki/${'a'.repeat(1000)}.md`, baseObs({ docs: { count: 0, find: () => null } }))
@@ -219,6 +249,11 @@ test('classifySignals：空 query/空 scope 安全（空数组，不抛）', () 
 test('normalizeEmptyState：合法透传 + hint 钳 200；坏 state/坏 hint/缺键一律 null（旧调用不破）', () => {
   const ok = normalizeEmptyState({ state: 'not-indexed', hint: '运行索引刷新' })
   assert.deepEqual(ok, { state: 'not-indexed', hint: '运行索引刷新' })
+  assert.deepEqual(
+    normalizeEmptyState({ state: 'no-match', hint: '索引健康但查询词未命中' }),
+    { state: 'no-match', hint: '索引健康但查询词未命中' },
+    'no-match 合法透传（六态软增）',
+  )
   assert.equal(normalizeEmptyState({ state: 'not-indexed', hint: 'x'.repeat(500) }).hint.length, 200, '超长 hint 钳 200')
   assert.equal(normalizeEmptyState({ state: 'bogus', hint: 'x' }), null, '非枚举 state 丢弃')
   assert.equal(normalizeEmptyState({ state: 'not-indexed' }), null, '缺 hint 丢弃')
@@ -320,7 +355,7 @@ test('runSearch 真缝 e2e：缺库 not-indexed / 坏库 failed（不抛）/ 候
   assert.ok(r3.emptyState.hint.includes('构建进行中'))
 })
 
-test('runSearch 真缝 e2e：空白文件 no-text / grepOnDemand excluded / residual not-indexed；命中与 timeout 不产 emptyState', async (t) => {
+test('runSearch 真缝 e2e：空白文件 no-text / grepOnDemand excluded / residual no-match；命中与 timeout 不产 emptyState', async (t) => {
   const { runSearch } = await import('../lib/index.js')
   const { openDb, registerScope, applyIncremental } = await import('../lib/index-db.js')
   const origHome = process.env.HOME
@@ -348,11 +383,12 @@ test('runSearch 真缝 e2e：空白文件 no-text / grepOnDemand excluded / resi
   assert.equal(r2.emptyState?.state, 'excluded')
   assert.ok(r2.emptyState.hint.includes('wiki_read'))
 
-  // ⑥ residual：索引健康、内容未命中 → not-indexed（诚实 hint）
+  // ⑥ residual：索引健康、内容未命中 → no-match（调整轮拆态，独立判据+hint）
   const r3 = runSearch('查不到的词', { scope: SCOPE })
   assert.deepEqual(r3.hits, [])
-  assert.equal(r3.emptyState?.state, 'not-indexed')
-  assert.ok(r3.emptyState.hint.includes('未在已索引内容中命中'))
+  assert.equal(r3.emptyState?.state, 'no-match')
+  assert.ok(r3.emptyState.hint.includes('索引健康但查询词未命中'), 'no-match hint 如实说明健康但词面未命中')
+  assert.ok(r3.emptyState.hint.includes('改写关键词'), 'no-match hint 给建议动作')
 
   // 软增边界：命中不产 emptyState；timeout 降级不产（timeout 自解释）
   const r4 = runSearch('成本核算', { scope: SCOPE })

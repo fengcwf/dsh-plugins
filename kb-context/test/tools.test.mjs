@@ -453,7 +453,7 @@ test('wiki_search emptyState 软增：零命中透传 + 命中不带 + 缺位/�
   assert.equal(out5.emptyState.hint.length, 200, 'hint 钳 200')
 })
 
-test('wiki_search output.schema 增可选 emptyState（五态 enum + 顶层可选）+ description 写明 + render 含键', async () => {
+test('wiki_search output.schema 增可选 emptyState（六态 enum + 顶层可选）+ description 写明 + render 含键', async () => {
   const [ws] = buildTools({
     defineTool,
     search: () => ({ hits: [], emptyState: EMPTY_STATE_ES }), // T3 缝契约：同步返回对象（async stub 会拿到 Promise）
@@ -466,11 +466,12 @@ test('wiki_search output.schema 增可选 emptyState（五态 enum + 顶层可�
   assert.equal(schema.properties.emptyState.type, 'object')
   assert.equal(schema.properties.emptyState.additionalProperties, false)
   assert.deepEqual(schema.properties.emptyState.properties.state.enum,
-    ['not-indexed', 'indexing', 'failed', 'excluded', 'no-text'], '五态 enum 字面')
+    ['not-indexed', 'indexing', 'failed', 'excluded', 'no-text', 'no-match'], '六态 enum 字面（含调整轮 no-match）')
   assert.deepEqual(schema.properties.emptyState.required, ['state', 'hint'], 'defineTool 编译提升对象级 required（内层两键必填）')
   assert.equal(schema.properties.emptyState.properties.hint.type, 'string')
   assert.ok(ws.description.includes('emptyState'), 'description 写明软增键')
-  assert.ok(ws.description.includes('not-indexed'), 'description 写明五态字面')
+  assert.ok(ws.description.includes('not-indexed'), 'description 写明六态字面')
+  assert.ok(ws.description.includes('no-match'), 'description 写明 no-match（调整轮）')
 
   // render：JSON 输出含 emptyState（模型可见）
   const value = await ws.execute({ query: 'x' }, EXEC)
