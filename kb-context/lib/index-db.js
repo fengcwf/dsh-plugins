@@ -34,11 +34,75 @@ export function bodyHash(body) {
 
 /**
  * SQLite trigram 分词的 JS 同口径实现（候选校验一致性对账用）。
- * 实测口径（/tmp/kbprobe 探针 5）：先大小写折叠（toLowerCase）再按码点滑窗取三元组；
- * 不足 3 字符 → 空集（短词盲区由 T3 LIKE 兜底）。
+ * 口径（fix round 1 探针实测 /tmp/kbprobe-t2fix1，Node v24.14.1 内置 SQLite）：
+ * - 默认 trigram **折叠大小写**（等价 case_sensitive 0），且折叠**逐码点 1:1**——
+ *   ⚠️ 整串 toLowerCase() 是结构性错误：İ(U+0130) 会扩散成 i+U+0307 两码点、滑窗整体错位；
+ *   折叠语义下 İ 保持原码点（simple folding 只有全折叠映射，逐码点折叠不动它）。
+ * - SQLite 折叠表与 JS toLowerCase 有两类系统性分歧（fix round 1 全码点逐项对账：
+ *   1112063 码点零分歧，探针输出见 task-2-report.md fix 报告）：
+ *   FOLD_REMAP：simple folding 专属映射（ς→σ、ſ→s、µ→μ、ͅ→ι、ϐ→β、ẛ→ṡ…，含 FFFE/FFFF→FFFD）；
+ *   FOLD_KEEP：JS 会动而 SQLite 保持原码点（切罗基 Ꭰ-Ᏽ、格鲁吉亚 겐-Ჿ、Osage/Adlam/Vithkuqi/
+ *   Old Hungarian 等 SQLite 折叠表未覆盖的大小写块 + 037F/0528 等特例）。
+ * - 不足 3 字符 → 空集（短词盲区由 T3 LIKE 兜底）。
  */
+const FOLD_REMAP = new Map([
+  [0x00B5, 0x03BC],
+  [0x017F, 0x0073],
+  [0x0345, 0x03B9],
+  [0x03C2, 0x03C3],
+  [0x03D0, 0x03B2],
+  [0x03D1, 0x03B8],
+  [0x03D5, 0x03C6],
+  [0x03D6, 0x03C0],
+  [0x03F0, 0x03BA],
+  [0x03F1, 0x03C1],
+  [0x03F5, 0x03B5],
+  [0x1E9B, 0x1E61],
+  [0x1FBE, 0x03B9],
+  [0xFFFE, 0xFFFD],
+  [0xFFFF, 0xFFFD],
+])
+const FOLD_KEEP_RANGES = [
+  [0x13A0, 0x13F5],
+  [0x1C90, 0x1CBA],
+  [0x1CBD, 0x1CBF],
+  [0xA7AB, 0xA7AE],
+  [0xA7B0, 0xA7B4],
+  [0xA7C4, 0xA7C7],
+  [0xA7CB, 0xA7CC],
+  [0x104B0, 0x104D3],
+  [0x10570, 0x1057A],
+  [0x1057C, 0x1058A],
+  [0x1058C, 0x10592],
+  [0x10594, 0x10595],
+  [0x10C80, 0x10CB2],
+  [0x10D50, 0x10D65],
+  [0x118A0, 0x118BF],
+  [0x16E40, 0x16E5F],
+  [0x16EA0, 0x16EB8],
+  [0x1E900, 0x1E921],
+]
+const FOLD_KEEP_SINGLES = new Set([
+  0x037F, 0x0528, 0x052A, 0x052C, 0x052E, 0x1C89, 0x2C2F, 0xA698,
+  0xA69A, 0xA796, 0xA798, 0xA79A, 0xA79C, 0xA79E, 0xA7B6, 0xA7B8,
+  0xA7BA, 0xA7BC, 0xA7BE, 0xA7C0, 0xA7C2, 0xA7C9, 0xA7CE, 0xA7D0,
+  0xA7D2, 0xA7D4, 0xA7D6, 0xA7D8, 0xA7DA, 0xA7DC, 0xA7F5,
+])
+
+/** 单码点折叠（1:1 恒单码点）：与 SQLite fts5 折叠表实测对齐 */
+function foldCodePoint(cp) {
+  const remap = FOLD_REMAP.get(cp)
+  if (remap !== undefined) return remap
+  if (FOLD_KEEP_SINGLES.has(cp)) return cp
+  for (const [lo, hi] of FOLD_KEEP_RANGES) {
+    if (cp >= lo && cp <= hi) return cp
+  }
+  const lower = String.fromCodePoint(cp).toLowerCase()
+  return [...lower].length === 1 ? lower.codePointAt(0) : cp // 扩散（İ）→ 保持原码点
+}
+
 export function trigramTerms(text) {
-  const chars = [...String(text ?? '').toLowerCase()]
+  const chars = [...String(text ?? '')].map((ch) => String.fromCodePoint(foldCodePoint(ch.codePointAt(0))))
   const terms = new Set()
   for (let i = 0; i + 3 <= chars.length; i++) terms.add(chars.slice(i, i + 3).join(''))
   return terms
@@ -483,6 +547,38 @@ export function validateIndex(db) {
   return { ok: problems.length === 0, problems }
 }
 
+/**
+ * revision 基数：只读查询活跃库 meta.revision（Important#2 修复项）。
+ * ⚠️ 严禁走 openDb()=ensureSchema 做探针：那会在任何校验门之前对活跃库原地
+ * ('rebuild')/DROP 触发器/UPDATE meta——破坏「失败候选即弃、旧索引字节级原样保留」。
+ * ⚠️ 只读打开 WAL 库仍会新生成空 -shm/-wal（实测）：探针只清自己引入的 sidecar，
+ * 活跃库既有文件一律不动（字节级 + 文件清单双重原样）。
+ * 读失败/非法值 → 按 0 计并留痕 problems + degraded:'revision-probe'（INV-15 禁静默，
+ * 旧版 `catch { 0 }` 吞错会让 revision 静默回退 7→1，破「单调 +1 不回退」）。
+ */
+function readBaseRevision(activePath, summary) {
+  if (!fs.existsSync(activePath)) return 0
+  const hadWal = fs.existsSync(`${activePath}-wal`)
+  const hadShm = fs.existsSync(`${activePath}-shm`)
+  let probe = null
+  try {
+    probe = new DatabaseSync(activePath, { readOnly: true })
+    const row = probe.prepare(`SELECT value FROM meta WHERE key='revision'`).get()
+    if (row === undefined) return 0 // 无 revision 键：按 0（初始化口径，非错误）
+    const n = Number(row.value)
+    if (!Number.isFinite(n) || n < 0) throw new Error(`meta.revision 非法值 ${JSON.stringify(row.value)}`)
+    return Math.trunc(n)
+  } catch (e) {
+    summary.problems.push(`revision 基数读取失败（按 0 计）：${String(e?.message || e)}`)
+    summary.degraded = 'revision-probe'
+    return 0
+  } finally {
+    try { probe?.close() } catch { /* 尽力关闭 */ }
+    if (!hadWal) try { fs.rmSync(`${activePath}-wal`, { force: true }) } catch { /* 尽力清理 */ }
+    if (!hadShm) try { fs.rmSync(`${activePath}-shm`, { force: true }) } catch { /* 尽力清理 */ }
+  }
+}
+
 function dropFileWithSidecars(p) {
   for (const suf of ['', '-wal', '-shm']) {
     try { fs.rmSync(`${p}${suf}`, { force: true }) } catch { /* 尽力清理 */ }
@@ -502,17 +598,8 @@ export function refresh({ activePath, vaultRoot, scope, files, validate = valida
   fs.mkdirSync(path.dirname(activePath), { recursive: true })
   dropFileWithSidecars(candidatePath)
 
-  // revision 基数：活跃库 meta（读不到按 0）
-  let baseRevision = 0
-  if (fs.existsSync(activePath)) {
-    try {
-      const probe = openDb(activePath)
-      baseRevision = Number(metaGet(probe, 'revision') ?? 0)
-      probe.close()
-    } catch { baseRevision = 0 }
-  }
-
   const summary = { activated: false, degraded: null, rebuilt: false, revision: null, problems: [], counts: null }
+  const baseRevision = readBaseRevision(activePath, summary)
   const attempts = fs.existsSync(activePath) ? [false, true] : [true]
   let lastProblems = ['candidate build failed']
   let prevAttemptFailed = false
@@ -560,6 +647,6 @@ export function refresh({ activePath, vaultRoot, scope, files, validate = valida
 
   dropFileWithSidecars(candidatePath)
   summary.degraded = 'validation'
-  summary.problems = lastProblems
+  summary.problems.push(...lastProblems) // 不覆盖探针留痕（INV-15：所有问题都要在场）
   return summary
 }

@@ -597,3 +597,105 @@ test('批量增量回归：单文件失败不得吞掉后续文件（splice 迭�
   ], 'a 回滚保旧体 + b 已换新体')
   assert.ok(rows(db, `SELECT content FROM chunks`).some((c) => c.content.includes('B 篇换后')), 'b 的块已换新')
 })
+
+// ── Fix round 1（审查 Important#1/#2 回归锁定）：折叠口径对账 + revision 探针纪律 ──
+
+test('trigram parity回归：İstanbul ÜBER Привет ς Σ café 真库逐项对账（Important#1）', async (t) => {
+  const PROBE_TEXT = 'İstanbul ÜBER Привет ς Σ café'
+  const vault = makeVault(t, { 'wiki/parity.md': PROBE_TEXT })
+  const db = openDb(path.join(tmpDir(t), 'idx.db'))
+  t.after(() => db.close())
+  db.exec(`CREATE VIRTUAL TABLE vins USING fts5vocab(chunks_fts, 'instance')`)
+  applyIncremental(db, { vaultRoot: vault, scope: SCOPE, files: ['wiki/parity.md'] })
+
+  // 逐项对账：JS trigramTerms vs SQLite fts5vocab(chunks_fts,'instance')，一项都藏不住
+  assertIndexParity(db, '命题串 JS/SQLite 词表对账不一致（折叠口径分歧）')
+  // 激活门视角：validateIndex ⑤ 不得对该串假阳性（审查原文的失败模式）
+  assert.deepEqual(validateIndex(db).problems, [], 'validateIndex ⑤ 假阳性')
+})
+
+test('trigramTerms：逐码点 1:1 折叠对齐 FTS5（İ 不增殖、ς/ſ/µ 折叠、ı/ß/切罗基保持）', () => {
+  // İ(U+0130)：折叠保持原码点——整串 toLowerCase 会扩散 i+U+0307、滑窗整体错位（审查根因）
+  assert.deepEqual([...trigramTerms('İst')], ['İst'])
+  assert.deepEqual([...trigramTerms('İİİ')], ['İİİ'], 'İ增殖 = 滑窗错位')
+  assert.ok(trigramTerms('aςb').has('aσb'), 'ς→σ（simple folding 专属映射）')
+  assert.ok(trigramTerms('aſb').has('asb'), 'ſ→s')
+  assert.ok(trigramTerms('aµb').has('aμb'), 'µ(MICRO SIGN)→μ')
+  assert.ok(trigramTerms('aıb').has('aıb'), 'ı(dotless) 保持')
+  assert.ok(trigramTerms('aßb').has('aßb'), 'ß 保持（大写扩散不回流）')
+  assert.ok(trigramTerms('aᎠb').has('aᎠb'), '切罗基大写保持（SQLite 折叠表未覆盖）')
+  assert.ok(trigramTerms('aÉb').has('aéb') && trigramTerms('aéb').has('aéb'), 'É/é→é')
+})
+
+test('refresh：revision 基数只读取活跃库 meta——openDb 会炸的继承腐坏下仍单调 +1（Important#2①）', async (t) => {
+  const vault = makeVault(t, { 'wiki/a.md': '第一篇内容甲乙丙丁' })
+  const activePath = path.join(tmpDir(t), 'kb-index.db')
+  const files = ['wiki/a.md']
+  refresh({ activePath, vaultRoot: vault, scope: SCOPE, files })
+
+  // 制造「meta 可读但 openDb 必炸」的活跃库（审查原文场景）：external content 指向不存在的
+  // chunk 表 + 缺触发器 → ensureSchema 的 ('rebuild') 必炸 no such table——旧版探针吞错按 0 计，
+  // revision 7 → 新激活 1，「单调 +1（重建也不回退）」被静默打破
+  {
+    const db = new DatabaseSync(activePath)
+    db.exec(`UPDATE meta SET value='7' WHERE key='revision'`)
+    db.exec(`DROP TRIGGER ad`)
+    db.exec(`DROP TABLE chunks_fts`)
+    db.exec(`CREATE VIRTUAL TABLE chunks_fts USING fts5(content, content='chunk', content_rowid='fts_rowid', tokenize='trigram')`)
+    db.close()
+  }
+
+  const res = refresh({ activePath, vaultRoot: vault, scope: SCOPE, files })
+  assert.equal(res.activated, true, JSON.stringify(res))
+  assert.equal(res.rebuilt, true, '继承腐坏候选被拒 → 全量重建')
+  assert.equal(res.revision, 8, 'revision 单调 +1（重建也不回退）：基数=活跃库 meta 7')
+  assert.deepEqual(res.problems, [], '探针可读时无问题留痕')
+  assert.equal(res.degraded, null)
+
+  const db = openDb(activePath)
+  t.after(() => db.close())
+  assert.equal(db.prepare(`SELECT value FROM meta WHERE key='revision'`).get().value, '8')
+  assert.equal(validateIndex(db).ok, true, '重建后过检')
+})
+
+test('refresh：revision 探针吞错必须留痕（INV-15 禁静默）', async (t) => {
+  const vault = makeVault(t, { 'wiki/a.md': '第一篇内容甲乙丙丁' })
+  const activePath = path.join(tmpDir(t), 'kb-index.db')
+  fs.writeFileSync(activePath, 'this is not a sqlite database') // 探针必炸的活跃库
+
+  const res = refresh({ activePath, vaultRoot: vault, scope: SCOPE, files: ['wiki/a.md'] })
+  assert.equal(res.activated, true, JSON.stringify(res))
+  assert.equal(res.revision, 1, '基数无从读取 → 按 0 计')
+  assert.equal(res.degraded, 'revision-probe', '降级标记留痕')
+  assert.equal(res.problems.length, 1, 'problems 必须记录探针失败原因（禁静默）')
+  assert.match(res.problems[0], /revision 基数读取失败/)
+})
+
+test('refresh：revision 探针只读——校验门前不得原地改写活跃库（Important#2②）', async (t) => {
+  const vault = makeVault(t, { 'wiki/a.md': '第一篇内容甲乙丙丁' })
+  const activePath = path.join(tmpDir(t), 'kb-index.db')
+  const files = ['wiki/a.md']
+  refresh({ activePath, vaultRoot: vault, scope: SCOPE, files })
+
+  // 制造 ensureSchema 一开就会动写活跃库的形态（缺触发器+指纹漂移 → ('rebuild') + meta UPDATE）
+  {
+    const db = new DatabaseSync(activePath)
+    db.exec(`DROP TRIGGER ad`)
+    db.exec(`UPDATE meta SET value='legacy-drift' WHERE key='rule_fingerprint'`)
+    db.close()
+  }
+  const before = fs.readFileSync(activePath)
+
+  const res = refresh({
+    activePath, vaultRoot: vault, scope: SCOPE, files,
+    validate: () => ({ ok: false, problems: ['forced: 校验不过'] }), // 两轮都在校验门被拒
+  })
+  assert.equal(res.activated, false, JSON.stringify(res))
+  assert.equal(res.degraded, 'validation')
+  assert.deepEqual(res.problems, ['forced: 校验不过'])
+  assert.deepEqual(fs.readFileSync(activePath), before,
+    '校验门前探针只读：旧索引字节级原样（旧版 openDb 探针会 rebuild+UPDATE meta 改写）')
+  for (const suf of ['-wal', '-shm', '.candidate']) {
+    assert.ok(!fs.existsSync(activePath + suf), `残留 ${suf}`)
+  }
+})
