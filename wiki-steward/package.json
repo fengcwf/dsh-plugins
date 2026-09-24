@@ -1,0 +1,49 @@
+{
+  "name": "wiki-steward",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness 的 Obsidian vault 写侧插件：会话捕获双轨落盘、kb_validate 机械校验、kb_mark sha256 原子回写、wiki CRUD 围栏、失败幂等队列与告警（默认只读，写侧记账主动、动手被动）",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check lib/index.js && node --check lib/secrets.js && node --check lib/fs-safe.js && node --test"
+  },
+  "peerDependencies": {
+    "zod": "^4.6.5",
+    "@deepseek-ai/dsh-llm": ">=0.1.7-rc.1",
+    "@deepseek-ai/dsh-tools": ">=0.1.7-rc.1"
+  },
+  "devDependencies": {
+    "zod": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/zod",
+    "@deepseek-ai/dsh-llm": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm",
+    "@deepseek-ai/dsh-tools": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-tools"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "wiki-steward",
+    "obsidian",
+    "wiki",
+    "vault"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fengcwf/dsh-plugins.git",
+    "directory": "wiki-steward"
+  }
+}

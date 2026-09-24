@@ -1,0 +1,21 @@
+# wiki-steward 配置注入
+# 挂载本插件（⚠️ 此 insert 行是插件 apply 的入口——删除则插件不加载，写侧记账静默消失）
+# ⚠️ config 是整行替换语义（非深度合并）：profile 覆盖者必须在此基础上重述全部键。
+- insert:
+    - id: wiki-steward
+      name: 'wiki-steward'
+      config:
+        # 捕获：turn-stopping 收口进缓冲，每 bufferRounds 轮强制 flush 双轨落盘（T9）
+        capture:
+          bufferRounds: 3
+          enabled: true
+        # 写侧：默认只读（INV-7）——wiki_write/wiki_delete 需显式开启才动手（T12）
+        write:
+          readOnly: true
+        # 失败幂等队列：重试上限 + 条目 TTL（天）（T13）
+        queue:
+          maxRetries: 3
+          ttlDays: 7
+        # 脱敏：落盘/注入前哨兵中和开关（INV-11，lib/secrets.js）
+        secrets:
+          enabled: true
