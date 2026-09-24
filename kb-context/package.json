@@ -18,10 +18,12 @@
     "check": "node --check lib/index.js && node --test"
   },
   "peerDependencies": {
-    "zod": "^4.3.6"
+    "zod": "^4.3.6",
+    "@deepseek-ai/dsh-llm": ">=0.1.7-rc.1"
   },
   "devDependencies": {
-    "zod": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/zod"
+    "zod": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/zod",
+    "@deepseek-ai/dsh-llm": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm"
   },
   "dsh": {
     "bundle": {

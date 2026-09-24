@@ -2,7 +2,15 @@
 // 职责边界：本文件只做导出契约 + Config 定义 + apply 挂载点；
 // 检索/注入模块（trigger/search/inject/index-db/tools）由后续任务在 lib/ 平铺扩展。
 // ⚠️ R13 教训：default 导出必须是 {inject, apply} 对象——工厂函数形态会被宿主静默忽略。
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { z } from 'zod'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createPreStepHandler } from './inject.js'
+import { matchTrigger } from './trigger.js'
+import { search } from './search.js'
+import { openReadOnlyDb } from './index-db.js'
 
 export const name = 'kb-context'
 
@@ -49,9 +57,33 @@ function warn(ctx, line) {
   console.warn(line)
 }
 
+/**
+ * 活跃索引库路径（TECH §1 数据面 `~/.dsh/kb-index/`；文件名 active.db 呼应 T2 refresh(activePath)
+ * 的「活跃库」语义——copy-on-write 激活后的只读消费面）。每次调用现算（os.homedir() 可被 HOME 导向，
+ * 测试隔离用）。
+ */
+export function resolveIndexDbPath() {
+  return path.join(os.homedir(), '.dsh', 'kb-index', 'active.db')
+}
+
+/**
+ * 读侧检索缝（T2→T3 接线）：活跃库存在才只读打开（缺库=空态零命中，不建库零副作用——空态诊断留缝 T7）；
+ * 检索异常原样上抛，由 pre-step handler fail-open 兜住。
+ */
+function runSearch(query, opts) {
+  const dbPath = resolveIndexDbPath()
+  if (!fs.existsSync(dbPath)) return { hits: [] }
+  const db = openReadOnlyDb(dbPath)
+  try {
+    return search(db, query, opts)
+  } finally {
+    try { db.close() } catch { /* 尽力关闭 */ }
+  }
+}
+
 export function apply(ctx, rawConfig) {
-  // 壳阶段唯一行为：配置防御性校验——非法配置留痕告警后 fail-open（INV-15 禁静默）。
-  // 热改语义：后续 handler 每次调用读当前 config，此处不做启动时冻结。
+  // 配置防御性校验：非法配置留痕告警后 fail-open（INV-15 禁静默）。
+  // 热改语义：handler 每次调用读当前 config（safeParse 当前值），此处不做启动时冻结。
   const parsed = Config.safeParse(rawConfig)
   if (!parsed.success) {
     const detail = parsed.error.issues
@@ -59,6 +91,19 @@ export function apply(ctx, rawConfig) {
       .join('; ')
     warn(ctx, `[kb-context] 配置校验失败，回退默认值（fail-open）：${detail}`)
   }
+  // pre-step 注入接线（T4 trigger → T3 search → T5 注入，官方 waterfall 姿势）
+  if (typeof ctx?.on !== 'function') {
+    // 非宿主上下文（缺 ctx.on 缝）无法注册——fail-open 留痕不静默（INV-15）
+    warn(ctx, '[kb-context] 宿主 ctx.on 缺失，pre-step 注入未注册（fail-open）')
+    return
+  }
+  const handler = createPreStepHandler({
+    matchTrigger,
+    search: runSearch,
+    createUserMessage,
+    configSource: () => rawConfig,
+  })
+  ctx.on('agent/pre-step', handler, { prepend: true })
 }
 
 // ⚠️ default 必须是对象（R13）：宿主读 default.inject / default.apply

@@ -1,6 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+// node:sqlite 实验性警告降噪（T5 起入口链含索引层）：只吞 ExperimentalWarning，其余警告照打（输出干净）
+process.removeAllListeners('warning')
+process.on('warning', (w) => {
+  if (w?.name !== 'ExperimentalWarning') console.error(String(w?.stack || w))
+})
+
 // ⚠️ 冒烟测试（2026-09-23 事故教训）：真 import 入口模块——缺依赖/断链立刻红
 // （`node --check` 不解析 import；空测试集不算绿）。
 
@@ -71,7 +77,8 @@ test('Config 默认值无可变共享引用（多次 parse 互不污染）', asy
 test('apply：非法配置留痕不静默（INV-15），合法配置零告警', async () => {
   const { apply } = await import('../lib/index.js')
   const warnings = []
-  const ctx = { logger: { warn: (line) => warnings.push(line) } }
+  // 测试替身补宿主 ctx.on 缝（T5 apply 契约新增 pre-step 注册；告警断言零改动）
+  const ctx = { on: () => {}, logger: { warn: (line) => warnings.push(line) } }
   apply(ctx, { timeoutMs: 'oops' })
   assert.equal(warnings.length, 1)
   assert.match(warnings[0], /timeoutMs/)
@@ -88,7 +95,7 @@ test('apply：无 logger 时回落 console.warn（行为不丢）', async () => 
   const orig = console.warn
   console.warn = (line) => recorded.push(line)
   try {
-    apply({}, { budget: { maxSnippets: 'many' } })
+    apply({ on: () => {} }, { budget: { maxSnippets: 'many' } })
   } finally {
     console.warn = orig
   }

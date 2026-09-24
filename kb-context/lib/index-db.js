@@ -291,6 +291,15 @@ export function openDb(dbPath) {
   return db
 }
 
+/**
+ * 只读打开既有索引库（读侧专用缝，T5 消费）。
+ * ⚠️ 严禁读路径走 openDb()=ensureSchema：那会在任何校验门之前对活跃库原地 ('rebuild')/DROP 触发器/
+ *   UPDATE meta（T2 教训）——读侧 readOnly 打开，不迁移、不建库（缺库判空态由调用方负责，读侧零副作用）。
+ */
+export function openReadOnlyDb(dbPath) {
+  return new DatabaseSync(dbPath, { readOnly: true })
+}
+
 // ── 范围注册（混合范围）+ 三态增量 + 文件级单事务 ──
 
 function normalizeRel(p) {

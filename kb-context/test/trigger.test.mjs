@@ -4,6 +4,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+// node:sqlite 实验性警告降噪（T5 起入口链含索引层）：只吞 ExperimentalWarning，其余警告照打（输出干净）
+process.removeAllListeners('warning')
+process.on('warning', (w) => {
+  if (w?.name !== 'ExperimentalWarning') console.error(String(w?.stack || w))
+})
+
 const { matchTrigger, DEFAULT_TRIGGER_WORDS, DEFAULT_ENTITY_PATHS } = await import('../lib/trigger.js')
 
 /** 真用户消息形状（delta-spec §2：content 文本部件数组 + source.kind） */
