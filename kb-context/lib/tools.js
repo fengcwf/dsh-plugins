@@ -133,7 +133,9 @@ export function readPagesFromFs(root, paths, opts = {}) {
       return text
     }
     if (cap <= 0) return TRUNCATED
-    remaining = 0
+    // 只扣本次实际占用（截到 cap + '\n' + 标记）——按 cap==maxPageChars<remaining 的每页截断路径
+    // 不得把合计预算整体清零（fix round1 审查 Important：否则后续页被伪装成预算耗尽整值 (truncated)）
+    remaining = Math.max(0, remaining - (cap + 1 + TRUNCATED.length))
     return `${text.slice(0, cap)}\n${TRUNCATED}`
   }
   // vaultRoot 现解析（per-call 热改）：canonical root（root 自身 symlink 也归一）；解析失败 = 读失败面

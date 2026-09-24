@@ -269,6 +269,23 @@ test('wiki_read 合计上限：跨页预算耗尽后置 (truncated)，不整体�
   assert.equal(pages2['wiki/b.md'], TRUNCATED, '预算耗尽 → (truncated) 整值')
 })
 
+test('wiki_read 每页截断不吃合计预算（fix round1 回归）：超长首篇撞页上限后，后续页仍按剩余额度返内容', (t) => {
+  // 场景（审查 finding 逐字）：[big(20k), a(5k), b(5k)] 默认 8k/页、32k/合计——
+  // big 截到 8k 时 cap==maxPageChars<remaining（合计预算仍有余），不得把 32k 总预算整体清零，
+  // 否则 a、b 被伪装成「预算耗尽截断」整值 (truncated)（24k 预算闲置 + 误导模型）。
+  const vault = makeVault(t, {
+    'wiki/big.md': '文'.repeat(20_000),
+    'wiki/a.md': 'A'.repeat(5_000),
+    'wiki/b.md': 'B'.repeat(5_000),
+  })
+  const pages = readPagesFromFs(vault, ['wiki/big.md', 'wiki/a.md', 'wiki/b.md']).pages
+  assert.equal(pages['wiki/big.md'], '文'.repeat(MAX_PAGE_CHARS) + '\n' + TRUNCATED, '超长首篇按每页上限截断')
+  assert.equal(pages['wiki/a.md'], 'A'.repeat(5_000), 'a 按剩余额度全额返回（非整值 (truncated)）')
+  assert.equal(pages['wiki/b.md'], 'B'.repeat(5_000), 'b 按剩余额度全额返回（非整值 (truncated)）')
+  const total = Object.values(pages).reduce((n, s) => n + s.length, 0)
+  assert.ok(total <= MAX_TOTAL_CHARS + 1 + TRUNCATED.length, `合并不超 32k+标记开销（实测 ${total}）`)
+})
+
 test('wiki_read 空页与缺失：空文本照实返回、磁盘无此文件 → (page not found)', async (t) => {
   const vault = makeVault(t, { 'wiki/empty.md': '', 'wiki/ok.md': '正文' })
   assert.equal(readPagesFromFs(vault, ['wiki/empty.md']).pages['wiki/empty.md'], '', '空页=空文本（非 not found）')
