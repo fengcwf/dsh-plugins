@@ -85,6 +85,8 @@ export function resolveIndexDbPath() {
  *   查询，绝不建库）——inject 诊断注入与 wiki_search 软增共用同一生产缝。
  * ⚠️ failed 可达性：坏库首查询抛 node:sqlite 健康面错误（探针实证 errcode 26/1）——转
  *   {hits:[], emptyState: failed} 而非上抛（坏库可解释，A4）；其余异常照旧上抛（T3 契约不改）。
+ *   **failed 生产判据 = openError（本缝仅此一处生产传入）**；diagnose 的 problems/degraded 为预留缝
+ *   未接线（本调用不传、无生产写入点）——接线任务已登记终审 triage（Important #2 注释级裁定）。
  *   诊断自身异常一律吞掉不破坏检索主链路（消费侧 normalize 空 → 回退 T5 identity）。
  * scope：opts.scope（config 热读，inject/tools 现传）缺省回落 FACTORY_SCOPE。
  */

@@ -436,6 +436,31 @@ test('T7 诊断转义（INV-11）：hint 含引号/伪闭合标签 → 属性 es
   assert.ok(text.includes('\\u0022引号\\u0022'), '属性内引号必须转义（防逃出 hint="…"）')
 })
 
+test('T7 诊断哨兵双面中和（审查 Important #1）：hint 携 query 词元假 sk-/PEM → 属性与正文均 <redacted>、计数含属性侧、kbContext.detail 留痕', async () => {
+  // 生产链：hint 由 signal 词元/路径/SQLite 错误详情构造、词元源自用户 query——query 含哨兵时 hint 必然携带。
+  // 检索缝 stub 模拟 diagnose 产物：把 query 中的哨兵带进 hint（裁定形状=属性与正文同文两面渲染）。
+  const SK = 'sk-fakeOpenAIKey123456'
+  const PEM_ONE = FAKE_PEM.replaceAll('\n', ' ')
+  const query = `wiki 成本核算 ${SK} ${PEM_ONE}`
+  const hint = `路径「${SK}」未入索引（样例 PEM：${PEM_ONE}）。建议运行索引刷新。`
+  const neutralized = '路径「<redacted>」未入索引（样例 PEM：<redacted>）。建议运行索引刷新。'
+  assert.ok(hint.length <= 200, '前置：hint 在 normalize 200 闸内（哨兵不被截断）')
+  const h = harness({ search: async () => ({ hits: [], emptyState: { state: 'not-indexed', hint } }) })
+  const { result } = await run(h, { text: query })
+  const text = result.messages.at(-1).content[0].text
+
+  assert.ok(h.calls.search[0].query.includes(SK), '哨兵经 query 进入检索缝（词元源自用户 query 的实证）')
+  assert.equal(
+    text,
+    `<kb-context state="not-indexed" hint="${neutralized}">${neutralized}</kb-context>`,
+    '属性先 redact 再 escape、正文 safeBody——同文两面均中和（修复前属性明文携带同一哨兵）',
+  )
+  assert.ok(!text.includes(SK) && !text.includes('-----BEGIN'), '任何面都不得明文携带哨兵')
+  assert.equal((text.split('<redacted>').length - 1), 4, '两面 × 两哨兵 = 四处占位符')
+  // 计数含属性侧：正文 2 + 属性 2（redact.js 口径「每次占位符写入计 1」）→ detail 留痕（修复前仅正文计数=2）
+  assert.deepEqual(result.kbContext, { injected: true, degraded: 'redacted', detail: { redacted: 4 } }, '属性侧中和计入 kbContext.detail.redacted')
+})
+
 test('T7 hint ≤200：stub 超长 hint 注入前钳 200（normalizeEmptyState 软增闸）', async () => {
   const h = harness({ search: async () => ({ hits: [], emptyState: { state: 'not-indexed', hint: 'x'.repeat(500) } }) })
   const { result } = await run(h, { text: 'wiki 成本核算' })

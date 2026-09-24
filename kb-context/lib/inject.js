@@ -14,7 +14,8 @@
 // ⚠️ INV-11 脱敏哨兵（delta-spec §4.4）：片段体注入前过 lib/redact.js 三层中和（PEM 整块 / 赋值形态保 key /
 //   token 形态）→ 占位符 `<redacted>` + 计数。redact 在 **raw 域先行**（先转义会黏合词边界，`<sk-…` 类哨兵
 //   漏检），占位符经 split/join 抽走回填保字面；框架标记（source 属性）**不过 redact**——防误伤出处（sk- 类
-//   路径名不得把 provenance 咬掉）。中和计数随 kbContext 状态返回（detail:{redacted:N}）。
+//   路径名不得把 provenance 咬掉）；T7 诊断 hint 属性是**内容面非出处**→ 亦先 redact 再 escape（Important #1，
+//   与正文双面同中和、计数含属性侧）。中和计数随 kbContext 状态返回（detail:{redacted:N}）。
 // ⚠️ timeoutMs:0（及负/非数）语义 = 立即超时而非不限时（与 T3 search 同语义）：不检索、fail-open 返回。
 // ⚠️ 去重名额（调整轮裁定 2026-09-25）：②③（同 turn / 同 query 10s）只由**真片段注入**记名——诊断注入
 //   不写两槽（同窗随后真命中不被挡，与 T4「跳过不占名额」同精神）；①（可见面 SHA-1）无写入步骤、由可见面
@@ -84,14 +85,19 @@ export function buildInjectionText(hits) {
 
 /**
  * T7 空态诊断文本体（裁定形状）：`<kb-context state="六态之一" hint="≤200 解释+建议">hint</kb-context>`。
- * 属性走 escapeAttrValue（safeLabelValue 口径——hint 可含路径/引号，防属性逃逸与标签伪造）；
- * 正文走 safeBody 管线（redact 脱敏哨兵 → escapeText 防伪，与 T5 片段同管线）。返回中和计数供 kbContext 留痕。
+ * ⚠️ 双面同中和（审查 Important #1 修复）：hint 可携 query 词元/路径/SQLite 错误详情——属性与正文**同为
+ *   内容面**，均先 redact（raw 域保词边界）再转义：正文走 safeBody（redact→escapeText），属性走
+ *   redact→占位符 split/join 抽走保字面→余段 escapeAttrValue。两面各写占位符各计 1（redact.js 口径
+ *   「每次占位符写入计 1」）→ 返回计数=正文+属性，属性侧中和经 kbContext.detail:{redacted:N} 留痕。
+ *   （框架 source 属性仍不过 redact——provenance 纪律只豁免出处，不豁免内容面 hint。）
  */
 export function buildEmptyStateText({ state, hint }) {
   const { body, count } = safeBody(hint)
+  const { text: hintRaw, count: attrCount } = redact(String(hint))
+  const hintAttr = hintRaw.split(REDACTED).map(escapeAttrValue).join(REDACTED)
   return {
-    text: `<kb-context state="${escapeAttrValue(state)}" hint="${escapeAttrValue(hint)}">${body}</kb-context>`,
-    redacted: count,
+    text: `<kb-context state="${escapeAttrValue(state)}" hint="${hintAttr}">${body}</kb-context>`,
+    redacted: count + attrCount,
   }
 }
 

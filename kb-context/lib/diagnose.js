@@ -8,8 +8,11 @@
 //   ② indexing — `${activePath}.candidate` 候选库在场 = 构建进行中（copy-on-write：构建收尾自会清场，
 //      进程被杀留残留 → 下次 refresh 开场 drop 自愈；期间 docs 是旧版，一切库观察面让位）；
 //   ③ failed — index 打开/校验失败：runSearch 捕获的 node:sqlite 错误（探针实证：坏库首查询抛
-//      code='ERR_SQLITE_ERROR'/errcode 26 'file is not a database'、缺表 errcode 1）或调用方注入
-//      problems 非空 / degraded（refresh summary 位，当前读路径不跑全量校验、留缝给后续接线）；
+//      code='ERR_SQLITE_ERROR'/errcode 26 'file is not a database'、缺表 errcode 1）。
+//      **生产判据 = openError（唯一生产缝，index.js runSearch 传入）**；problems 非空 / degraded
+//      （refresh summary 位）是**预留缝、未接线**：collectEmptyState 的生产调用不传二者（当前读路径
+//      不跑全量校验、无生产写入点）——接线任务已登记终审 triage（审查 Important #2 注释级裁定，
+//      不接线、不做 validate 探针：过贵）；
 //   ④ no-text — 信号词元在 docs 有记录但该文档 chunk 全部空/仅空白（零 chunk 同判——空文件
 //      chunkText('') = []、仅空白文件 trim 后无实字）；
 //   ⑤ not-indexed — 结构性缺索引：范围内信号无 docs 记录（判据字面）/ 索引库不存在 / docs 零记录 /
@@ -17,6 +20,9 @@
 //   ⑥ no-match（调整轮拆态，审前裁定① 2026-09-25）— **索引健康**（openDb 成功、无 openError/problems/
 //      degraded）且 docs 观察面在场证实：索引非空、范围内路径信号全有记录且非空白——此时零命中的唯一
 //      解释 = 词面未命中。**不并入 not-indexed**（错标：文件可能已被索引）。hint 给「改写关键词/确认主题在库」。
+//      ⚠️ 生产限（审查 Important #2 注释级裁定 2026-09-25）：健康前提中「无 problems/degraded」在生产**恒真**
+//      （预留缝未接线，见③）→ 该前提当前不构成独立证据；静默腐坏（FTS 损坏但查询不抛且返回空）会落
+//      no-match——接线任务已登记终审 triage，接线后此处判据才完整。
 // ⚠️ 优先级（裁定 2026-09-25 更新）：excluded > indexing > failed > no-text > not-indexed > no-match。
 //   excluded 最具体（等构建/修库都救不了 grep 目录）；indexing 压 failed（copy-on-write 构建正是在修坏库，
 //   「稍候」比「重建」可行动）；failed 压一切库观察面（打不开就没资格读 docs）；no-text 比缺记录更具体；
@@ -132,7 +138,9 @@ export function diagnoseEmptyState(query, obs = {}) {
     return { state: 'indexing', hint: clampHint('索引构建进行中（检测到候选库 active.db.candidate），稍候重试。') }
   }
 
-  // ③ failed：打开/校验失败（读路径 sqlite 错误 → openError；problems/degraded = refresh summary 注入位）
+  // ③ failed：打开/校验失败——**生产判据=openError（runSearch 生产缝唯一传入）**；problems/degraded 为
+  //   预留缝未接线（collectEmptyState 生产调用不传、无生产写入点；接线任务已登记终审 triage——审定接线
+  //   后二者才成独立证据，Important #2 注释级裁定：不接线、不做 validate 探针）
   let detail = null
   if (typeof obs.openError === 'string' && obs.openError !== '') detail = obs.openError
   else if (Array.isArray(obs.problems) && obs.problems.length > 0) detail = String(obs.problems[0])
@@ -169,7 +177,8 @@ export function diagnoseEmptyState(query, obs = {}) {
         hint: clampHint(`路径「${clip(missing.sig, SIG_CLIP)}」在索引范围内但未入索引。建议运行索引刷新。`),
       }
     }
-    // ⑥ no-match（调整轮拆态，审前裁定①）：走到这里 = 索引健康（③ 无 openError/problems/degraded 已过）
+    // ⑥ no-match（调整轮拆态，审前裁定①）：走到这里 = 索引健康（③ 无 openError/problems/degraded 已过——
+    //   ⚠️ 生产中 problems/degraded 恒缺席（预留缝未接线，见头注③/⑥ Important #2 裁定））
     //   + docs 在场证实非空、范围内路径全有记录非空白——词面未命中的终局解释（优先级垫底）
     return {
       state: 'no-match',
