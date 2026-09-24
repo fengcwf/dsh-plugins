@@ -13,6 +13,7 @@ import { matchTrigger } from './trigger.js'
 import { search } from './search.js'
 import { openReadOnlyDb } from './index-db.js'
 import { buildTools, readPagesFromFs } from './tools.js'
+import { collectEmptyState, isIndexHealthError } from './diagnose.js'
 
 export const name = 'kb-context'
 
@@ -53,6 +54,10 @@ export const Config = z.object({
   }).prefault({}),
 }).prefault({}) // 顶层同样容忍 undefined（热改路径上 rawConfig 可缺省 → 全默认；非法类型仍拒）
 
+// 工厂 scope 默认（静态字面派生——非用户配置冻结；热改 scope 由调用方 opts.scope 现读传入，缺省回落此值。
+// T7 空态诊断的 excluded 判据数据源：调用方缺 scope 时仍有确定性的 grepOnDemand/indexAll 可判）
+export const FACTORY_SCOPE = Object.freeze(Config.safeParse({}).data.scope)
+
 /** 警告出口：优先宿主 logger，缺位回落 console（行为不丢） */
 function warn(ctx, line) {
   try {
@@ -74,15 +79,43 @@ export function resolveIndexDbPath() {
 }
 
 /**
- * 读侧检索缝（T2→T3 接线）：活跃库存在才只读打开（缺库=空态零命中，不建库零副作用——空态诊断留缝 T7）；
- * 检索异常原样上抛，由 pre-step handler fail-open 兜住。
+ * 读侧检索缝（T2→T3 接线 + T7 空态生产缝）：活跃库存在才只读打开（缺库=空态零命中，不建库零副作用）；
+ * 检索异常中原样上抛，由 pre-step handler fail-open 兜住。
+ * ⚠️ T7：零命中且非 timeout 降级 → 附 emptyState（collectEmptyState 只读观察：fs 在场性 + docs/chunks
+ *   查询，绝不建库）——inject 诊断注入与 wiki_search 软增共用同一生产缝。
+ * ⚠️ failed 可达性：坏库首查询抛 node:sqlite 健康面错误（探针实证 errcode 26/1）——转
+ *   {hits:[], emptyState: failed} 而非上抛（坏库可解释，A4）；其余异常照旧上抛（T3 契约不改）。
+ *   诊断自身异常一律吞掉不破坏检索主链路（消费侧 normalize 空 → 回退 T5 identity）。
+ * scope：opts.scope（config 热读，inject/tools 现传）缺省回落 FACTORY_SCOPE。
  */
-function runSearch(query, opts) {
+export function runSearch(query, opts) {
   const dbPath = resolveIndexDbPath()
-  if (!fs.existsSync(dbPath)) return { hits: [] }
-  const db = openReadOnlyDb(dbPath)
+  const scope = opts?.scope ?? FACTORY_SCOPE
+  const withEmptyState = (result, extra = {}) => {
+    if (!(Array.isArray(result?.hits) && result.hits.length === 0) || result.degraded === 'timeout') return result
+    try {
+      const es = collectEmptyState({ dbPath, query, scope, ...extra })
+      if (es !== null) result.emptyState = es
+    } catch { /* 诊断不破坏检索主链路 */ }
+    return result
+  }
+  if (!fs.existsSync(dbPath)) return withEmptyState({ hits: [] })
+  let db
   try {
-    return search(db, query, opts)
+    db = openReadOnlyDb(dbPath)
+  } catch (e) {
+    return withEmptyState({ hits: [] }, { openError: String(e?.message ?? e) })
+  }
+  try {
+    let result
+    try {
+      result = search(db, query, opts)
+    } catch (e) {
+      // 健康面错误（NOTADB/坏库/缺表）→ failed 空态；其余异常保持上抛（T3：调用方 fail-open 兜）
+      if (isIndexHealthError(e)) return withEmptyState({ hits: [] }, { db, openError: String(e?.message ?? e) })
+      throw e
+    }
+    return withEmptyState(result, { db })
   } finally {
     try { db.close() } catch { /* 尽力关闭 */ }
   }

@@ -15,9 +15,14 @@
 // ⚠️ config per-call 热改（T1 语义）：每次 execute 现读 configSource；safeParse 失败 salvage raw 键回退默认
 //   （镜像 inject.js salvageNumber / trigger.js salvage，保热改连续性）+ wiki_search 返回 degraded:'config'
 //   留痕（INV-15 禁静默；与 lexical/timeout 并存时 'config' 优先——镜像 inject.js 'config' 优先序先例）。
+// ⚠️ T7 空态软增（A4）：wiki_search 零命中（且非 timeout 降级）附可选 emptyState {state, hint}——
+//   state ∈ 五态枚举（lib/diagnose.js EMPTY_STATES），hint ≤200 字符解释+建议动作；normalizeEmptyState
+//   过闸（坏 state/坏 hint 丢弃）→ 键不出现，旧调用/坏缝产物不破；命中恒不带（软增只挂零命中）。
+//   search opts 携带 scope（config 热读，runSearch 空态诊断 excluded 判据数据源）。
 import fs from 'node:fs'
 import path from 'node:path'
 import { Config, DEFAULT_VAULT_ROOT } from './index.js'
+import { EMPTY_STATES, normalizeEmptyState } from './diagnose.js'
 
 // 软错误标记（delta-spec §2 契约字面量，与 detpecca 口径一致）
 export const PAGE_NOT_FOUND = '(page not found)'
@@ -198,6 +203,9 @@ export function buildTools({ defineTool, search, readPages, configSource = () =>
       + 'limit 为最多返回条数，默认 3（取配置 budget.maxSnippets，可热改）。'
       + 'degraded:"config"=配置热改值非法、salvage 回退默认（降级留痕，与其余标记并存时优先）；'
       + 'degraded:"lexical"=纯词法检索路径（短词/空查询）；degraded:"timeout"=超时降级（fail-open，不阻塞会话）。'
+      + '零命中时附 emptyState（可选）：state ∈ not-indexed/indexing/failed/excluded/no-text 五态空态'
+      + '（未入索引/索引构建中/索引打开校验失败/路径属 grepOnDemand 按需范围/已索引但无文本），'
+      + 'hint 为原因解释与建议动作（≤200 字符，如「运行索引刷新」）。'
       + '典型用法：先 wiki_search 找页，再 wiki_read 读全文。',
     parameters: {
       query: { type: 'string', required: true, description: '检索词（空白切词；短词自动走 LIKE 兜底）' },
@@ -230,6 +238,23 @@ export function buildTools({ defineTool, search, readPages, configSource = () =>
               "降级标记：'config'=配置校验失败 salvage 回退默认（INV-15 留痕，优先）；"
               + "'lexical'=纯词法路径（短词/空查询）；'timeout'=超时降级",
           },
+          emptyState: {
+            type: 'object',
+            additionalProperties: false,
+            description: '零命中时的可解释空态（可选，软增；命中/timeout 时不返回）：为什么检索无结果 + 建议动作',
+            properties: {
+              state: {
+                type: 'string',
+                required: true,
+                enum: [...EMPTY_STATES],
+                description:
+                  "五态：'not-indexed'=未入索引/查询词未命中已索引内容；'indexing'=索引构建进行中；"
+                  + "'failed'=索引打开/校验失败；'excluded'=路径属 grepOnDemand 按需范围（只注册不索引）；"
+                  + "'no-text'=已索引但内容为空/仅空白",
+              },
+              hint: { type: 'string', required: true, description: '≤200 字符的原因解释与建议动作（如「运行索引刷新」）' },
+            },
+          },
         },
       },
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
@@ -243,6 +268,7 @@ export function buildTools({ defineTool, search, readPages, configSource = () =>
         maxTokens: cfg.budget.maxTokens,
         timeoutMs: cfg.timeoutMs,
         signal: exec?.signal,
+        scope: cfg.scope, // T7：config 热读 scope 随行（runSearch 空态诊断数据源；salvage 缺省回落 FACTORY_SCOPE）
       })
       const hits = (Array.isArray(r?.hits) ? r.hits : []).map((h) => ({
         path: String(h?.path ?? ''),
@@ -255,6 +281,11 @@ export function buildTools({ defineTool, search, readPages, configSource = () =>
       //（镜像 inject.js 'config' 优先序先例）——salvage 污染本次调用全部派生参数，不可被内层标记掩盖
       const degraded = salvaged ? 'config' : r?.degraded
       if (degraded === 'config' || degraded === 'lexical' || degraded === 'timeout') out.degraded = degraded
+      // T7 空态软增：零命中 + 合法 emptyState 才带（normalize 过闸；命中/坏值 → 键不出现，旧调用不破）
+      if (hits.length === 0) {
+        const es = normalizeEmptyState(r?.emptyState)
+        if (es !== null) out.emptyState = es
+      }
       return out
     },
   })

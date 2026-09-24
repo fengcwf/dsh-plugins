@@ -410,3 +410,70 @@ test('apply fail-open 双向（INV-15 禁静默）：缺 ctx.tools 留痕仍注�
   assert.match(warnings2[0], /ctx\.on/)
   assert.deepEqual(toolRegs.map((tool) => tool.name), ['wiki_search', 'wiki_read'])
 })
+
+// ── S5：T7 空态 emptyState 软增（wiki_search 零命中可解释状态，A4） ────────────────
+
+const EMPTY_STATE_ES = {
+  state: 'excluded',
+  hint: '查询目标「01-客户资料」属 grepOnDemand 按需范围（只注册不入 FTS 索引）。建议用 wiki_read 按路径直读。',
+}
+
+test('wiki_search emptyState 软增：零命中透传 + 命中不带 + 缺位/坏值丢弃（旧调用不破）+ scope 携带', async () => {
+  const seen = []
+  const mk = (searchImpl) => buildTools({
+    defineTool,
+    search: (q, o) => { seen.push(o); return searchImpl(q, o) },
+    readPages: () => ({ pages: {} }),
+    configSource: () => ({}),
+  })[0]
+
+  // ① 零命中 + 合法 emptyState → 原样透传（软增键出现）
+  const out = await mk(() => ({ hits: [], emptyState: EMPTY_STATE_ES })).execute({ query: 'x' }, EXEC)
+  assert.deepEqual(out, { hits: [], emptyState: EMPTY_STATE_ES })
+
+  // ② scope 携带（config 热读——excluded 判据数据源）：salvage/缺省回退出厂 scope
+  assert.deepEqual(seen[0].scope, {
+    indexAll: ['wiki', 'raw'],
+    grepOnDemand: ['01-客户资料', '02-致远OA', '03-帆软报表', '04-用友', '05-医院成本', '08-unraid'],
+  }, 'search opts 携带 scope（出厂默认）')
+
+  // ③ 命中 → 不带 emptyState（即使缝误带也裁掉——软增只挂零命中）
+  const hit = { path: 'wiki/a.md', lines: [1, 2], score: 0.5, snippet: 's' }
+  const out2 = await mk(() => ({ hits: [hit], emptyState: EMPTY_STATE_ES })).execute({ query: 'x' }, EXEC)
+  assert.deepEqual(Object.keys(out2).sort(), ['hits'], '命中不带 emptyState')
+
+  // ④ 旧调用面：零命中无 emptyState → 键不出现（deepEqual 全量键集）
+  const out3 = await mk(() => ({ hits: [] })).execute({ query: 'x' }, EXEC)
+  assert.deepEqual(out3, { hits: [] }, '缺位键不出现——旧调用不破')
+
+  // ⑤ 坏值丢弃（normalizeEmptyState 软增闸）
+  const out4 = await mk(() => ({ hits: [], emptyState: { state: 'bogus', hint: 'x' } })).execute({ query: 'x' }, EXEC)
+  assert.deepEqual(out4, { hits: [] }, '非枚举 state 丢弃')
+  const out5 = await mk(() => ({ hits: [], emptyState: { state: 'not-indexed', hint: 'y'.repeat(500) } })).execute({ query: 'x' }, EXEC)
+  assert.equal(out5.emptyState.hint.length, 200, 'hint 钳 200')
+})
+
+test('wiki_search output.schema 增可选 emptyState（五态 enum + 顶层可选）+ description 写明 + render 含键', async () => {
+  const [ws] = buildTools({
+    defineTool,
+    search: () => ({ hits: [], emptyState: EMPTY_STATE_ES }), // T3 缝契约：同步返回对象（async stub 会拿到 Promise）
+    readPages: () => ({ pages: {} }),
+    configSource: () => ({}),
+  })
+  const schema = ws.output.schema
+  assert.ok('emptyState' in schema.properties, 'schema 增 emptyState 键')
+  assert.ok(!(schema.required ?? []).includes('emptyState'), '顶层可选（软增——旧调用不破）')
+  assert.equal(schema.properties.emptyState.type, 'object')
+  assert.equal(schema.properties.emptyState.additionalProperties, false)
+  assert.deepEqual(schema.properties.emptyState.properties.state.enum,
+    ['not-indexed', 'indexing', 'failed', 'excluded', 'no-text'], '五态 enum 字面')
+  assert.deepEqual(schema.properties.emptyState.required, ['state', 'hint'], 'defineTool 编译提升对象级 required（内层两键必填）')
+  assert.equal(schema.properties.emptyState.properties.hint.type, 'string')
+  assert.ok(ws.description.includes('emptyState'), 'description 写明软增键')
+  assert.ok(ws.description.includes('not-indexed'), 'description 写明五态字面')
+
+  // render：JSON 输出含 emptyState（模型可见）
+  const value = await ws.execute({ query: 'x' }, EXEC)
+  const [block] = ws.output.render({ query: 'x' }, value)
+  assert.equal(JSON.parse(block.text).emptyState.state, 'excluded')
+})

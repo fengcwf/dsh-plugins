@@ -17,9 +17,14 @@
 //   路径名不得把 provenance 咬掉）。中和计数随 kbContext 状态返回（detail:{redacted:N}）。
 // ⚠️ timeoutMs:0（及负/非数）语义 = 立即超时而非不限时（与 T3 search 同语义）：不检索、fail-open 返回。
 // ⚠️ 去重①②③ 全部只在**实际注入**时占用名额：跳过不记录（compaction 自愈与后续重试由此成立）。
+// ⚠️ T7 空态五态诊断（A4）：触发命中+零命中+检索缝携带合法 emptyState → 注入一条短诊断
+//   `<kb-context state="五态" hint="≤200 解释+建议">…</kb-context>`（state/hint 属性 + hint 正文）；
+//   **仅触发命中路径**——未触发仍 identity 早退 0 注入 0 token（INV-4 不破）；emptyState 缺位/非法
+//   （stub 或未诊断缝）回退 T5 零命中 identity；诊断消息与片段注入同纪律占①②③名额（实际注入才占）。
 import { createHash } from 'node:crypto'
-import { Config } from './index.js'
+import { Config, FACTORY_SCOPE } from './index.js'
 import { redact, REDACTED } from './redact.js'
+import { normalizeEmptyState } from './diagnose.js'
 
 /** 同 query 去重窗口（毫秒）：TECH §3「同 query 10s 去重」契约字面 */
 export const QUERY_DEDUP_MS = 10_000
@@ -73,6 +78,19 @@ export function renderSnippet(hit) {
 /** 注入文本体：各片段独立块拼接（不伪装正文，防混淆/防投毒审计面） */
 export function buildInjectionText(hits) {
   return renderHits(hits).text
+}
+
+/**
+ * T7 空态诊断文本体（裁定形状）：`<kb-context state="五态" hint="≤200 解释+建议">hint</kb-context>`。
+ * 属性走 escapeAttrValue（safeLabelValue 口径——hint 可含路径/引号，防属性逃逸与标签伪造）；
+ * 正文走 safeBody 管线（redact 脱敏哨兵 → escapeText 防伪，与 T5 片段同管线）。返回中和计数供 kbContext 留痕。
+ */
+export function buildEmptyStateText({ state, hint }) {
+  const { body, count } = safeBody(hint)
+  return {
+    text: `<kb-context state="${escapeAttrValue(state)}" hint="${escapeAttrValue(hint)}">${body}</kb-context>`,
+    redacted: count,
+  }
 }
 
 /**
@@ -164,8 +182,8 @@ function rejectOnAbort(signal) {
  * agent/pre-step 注入 handler 工厂（官方 waterfall 姿势，注册 `{prepend:true}` 由 apply 负责）。
  *
  * 返回形状（测试逐例钉住）：
- * - `decision.kind !== 'enter'` / 外层 signal 预中止 / 无 degraded 的良性跳过（未触发、去重①②③、零命中）
- *   → **原样返回同一 decision 引用**（0 触发 0 token，INV-4）；
+ * - `decision.kind !== 'enter'` / 外层 signal 预中止 / 无 degraded 的良性跳过（未触发、去重①②③、
+ *   零命中且无合法 emptyState——T7 回退缝）→ **原样返回同一 decision 引用**（0 触发 0 token，INV-4）；
  * - degraded 一律留痕进返回不进会话（INV-15 禁静默）：`{...decision, kbContext: {injected, degraded,
  *   reason?, detail?}}`，degraded ∈ 'timeout' | 'error' | 'config' | 'redacted'（注入前脱敏中和计数 >0）；
  *   reason ∈ 'no-trigger' | 'zero-hits' | 'dedup-turn' | 'dedup-query' | 'dedup-surface' | 'model-field'；
@@ -286,6 +304,8 @@ export function createPreStepHandler({
             maxTokens: budget.maxTokens,
             timeoutMs,
             signal: combined,
+            // T7：scope 现读随行（空态诊断 excluded 判据数据源）；salvage 路径回退出厂 FACTORY_SCOPE
+            scope: parsed.success ? parsed.data.scope : FACTORY_SCOPE,
           }),
           rejectOnAbort(combined),
         ])
@@ -301,7 +321,31 @@ export function createPreStepHandler({
         return { ...decision, kbContext: diag(false, 'timeout') }
       }
       const hits = Array.isArray(result?.hits) ? result.hits : []
-      if (hits.length === 0) return skip(decision, configDegraded, 'zero-hits') // 零命中不注入（空态诊断留缝 T7）
+      if (hits.length === 0) {
+        // T7 空态五态诊断（仅触发命中路径，INV-4 不破）：合法 emptyState → 注入一条短诊断
+        //（与片段注入同管线：INV-5 键集 / INV-11 转义+中和 / ①②③ 同纪律占名额）；
+        // 缺位/非法（stub 或未诊断缝）→ 回退 T5 零命中 identity
+        const es = normalizeEmptyState(result?.emptyState)
+        if (es === null) return skip(decision, configDegraded, 'zero-hits')
+        const { text, redacted } = buildEmptyStateText(es)
+        const message = createUserMessage(injectionInputFromText(text))
+        if (message == null || typeof message !== 'object' || 'model' in message) {
+          return { ...decision, kbContext: diag(false, 'error', 'model-field') }
+        }
+        const surface = observeSurface(payload, decision)
+        if (digestOf(visibleText(message)) === lastRecallDigest(surface)) {
+          return skip(decision, configDegraded, 'dedup-surface')
+        }
+        // 诊断是实际注入 → 占②③名额（与片段注入同纪律；跳过不记录语义不变）
+        hasInjectedTurn = true
+        lastInjectedTurn = payload?.turn
+        recentQueries.set(t.query, ts)
+        const out = { ...decision, messages: [...(decision.messages ?? []), message] }
+        if (configDegraded !== null || redacted > 0) {
+          out.kbContext = diag(true, configDegraded ?? 'redacted', undefined, redacted > 0 ? { redacted } : undefined)
+        }
+        return out
+      }
 
       const { text, redacted } = renderHits(hits)
       const input = injectionInputFromText(text)
