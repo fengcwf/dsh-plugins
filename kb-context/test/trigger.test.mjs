@@ -190,12 +190,23 @@ test('query 切空回退首个命中触发元素（去重键/检索输入非空�
 
 // ── S8：配置失败 fail-open + 文本抽取 ──
 
-test('配置 safeParse 失败 fail-open 默认表 + degraded:"config"（INV-15 禁静默）', () => {
+test('配置 safeParse 失败 fail-open salvage raw 触发表（空/脏才回退出厂默认）+ degraded:"config"（INV-15 禁静默）', () => {
   const bad = { timeoutMs: 'oops' }
   assert.deepEqual(matchTrigger(user('wiki 数据库'), bad), { matched: true, query: '数据库', channel: 'words', degraded: 'config' })
   assert.deepEqual(matchTrigger(user('今天天气'), bad), { matched: false, query: '', degraded: 'config' })
   // 合法配置无 degraded 键（形状不带噪声）
   assert.deepEqual(Object.keys(matchTrigger(user('wiki 数据库'), {})).sort(), ['channel', 'matched', 'query'])
+})
+
+test('safeParse 失败 salvage raw 触发表：坏非 triggers 键不连坐触发表（zebra 仍触发 + degraded:"config" 携带）', () => {
+  // 钉住语义（审查探针场景原样）：{timeoutMs:'oops', triggers:{words:['zebra']}} + 'zebra 讨论'
+  // → 由 zebra 触发（非出厂默认表），且 degraded:'config' 留痕——坏的是 timeoutMs，触发表不回退出厂默认
+  const bad = { timeoutMs: 'oops', triggers: { words: ['zebra'] } }
+  assert.deepEqual(matchTrigger(user('zebra 讨论'), bad), { matched: true, query: '讨论', channel: 'words', degraded: 'config' })
+  // 对照：同消息出厂默认表不含 zebra（排除「回退默认表」语义——默认表下不该命中）
+  assert.deepEqual(matchTrigger(user('zebra 讨论'), {}), { matched: false, query: '' })
+  // 对照：raw 触发表空/脏才回退出厂默认（缺省表下 wiki 仍可触发 + degraded 携带）
+  assert.deepEqual(matchTrigger(user('wiki 数据库'), { timeoutMs: 'oops', triggers: { words: [] } }), { matched: true, query: '数据库', channel: 'words', degraded: 'config' })
 })
 
 test('文本抽取：字符串 content/多 text 部件拼接/非 text 部件忽略', () => {

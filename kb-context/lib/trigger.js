@@ -162,7 +162,8 @@ function decide(text, words, entities) {
  * @returns {{matched: boolean, query: string, channel?: 'words'|'entity', degraded?: 'config'}}
  *   未命中恒为 `{matched:false, query:''}`；命中带 `channel`（双通道同文命中时 words 优先，契约①→②判定序）；
  *   `query` = 检索词文本（T5 去重键 + 检索输入）；`degraded:'config'` = 本次 Config.safeParse 失败、
- *   fail-open 回退默认表的留痕（INV-15 禁静默）。
+ *   fail-open **salvage raw 触发表**（未过校验的 raw triggers 表清洗后继续用，保热改连续性；空/脏才回退出厂默认表）
+ *   的留痕（INV-15 禁静默）。坏的非 triggers 键不连坐触发表（测试钉住）。
  */
 export function matchTrigger(message, configSource) {
   // ① source 过滤最先：recall-loop 防护不依赖任何配置（INV-3）
@@ -179,6 +180,7 @@ export function matchTrigger(message, configSource) {
     words = pickList(parsed.data.triggers.words, DEFAULT_TRIGGER_WORDS)
     entities = pickList(parsed.data.triggers.entityPaths, DEFAULT_ENTITY_PATHS)
   } else {
+    // salvage raw 触发表（保热改连续性）；空/脏才回退出厂默认——非「回退默认表」，语义有测试钉住
     words = pickList(raw?.triggers?.words, DEFAULT_TRIGGER_WORDS)
     entities = pickList(raw?.triggers?.entityPaths, DEFAULT_ENTITY_PATHS)
     degraded = 'config'
