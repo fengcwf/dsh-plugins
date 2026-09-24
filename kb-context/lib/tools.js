@@ -94,7 +94,9 @@ export function reassemblePage(chunks) {
 export function readPagesFromDb(db, paths, opts = {}) {
   const maxPageChars = opts.maxPageChars ?? MAX_PAGE_CHARS
   const maxTotalChars = opts.maxTotalChars ?? MAX_TOTAL_CHARS
-  const pages = {}
+  // ⚠️ 键集安全化（自审 finding）：模型可控路径键可为 '__proto__'——普通对象字面量会命中 __proto__
+  //   setter 静默丢键；Map 收集 + Object.fromEntries（CreateDataProperty 语义）安全落 own key。
+  const pages = new Map()
   let remaining = Math.max(0, Number(maxTotalChars) || 0)
   const fit = (text) => {
     const cap = Math.min(maxPageChars, remaining)
@@ -111,7 +113,7 @@ export function readPagesFromDb(db, paths, opts = {}) {
   for (const raw of Array.isArray(paths) ? paths : []) {
     const key = String(raw)
     if (!isSafeRelPath(raw)) {
-      pages[key] = INVALID_PATH
+      pages.set(key, INVALID_PATH)
       continue
     }
     try {
@@ -122,15 +124,15 @@ export function readPagesFromDb(db, paths, opts = {}) {
            FROM chunks c JOIN docs d ON d.id = c.doc_id WHERE d.path = ? ORDER BY c.chunk_idx`)
       }
       if (db == null || docStmt.get(raw) === undefined) {
-        pages[key] = PAGE_NOT_FOUND
+        pages.set(key, PAGE_NOT_FOUND)
         continue
       }
-      pages[key] = fit(reassemblePage(chunkStmt.all(raw)))
+      pages.set(key, fit(reassemblePage(chunkStmt.all(raw))))
     } catch {
-      pages[key] = INVALID_PATH // 读取失败软错误：单路径标记，不整体炸
+      pages.set(key, INVALID_PATH) // 读取失败软错误：单路径标记，不整体炸
     }
   }
-  return { pages }
+  return { pages: Object.fromEntries(pages) }
 }
 
 /** config 现读 + salvage（镜像 inject.js salvageNumber 语义）：合法走 zod 数据，坏键回退默认 */

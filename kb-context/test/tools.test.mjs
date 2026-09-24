@@ -316,3 +316,14 @@ test('apply fail-open 双向（INV-15 禁静默）：缺 ctx.tools 留痕仍注�
   assert.match(warnings2[0], /ctx\.on/)
   assert.deepEqual(toolRegs.map((tool) => tool.name), ['wiki_search', 'wiki_read'])
 })
+
+test('wiki_read 键集安全化：__proto__ 路径键不丢（审中 finding 回归钉住）', async (t) => {
+  const db = mkdb(t, { 'wiki/ok.md': '正文' })
+  const { pages } = readPagesFromDb(db, ['__proto__', 'constructor', 'wiki/ok.md'])
+  assert.ok(Object.hasOwn(pages, '__proto__'), "'__proto__' 必须落 own key（禁 setter 静默丢键）")
+  assert.equal(pages.__proto__, PAGE_NOT_FOUND, '合法形式但缺失 → (page not found)')
+  assert.ok(Object.hasOwn(pages, 'constructor'))
+  assert.equal(pages.constructor, PAGE_NOT_FOUND)
+  assert.equal(pages['wiki/ok.md'], '正文')
+  assert.deepEqual(JSON.parse(JSON.stringify(pages)), pages, 'JSON 序列化回读键值全量保留')
+})
