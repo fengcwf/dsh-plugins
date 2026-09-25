@@ -1,19 +1,24 @@
-// wiki-steward — Obsidian vault 写侧记账插件（入口；T8 壳 → T9 捕获接线 → T12 工具注册收口）
-// 职责边界：导出契约 + Config 定义 + apply 挂载点（fail-open 配置校验 + 捕获三事件缝接线 + 全 steward 工具面）；
-// 捕获语义在 lib/capture.js（投影/中和/状态机）、落盘在 lib/buffer.js（缓冲/双轨/锁/重试）、
-// 校验/回写/CRUD 在 lib/validate.js / mark.js / crud.js（本文件只做 defineTool 注册收口）。
+// wiki-steward — Obsidian vault 写侧记账插件（入口；T8 壳 → T9 捕获接线 → T12 工具注册收口 → T13 队列/timer）
+// 职责边界：导出契约 + Config 定义 + apply 挂载点（fail-open 配置校验 + 捕获三事件缝接线 + 全 steward 工具面
+// + 队列/告警/timer 轻活接线）；捕获语义在 lib/capture.js（投影/中和/状态机）、落盘在 lib/buffer.js（缓冲/双轨/锁/重试）、
+// 校验/回写/CRUD 在 lib/validate.js / mark.js / crud.js、队列/补跑账本在 lib/queue.js、告警在 lib/alert.js（本文件只做接线收口）。
 // ⚠️ R13 教训：default 导出必须是 {inject, apply} 对象——工厂函数形态会被宿主静默忽略。
 // ⚠️ T9 裁定（task-9 报告申报②）：捕获全走 ctx.on 公开事件缝（session/event + agent/turn-stopping +
 //   session/disposed），零宿主服务消费；**T12 收口：inject = ['tools']**（工具注册宿主缝，kb-context 同款）。
+// ⚠️ T13 Ruling（申报②）：inject 维持 ['tools'] **不加 'timer'**——timer 服务经 ctx.get('timer') 软取得
+//   （cordis 未 inject 取服务属性会抛，try/catch 兜底），缺位 fail-open 留痕+懒补接（wire.test 钉住）。
 // ⚠️ T12 Ruling（撞名防雷，wire.test 钉住）：wiki_read / wiki_search **不注册**——工具名归 kb-context
 //   （ToolRuntime NamedEntries 同名注册 throw「already registered」，跨插件同层撞名=工具面整体炸）；
 //   crud.js 仍导出 wikiRead 函数面（事务内部消费/测试）。steward 工具面 = kb_validate / kb_mark /
 //   wiki_write / wiki_delete / wiki_rename（proposal §6 设计全貌页 + T12 验收标准）。
+import os from 'node:os'
 import path from 'node:path'
 import { z } from 'zod'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createCaptureState, observe, stopping, turnEnded, isSubagentHeader } from './capture.js'
-import { createBuffer, bumpStat } from './buffer.js'
+import { createBuffer, bumpStat, getStats, resetStats, appendCapture } from './buffer.js'
+import { createQueue, createTick } from './queue.js'
+import { createAlert } from './alert.js'
 import { kbValidate, RULES } from './validate.js'
 import { kbMark } from './mark.js'
 import { wikiWrite, wikiDelete, wikiRename } from './crud.js'
@@ -332,7 +337,17 @@ export function buildTools({ defineTool, configSource = () => ({}) }) {
   return [kbValidateTool, kbMarkTool, wikiWriteTool, wikiDeleteTool, wikiRenameTool]
 }
 
-export function apply(ctx, rawConfig) {
+/**
+ * 挂载（宿主 apply 面）。
+ * @param {object} ctx cordis 上下文（on/tools/logger/get 缝）
+ * @param {object} rawConfig 热改配置（每次事件现读）
+ * @param {{paths?: {queueDir?: string, ledgerFile?: string, alertFile?: string},
+ *          now?: () => number, tickIntervalMs?: number,
+ *          indexRefresh?: (info: object) => Promise<object>|object}} [opts]
+ *   测试缝（mark.js opts._write 同款纪律，共 4 个）：paths=队列/账本/告警落点（缺省 ~/.dsh/…）、
+ *   now=假时钟、tickIntervalMs=timer 间隔、indexRefresh=索引增量刷新钩子（本包不持索引，缺省明示不归我管）。
+ */
+export function apply(ctx, rawConfig, opts = {}) {
   // 配置防御性校验：非法配置留痕告警后 fail-open（INV-15 禁静默）。只在 apply 期告警一次
   // （事件路径热改读取不重复告警，防刷屏）。
   const parsed = Config.safeParse(rawConfig)
@@ -360,6 +375,110 @@ export function apply(ctx, rawConfig) {
     warn(ctx, '[wiki-steward] 宿主 ctx.tools 缺失，kb_validate/kb_mark/wiki_write/wiki_delete/wiki_rename 未注册（fail-open）')
   }
 
+  // ---- 队列 / 告警 / timer 轻活（T13；delta-spec §2 队列条目/timer 契约）----
+  // 三件轻活（Q10 定时分工）：队列补交（T9 enqueue 的治愈面）/ 索引增量刷新（钩子，缺省不归我管）/
+  // 告警汇总（buffer 统计聚合+归零）。tick **先查补跑账本**（漏跑补偿 A6）；burst 不重入（LeaseLock）。
+  // 状态落点（缺省）：队列 ~/.dsh/kb-index/queue/、账本 ~/.dsh/kb-index/schedule-ledger.json、
+  // 告警 ~/.dsh/kb-alerts.md（测试经 opts.paths 注入 mkdtemp——绝不碰真 home）。
+  const paths = {
+    queueDir: opts?.paths?.queueDir ?? path.join(os.homedir(), '.dsh', 'kb-index', 'queue'),
+    ledgerFile: opts?.paths?.ledgerFile ?? path.join(os.homedir(), '.dsh', 'kb-index', 'schedule-ledger.json'),
+    alertFile: opts?.paths?.alertFile ?? path.join(os.homedir(), '.dsh', 'kb-alerts.md'),
+  }
+  const nowMs = typeof opts?.now === 'function' ? opts.now : () => Date.now()
+  const tickIntervalMs = Number.isFinite(opts?.tickIntervalMs) && opts.tickIntervalMs > 0 ? opts.tickIntervalMs : 60_000
+  const alert = createAlert({ file: paths.alertFile, warn: (line) => warn(ctx, line) })
+  const queue = createQueue({
+    dir: paths.queueDir,
+    // 热改：maxRetries/ttlDays 每次 replay 现读（config queue{maxRetries:3, ttlDays:7}）
+    getCfg: () => ({ maxRetries: readCfg().queue.maxRetries, ttlMs: readCfg().queue.ttlDays * 86_400_000 }),
+    warn: (line) => warn(ctx, line),
+    now: nowMs,
+  })
+  const queueWatch = alert.watch('queue-replay')
+  const tick = createTick({
+    ledgerFile: paths.ledgerFile,
+    intervalMs: tickIntervalMs,
+    now: nowMs,
+    warn: (line) => warn(ctx, line),
+    jobs: [
+      {
+        // 队列补交：写失败条目治愈后重试（appendCapture 与 flush 同语义，marker 覆盖判据=恰一次）
+        name: 'queue-replay',
+        run: async () => {
+          const r = await queue.replay({ handle: (entry) => appendCapture(entry.payload) })
+          for (const e of r.exhausted ?? []) {
+            await alert.append('retry-exhausted',
+              `补交重试耗尽已删：dedupKey=${e.dedupKey} retries=${e.retries} target=${e.payload?.target ?? '?'}`)
+          }
+          if (r.ok === false) await queueWatch.fail(r.error ?? new Error('queue replay failed'))
+          else if ((r.failed ?? 0) > 0) await queueWatch.fail(new Error(`本轮 ${r.failed} 条补交失败`))
+          else queueWatch.ok()
+          return { madeUp: r.succeeded ?? 0, failed: r.failed ?? 0, exhausted: (r.exhausted ?? []).length }
+        },
+      },
+      {
+        // 索引增量刷新（Q10 轻活面）：索引归 kb-context（FTS 域）；本包只承载调度+补跑账本，
+        // 钩子缺省明示「不归我管」（skipped 留痕，绝不静默假装刷新过）。
+        name: 'index-refresh',
+        run: async (info) => {
+          if (typeof opts?.indexRefresh === 'function') {
+            const r = (await opts.indexRefresh(info)) ?? {}
+            return { ...r, madeUp: Number(r.madeUp) || 0 }
+          }
+          return { skipped: 'not-owned', madeUp: 0 }
+        },
+      },
+      {
+        // 告警汇总：buffer 统计聚合成一行 + 归零（buffer.js「T13 告警汇总后重置」契约）
+        name: 'alert-summary',
+        run: async () => {
+          const r = await alert.summarize(getStats())
+          resetStats()
+          return { appended: r.appended === true, madeUp: 0 }
+        },
+      },
+    ],
+  })
+
+  // timer 服务软取得（cordis-plugin-timer；Ruling 申报②：inject 维持 ['tools'] 不加 'timer'——
+  // cordis 对未 inject 的服务属性取用会抛，这里 try/catch 软取得 + 缺位 fail-open 留痕，
+  // 宿主没有 timer 服务时插件其余面照常活）。timer 后到 → 首个事件缝懒补接（不重入不重复注册）。
+  const timerService = () => {
+    try {
+      if (typeof ctx?.get === 'function') {
+        const t = ctx.get('timer')
+        if (t && typeof t.interval === 'function') return t
+        const t2 = ctx.get('timer', false) // 非严格：提供者未激活也认（懒补接面）
+        if (t2 && typeof t2.interval === 'function') return t2
+      }
+    } catch { /* cordis 代理在服务缺位时抛——走兜底 */ }
+    try {
+      if (ctx?.timer && typeof ctx.timer.interval === 'function') return ctx.timer
+    } catch { /* 同上 */ }
+    return null
+  }
+  let timerWired = false
+  const ensureTimer = () => {
+    if (timerWired) return true
+    const timer = timerService()
+    if (timer === null) return false
+    try {
+      // 回调返回 tick promise（cordis 忽略返回值；测试可 await 该回调=无竞态驱动）
+      timer.interval(() => Promise.resolve(tick.tick()).catch((e) => {
+        warn(ctx, `[wiki-steward] timer tick 异常已吞（不阻塞）：${e?.message ?? e}`)
+      }), tickIntervalMs)
+      timerWired = true
+      return true
+    } catch (e) {
+      warn(ctx, `[wiki-steward] timer 接线异常已吞（留痕）：${e?.message ?? e}`)
+      return false
+    }
+  }
+  if (!ensureTimer()) {
+    warn(ctx, '[wiki-steward] timer 服务缺失（cordis-plugin-timer），定时轻活未接线（fail-open）：队列补交/索引刷新/告警汇总暂停，tick() 可手动触发；timer 后到将随首个事件自动补接')
+  }
+
   // ---- 捕获接线（T9；Q7a/Q17 组合裁定）----
   // 三缝：session/event（投影+completed 校验）+ agent/turn-stopping（收口）+ session/disposed（收尾 flush）。
   // 每缝独立 try/catch 吞+留痕——捕获绝不阻塞会话（turn-stopping 是 serial 钩子，上抛=挡收口）。
@@ -375,6 +494,8 @@ export function apply(ctx, rawConfig) {
           sessionId: session.id,
           getCfg: readCfg,
           warn: (line) => warn(ctx, line),
+          enqueue: (entry) => queue.enqueue(entry), // T13：flush 失败→幂等队列备份
+          dequeue: (dedupKey) => queue.dequeue(dedupKey), // T13：flush 成功→清持久备份
         }),
       }
       slots.set(session.id, slot)
@@ -389,6 +510,7 @@ export function apply(ctx, rawConfig) {
 
   ctx.on('session/event', async (session, event) => {
     try {
+      if (!timerWired) ensureTimer() // 懒补接：timer 后到随首个事件接上（不重入；失败不告警防刷屏）
       if (!readCfg().capture.enabled) return // 热改门：禁用即零捕获（不建 slot）
       if (!session || isSubagentHeader(session.header)) return // ② subagent/fork 不捕获（tianxingleo 范式）
       if (event?.type === 'turn/end') {

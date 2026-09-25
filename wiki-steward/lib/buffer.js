@@ -12,8 +12,10 @@
 //   - 追加锁（T8 withFileLock 无 stale 自愈的消费侧处置）：**短 waitMs(250ms)+幂等重试**（非 lease
 //     ——lease 需改 T8 基元暴露 mtime，超本任务面）。锁超时=ELOCKTIMEOUT 计入同一失败面：轮次保
 //     留内存、留痕不抛、下次 commit/flush 重试——重复执行恰好一次（幂等）。
-//   - 写失败（Q14 同款容错面的捕获侧）：重试 3 次指数退避 50/100/200ms（jitter 留 T13 队列）→
-//     仍失败：warn 留痕（kbContext/alert 风格，不上抛）+ 轮次保留 + **T13 enqueue 缝位注释**。
+//   - 写失败（Q14 同款容错面的捕获侧）：重试 3 次指数退避 50/100/200ms（jitter 归 T13 队列退避）→
+//     仍失败：warn 留痕（kbContext/alert 风格，不上抛）+ 轮次保留 + **T13 enqueue 接线**（写失败
+//     幂等队列备份；同槽重入=同文件覆盖，幂等）；后续 flush 成功同槽 dequeue——「治愈后重试内容
+//     恰一次」由 marker 覆盖判据（appendCapture）兜底。
 //   - raw 只增/追加：create 走 writeAtomic（wx 临时+rename），append 走 'a' 追加——绝不改写既有
 //     语义内容；既有 conversation.md（无 frontmatter）以 HTML 注释 marker 承载机器标记，
 //     新建文件用 YAML frontmatter `source: capture`。
@@ -26,6 +28,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { writeAtomic, withFileLock } from './fs-safe.js'
 import { redact } from './secrets.js'
+import { dedupKeyFor } from './queue.js'
 
 /** 通用轨目录（Q7b 白名单面一） */
 export const SESSION_LOG_DIR = 'raw/04-session_logs'
@@ -86,6 +89,63 @@ export function safeTitle(text) {
   return t || '会话记录'
 }
 
+// ---------- marker 覆盖幂等（T13 补交「治愈后重试内容恰一次」判据） ----------
+const MARKER_RE = /<!-- source: capture session=(\S+) turns=(\d+)-(\d+) seq=\d+ -->/g
+
+/** chunk 首行 marker → {session, min, max}（无 marker=防御返回 null，不幂等跳过） */
+function chunkMarker(body) {
+  const m = /^<!-- source: capture session=(\S+) turns=(\d+)-(\d+) seq=\d+ -->/.exec(String(body))
+  return m === null ? null : { session: m[1], min: Number(m[2]), max: Number(m[3]) }
+}
+
+/**
+ * 覆盖判据：目标内已有同 session 且轮次区间**覆盖**本 chunk 的 marker → 本 chunk 已落过（零重复）。
+ * 覆盖而非精确匹配：失败 chunk（turns=1-3）可能已被后续成功 flush 的**超集**（turns=1-6）满足——
+ * 精确匹配会把已并入的内容再追加一遍（重复）。
+ */
+function coveredByMarker(content, body) {
+  const want = chunkMarker(body)
+  if (want === null) return false
+  for (const m of content.matchAll(MARKER_RE)) {
+    if (m[1] === want.session && Number(m[2]) <= want.min && Number(m[3]) >= want.max) return true
+  }
+  return false
+}
+
+/**
+ * 落盘（T13 导出：flush 与队列补交 handler 共用同一语义——内容恰一次）：
+ * mkdir（白名单内新增目录）→ withFileLock → marker 已覆盖=幂等跳过 : 在场？追加 : writeAtomic 新增。
+ * 锁完全不碰数据文件（T8 契约）；覆盖判据与 'a' 追加同在临界区内（判读-写原子）。
+ * @param {{target: string, head: string, body: string}} payload 落点+新建头+chunk 正文（首行=marker）
+ * @param {{lockWaitMs?: number}} [opts]
+ * @returns {Promise<{appended: boolean, target: string, reason?: string}>}
+ */
+export async function appendCapture({ target, head, body }, { lockWaitMs = DEFAULT_LOCK_WAIT_MS } = {}) {
+  await fs.promises.mkdir(path.dirname(target), { recursive: true })
+  return withFileLock(
+    target,
+    async () => {
+      let exists = true
+      try {
+        await fs.promises.access(target, fs.constants.F_OK)
+      } catch {
+        exists = false
+      }
+      if (exists) {
+        const content = await fs.promises.readFile(target, 'utf8')
+        if (coveredByMarker(content, body)) return { appended: false, target, reason: 'already-covered' }
+        // 追加语义：只往后接，不读不改既有字节（raw 禁改既有）
+        await fs.promises.appendFile(target, `\n\n${body}\n`, 'utf8')
+      } else {
+        // 新增语义：原子创建（wx 临时 + rename，T8 writeAtomic）
+        await writeAtomic(target, `${head}${body}\n`)
+      }
+      return { appended: true, target }
+    },
+    { waitMs: lockWaitMs, pollMs: LOCK_POLL_MS },
+  )
+}
+
 /**
  * 创建单会话缓冲。全部 I/O 经 per-buffer 串行链；任何失败不上抛到调用方语义之外
  * （flush 失败返回 {flushed:false,error}，commit 永不 reject）。
@@ -96,6 +156,8 @@ export function safeTitle(text) {
  *   now?: () => Date,
  *   retryBaseMs?: number,
  *   lockWaitMs?: number,
+ *   enqueue?: (entry: {dedupKey: string, payload: object, retries: number}) => Promise<any>, // T13 写失败队列
+ *   dequeue?: (dedupKey: string) => Promise<any>, // T13 成功后清持久备份
  * }} opts
  */
 export function createBuffer({
@@ -105,10 +167,14 @@ export function createBuffer({
   now = () => new Date(),
   retryBaseMs = DEFAULT_RETRY_BASE_MS,
   lockWaitMs = DEFAULT_LOCK_WAIT_MS,
+  enqueue,
+  dequeue,
 }) {
   if (typeof sessionId !== 'string' || sessionId === '') throw new TypeError('createBuffer: sessionId 必须是非空字符串')
   if (typeof getCfg !== 'function') throw new TypeError('createBuffer: getCfg 必须是函数')
   if (typeof warn !== 'function') throw new TypeError('createBuffer: warn 必须是函数')
+  if (enqueue !== undefined && typeof enqueue !== 'function') throw new TypeError('createBuffer: enqueue 必须是函数')
+  if (dequeue !== undefined && typeof dequeue !== 'function') throw new TypeError('createBuffer: dequeue 必须是函数')
   // marker 内嵌 sid：白名单字符化（防 --> 注入 marker；路径不经此，仅注释内容）
   const sid = String(sessionId).replace(/[^\w:.-]/g, '_')
 
@@ -119,6 +185,7 @@ export function createBuffer({
   let genericHead = null
   let seq = 0 // chunk 序号（marker 幂等/排序锚点）
   let chain = Promise.resolve() // per-buffer 串行链
+  const queuedKeys = new Set() // T13：已入队的 dedupKey（成功 flush 后 dequeue 清账）
 
   /** 渲染一个 chunk（一次 flush 的最小落盘单元） */
   function renderBody(chunk) {
@@ -133,33 +200,6 @@ export function createBuffer({
       lines.push(`**${e.role}**:`, String(e.text), '')
     }
     return lines.join('\n')
-  }
-
-  /**
-   * 落盘：mkdir（白名单内新增目录）→ withFileLock → 存在？追加 : writeAtomic 新增。
-   * 锁完全不碰数据文件（T8 契约）；'a' 追加仅在临界区内执行。
-   */
-  async function ensureAppend(target, head, body) {
-    await fs.promises.mkdir(path.dirname(target), { recursive: true })
-    await withFileLock(
-      target,
-      async () => {
-        let exists = true
-        try {
-          await fs.promises.access(target, fs.constants.F_OK)
-        } catch {
-          exists = false
-        }
-        if (exists) {
-          // 追加语义：只往后接，不读不改既有字节（raw 禁改既有）
-          await fs.promises.appendFile(target, `\n\n${body}\n`, 'utf8')
-        } else {
-          // 新增语义：原子创建（wx 临时 + rename，T8 writeAtomic）
-          await writeAtomic(target, `${head}${body}\n`)
-        }
-      },
-      { waitMs: lockWaitMs, pollMs: LOCK_POLL_MS },
-    )
   }
 
   /** flush 内核（只在串行链上执行） */
@@ -214,7 +254,7 @@ export function createBuffer({
     let lastErr = null
     for (let attempt = 0; attempt <= RETRY_ATTEMPTS; attempt++) {
       try {
-        await ensureAppend(target, head, body)
+        await appendCapture({ target, head, body }, { lockWaitMs })
         lastErr = null
         break
       } catch (e) {
@@ -227,13 +267,37 @@ export function createBuffer({
       warn(
         `[wiki-steward] 捕获 flush 失败（已重试 ${RETRY_ATTEMPTS} 次退避，轮次保留内存待重试，不上抛）：${target} — ${lastErr?.message ?? lastErr}`,
       )
-      // T13 缝位：enqueue({dedupKey: sha256(sessionId+turns).slice(0,32), payload: {target, head, body},
-      // retries:0}) — 写失败幂等队列建成后在此接线补交（本任务只留缝位注释，不实现队列）。
+      // T13 接线（原缝位）：写失败幂等队列备份——dedupKey=sha256(sessionId+\n+最老未落盘轮) 截 32，
+      // 同槽重入=同文件覆盖（幂等：chunk=全量余量，失败 chunk 恒被后续失败覆盖成最全形态）。
+      if (typeof enqueue === 'function') {
+        try {
+          const dedupKey = dedupKeyFor(sessionId, Math.min(...chunk.map((e) => e.turn)))
+          const r = await enqueue({ dedupKey, payload: { target, head, body }, retries: 0 })
+          if (r?.ok !== false) {
+            queuedKeys.add(dedupKey)
+          } else {
+            warn(`[wiki-steward] flush 失败入队未成（留痕；轮次仍在内存）：${dedupKey}`)
+          }
+        } catch (e) {
+          warn(`[wiki-steward] flush 失败入队异常已吞（留痕；轮次仍在内存）：${e?.message ?? e}`)
+        }
+      }
       return { flushed: false, error: lastErr }
     }
 
     entries = entries.slice(chunk.length) // 成功才出队（flush 在途时链上无并发 commit，slice 形防御）
     rounds = 0
+    // 成功=持久备份已被本次落盘覆盖 → dequeue 清账（恰一次双保险：marker 覆盖判据兜底重复投递）
+    if (queuedKeys.size > 0 && typeof dequeue === 'function') {
+      for (const k of queuedKeys) {
+        try {
+          await dequeue(k)
+        } catch (e) {
+          warn(`[wiki-steward] flush 成功后 dequeue 异常已吞（留痕；marker 判据兜底重复）：${e?.message ?? e}`)
+        }
+      }
+      queuedKeys.clear()
+    }
     bumpStat('flushes', 1)
     bumpStat('flushedTurns', new Set(chunk.map((e) => e.round)).size) // 按轮计数（一条 commit=一轮，可含多条消息）
     return { flushed: true, target }

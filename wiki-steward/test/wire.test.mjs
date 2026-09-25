@@ -11,17 +11,31 @@ import path from 'node:path'
 
 const { apply, DEFAULT_VAULT_ROOT } = await import('../lib/index.js')
 const { resetStats, getStats } = await import('../lib/buffer.js')
+const { createQueue, dedupKeyFor } = await import('../lib/queue.js')
 
 function mkCtx() {
   const handlers = {}
   const warnings = []
   const registered = []
+  const intervals = []
   return {
     handlers,
     warnings,
     registered,
+    intervals,
     logger: { warn: (l) => warnings.push(l) },
     tools: { register: (tool) => registered.push(tool) },
+    // T13 timer 服务缝（cordis-plugin-timer 最小形：ctx.get('timer').interval）；
+    // timer 缺失 fail-open 留痕另有专用用例。
+    get(name) {
+      if (name !== 'timer') return undefined
+      return {
+        interval: (cb, ms) => {
+          intervals.push({ cb, ms })
+          return () => {}
+        },
+      }
+    },
     on(event, fn) {
       handlers[event] = fn
     },
@@ -280,4 +294,161 @@ test('kb_mark / kb_validate 工具面：真跑 sha256 回写与机械校验（�
   const r2 = await kbMark.execute({ file: 'raw/x.md' }, {})
   assert.equal(r2.ok, false)
   assert.equal(r2.reason, 'read-only')
+})
+
+// ── T13：timer 接线 + 补跑账本（A6）+ T9 enqueue 缝 + 告警触发 ───────────────────
+
+function mkPaths(root) {
+  return {
+    queueDir: path.join(root, 'state/queue'),
+    ledgerFile: path.join(root, 'state/schedule-ledger.json'),
+    alertFile: path.join(root, 'state/kb-alerts.md'),
+  }
+}
+
+test('timer 接线：ctx.get("timer").interval 注册（默认 60s）；缺失 fail-open 留痕恰一 + 懒补接不重入', async (t) => {
+  const root = mkRoot(t)
+  const ctx = mkCtx()
+  apply(ctx, { vaultRoot: root })
+  assert.equal(ctx.intervals.length, 1, 'interval 注册恰一次')
+  assert.equal(ctx.intervals[0].ms, 60_000, '默认 tick 间隔 60s（Q10 秒级轻活）')
+  assert.equal(typeof ctx.intervals[0].cb, 'function')
+  assert.equal(ctx.warnings.length, 0, 'timer 在场健康路径零告警')
+  // timer 缺失：fail-open 留痕（INV-15）+ 事件缝照常
+  const ctx2 = mkCtx()
+  delete ctx2.get
+  apply(ctx2, { vaultRoot: root })
+  assert.equal(ctx2.intervals.length, 0)
+  assert.equal(ctx2.warnings.length, 1, '缺失留痕恰一条')
+  assert.match(ctx2.warnings[0], /timer 服务缺失/)
+  assert.equal(typeof ctx2.handlers['session/event'], 'function', '事件缝照常（fail-open）')
+  // 懒补接：timer 后到 → 首个事件缝补接线；已接线不重复注册
+  ctx2.get = (name) => (name === 'timer'
+    ? { interval: (cb, ms) => { ctx2.intervals.push({ cb, ms }); return () => {} } }
+    : undefined)
+  await ctx2.handlers['session/event'](plainSession('ses_lazy'), { type: 'turn/start', data: { turn: 1 } })
+  assert.equal(ctx2.intervals.length, 1, 'timer 后到懒补接成功')
+  await ctx2.handlers['session/event'](plainSession('ses_lazy'), { type: 'turn/start', data: { turn: 2 } })
+  assert.equal(ctx2.intervals.length, 1, '已接线不重复注册（burst 不重入同款）')
+})
+
+test('⑧ A6 补跑账本：模拟 web 重启丢 tick → 下次 tick 补做队列条目（漏跑不丢）', async (t) => {
+  resetStats()
+  const root = mkRoot(t)
+  const paths = mkPaths(root)
+  let nowMs = 1_760_000_000_000
+  const nowFn = () => nowMs
+  // —— web 进程 #1：tick #1（账本记 lastRunAt）——
+  const ctx1 = mkCtx()
+  apply(ctx1, { vaultRoot: root }, { paths, now: nowFn, tickIntervalMs: 60_000 })
+  await ctx1.intervals[0].cb()
+  // —— 停机期（web 重启）：写失败条目留在持久队列（T9 enqueue 产物）——
+  const q = createQueue({ dir: paths.queueDir, warn: () => {}, now: nowFn })
+  const target = path.join(root, 'raw/04-session_logs/a6-catchup.md')
+  await q.enqueue({
+    dedupKey: dedupKeyFor('ses_a6', 1),
+    payload: {
+      target,
+      head: '---\ntitle: a6\ndate: 2026-01-01\nsource: capture\nsession: "ses_a6"\n---\n\n# a6\n\n',
+      body: '<!-- source: capture session=ses_a6 turns=1-1 seq=1 -->\n\n**user**:\n补做内容不应丢\n',
+    },
+  })
+  nowMs += 3 * 60_000 // 3 个间隔只跑到 1 次 → 丢 2 个 tick
+  // —— web 进程 #2（重启后新 apply=新进程）：下次 tick 补做 ——
+  const ctx2 = mkCtx()
+  apply(ctx2, { vaultRoot: root }, { paths, now: nowFn, tickIntervalMs: 60_000 })
+  await ctx2.intervals[0].cb()
+  const content = fs.readFileSync(target, 'utf8')
+  assert.ok(content.includes('补做内容不应丢'), '下次 tick 补做队列条目（A6：漏跑不丢）')
+  assert.equal(fs.readdirSync(paths.queueDir).length, 0, '队列排空')
+  const ledger = JSON.parse(fs.readFileSync(paths.ledgerFile, 'utf8'))
+  assert.equal(ledger.jobs['queue-replay'].missed, 2, '丢 tick 入账（missed=2）')
+  assert.equal(ledger.jobs['queue-replay'].madeUp, 1, '补做量入账（留痕）')
+  assert.equal(ledger.jobs['queue-replay'].runs, 2)
+})
+
+test('T9 缝接线：flush 失败→enqueue（dedupKey/payload 契约、同槽重入覆盖）；治愈→dequeue+内容恰一次', async (t) => {
+  resetStats()
+  const root = mkRoot(t)
+  const paths = mkPaths(root)
+  const ctx = mkCtx()
+  apply(ctx, { vaultRoot: root, capture: { bufferRounds: 1 } }, { paths })
+  fs.writeFileSync(path.join(root, 'raw'), 'raw 是文件 → flush 必败') // 阻塞落盘
+  const session = plainSession('ses_t9_queue')
+  await drive(ctx, session, 1, '排队提问', '排队回答')
+  const files = fs.readdirSync(paths.queueDir)
+  assert.equal(files.length, 1, 'flush 失败→入队恰一条')
+  const k = dedupKeyFor('ses_t9_queue', 1)
+  assert.equal(files[0], `${k}.json`, 'dedupKey=sha256(sessionId+\\n+最老未落盘轮).slice(0,32)（幂等锚点）')
+  let entry = JSON.parse(fs.readFileSync(path.join(paths.queueDir, files[0]), 'utf8'))
+  assert.equal(entry.retries, 0)
+  assert.ok(entry.payload.body.includes('排队提问') && entry.payload.body.includes('排队回答'), 'payload 完整')
+  assert.ok(entry.payload.target.includes('04-session_logs'), 'payload 带落点（补交自足）')
+  // 同槽重入（再次失败）= 同文件覆盖（幂等，不产生第二份）
+  await drive(ctx, session, 2, '第二轮提问', '第二轮回答')
+  assert.equal(fs.readdirSync(paths.queueDir).length, 1, '同槽重入=同文件覆盖')
+  entry = JSON.parse(fs.readFileSync(path.join(paths.queueDir, `${k}.json`), 'utf8'))
+  assert.ok(entry.payload.body.includes('第二轮提问'), '后写覆盖（内容=最全 chunk）')
+  // 治愈 → 成功 flush → dequeue + 内容恰一次
+  fs.rmSync(path.join(root, 'raw'))
+  await drive(ctx, session, 3, '第三轮提问', '第三轮回答')
+  assert.equal(fs.readdirSync(paths.queueDir).length, 0, '成功 flush→dequeue 清队列')
+  const dir = path.join(root, 'raw/04-session_logs')
+  const content = fs.readFileSync(path.join(dir, fs.readdirSync(dir)[0]), 'utf8')
+  // 恰一次口径：正文条目各恰一次（'排队提问'另做标题/标题行出现，不入计数）
+  assert.equal(content.split('排队回答').length - 1, 1, '治愈后内容恰一次（turn1 正文）')
+  assert.equal(content.split('第二轮提问').length - 1, 1, 'turn2 正文恰一次')
+  assert.ok(content.includes('第三轮提问'))
+})
+
+test('T9 补交幂等：marker 覆盖判据——已覆盖轮次区间不重复追加（治愈后重试内容恰一次）', async (t) => {
+  const root = mkRoot(t)
+  const paths = mkPaths(root)
+  const nowMs = 1_760_000_000_000
+  const ctx = mkCtx()
+  apply(ctx, { vaultRoot: root }, { paths, now: () => nowMs })
+  const target = path.join(root, 'raw/04-session_logs/marker.md')
+  fs.mkdirSync(path.dirname(target), { recursive: true })
+  fs.writeFileSync(target, '<!-- source: capture session=ses_m turns=1-3 seq=5 -->\n\n已写内容\n')
+  const q = createQueue({ dir: paths.queueDir, warn: () => {}, now: () => nowMs })
+  await q.enqueue({
+    dedupKey: dedupKeyFor('ses_m', 1),
+    payload: { target, head: '', body: '<!-- source: capture session=ses_m turns=1-1 seq=1 -->\n\n不应重复\n' },
+  })
+  await q.enqueue({
+    dedupKey: dedupKeyFor('ses_m', 4),
+    payload: { target, head: '', body: '<!-- source: capture session=ses_m turns=4-4 seq=6 -->\n\n应补交\n' },
+  })
+  await ctx.intervals[0].cb()
+  const content = fs.readFileSync(target, 'utf8')
+  assert.equal(content.split('不应重复').length - 1, 0, 'turns=1-1 已被 1-3 覆盖 → 零重复（幂等）')
+  assert.equal(content.split('应补交').length - 1, 1, 'turns=4-4 未覆盖 → 补交恰一次')
+  assert.equal(content.split('已写内容').length - 1, 1)
+  assert.equal(fs.readdirSync(paths.queueDir).length, 0, '两条都按成功出队（已覆盖=幂等成功）')
+})
+
+test('告警触发：补交重试耗尽→retry-exhausted；连续 2 轮失败→阈值告警（全程不抛不阻塞）', async (t) => {
+  resetStats()
+  const root = mkRoot(t)
+  const paths = mkPaths(root)
+  let nowMs = 1_760_000_000_000
+  const ctx = mkCtx()
+  apply(ctx, { vaultRoot: root }, { paths, now: () => nowMs })
+  const blocked = path.join(root, 'blocked')
+  fs.writeFileSync(blocked, 'x') // 父路径是文件 → appendCapture 必败
+  const target = path.join(blocked, 'sub/x.md')
+  const q = createQueue({ dir: paths.queueDir, warn: () => {}, now: () => nowMs })
+  await q.enqueue({
+    dedupKey: dedupKeyFor('s', 1),
+    payload: { target, head: '', body: '<!-- source: capture session=s turns=1-1 seq=1 -->\nX\n' },
+  })
+  await ctx.intervals[0].cb() // 尝试 1 失败（retries=1）
+  nowMs += 60_000
+  await ctx.intervals[0].cb() // 尝试 2 失败（retries=2）→ 连续失败阈值告警
+  nowMs += 60_000
+  await ctx.intervals[0].cb() // 尝试 3 失败 → 耗尽删除 + 告警
+  const alerts = fs.readFileSync(paths.alertFile, 'utf8')
+  assert.match(alerts, /`retry-exhausted`/, '重试耗尽→告警')
+  assert.match(alerts, /`consecutive-failures`/, '连续失败阈值（2）→告警')
+  assert.equal(fs.readdirSync(paths.queueDir).length, 0, '耗尽条目删除（retries≥3 删）')
 })
