@@ -89,6 +89,22 @@ function fence(root, rel, warnings, { mustExist = false } = {}) {
   return { ok: true, ...g }
 }
 
+// ── fix r1 #1：目标写入的锁内重检覆盖门（六坑④ 检查与写入原子）────────────────
+/** 目标存在性新鲜判（stat 语义=realpathGuard().exists 同源：跟符号链接；dangling 内指=不存在） */
+const existsFresh = async (p) => {
+  try { await fs.promises.stat(p); return true } catch { return false }
+}
+/**
+ * 覆盖门（**必须在 withLeaseLock 临界区内调用**，与 writeAtomic 同锁=检查与写入原子，堵静默覆盖窗口）：
+ * overwrite:false 且目标锁内已存在 → `{rejected:'target-exists'}`（写入拒）；overwrite:true 语义不变（放行覆盖）。
+ * fix r1 #1 修复的正是「检查在锁外、锁内不重检」——此窗口内被并发建的目标会被 writeAtomic 静默覆盖。
+ */
+const overwriteGate = async (targetReal, overwrite) => {
+  const existsNow = await existsFresh(targetReal)
+  if (existsNow && overwrite !== true) return { rejected: 'target-exists' }
+  return { created: !existsNow }
+}
+
 // ── wikilink 扫描/改写引擎（四设计；parseRegTarget 归一口径与 validate.js 对齐） ──
 
 /** 单个 [[…]] 内文解析：target 之外的 `#锚`/`|别名`/前导空白整段保留（捕获组回填） */
@@ -142,6 +158,7 @@ function scanLinks(text) {
   return out
 }
 
+// wikilink 重写会改动页面内容，若触带 sha256 字段的文件需重打标（kb_mark 管辖，归终审）。
 /**
  * 改写计划（对一份文本）：匹配到旧文件的链接 → 新目标（风格保持/捕获组回填/toBase 歧义降级）；
  * stem 歧义 → 不动+留痕（设计①）。返回 {text, changes, skipped, notes}。
@@ -323,20 +340,26 @@ export async function wikiWrite(target, content, opts = {}) {
   if (!pst.isDirectory()) return fail('not-found', `父路径不是目录：${path.dirname(r.rel)}`, warnings)
   const created = !f.exists
   if (f.exists && opts.overwrite !== true) {
-    // 六坑④统一覆盖语义：缺省拒（静默覆盖反例）
+    // 六坑④统一覆盖语义：缺省拒（静默覆盖反例）——快路径早拒
     return fail('target-exists', `目标已存在（显式 overwrite:true 才替换）：${r.rel}`, warnings)
   }
   const result = await withLeaseLock(f.real, async (meta) => {
     if (meta.tookOver) {
       warnings.push(`stale-lock-takeover：${r.rel}（陈旧 ${Math.round(meta.staleAgeMs)}ms，已接管）`)
     }
+    // fix r1 #1：锁内重检覆盖门（与 writeAtomic 同锁=检查与写入原子）——堵「检查后、写入前」并发建目标被静默覆盖
+    const gate = await overwriteGate(f.real, opts.overwrite)
+    if (gate.rejected) return gate
     await writeAtomic(f.real, content)
-    return true
+    return { created: gate.created }
   }).catch((e) => e)
   if (result instanceof Error) {
     return fail('io-error', `写入失败：${result?.code ?? result?.message ?? result}`, warnings)
   }
-  return { ok: true, file: r.rel, created, warnings }
+  if (result?.rejected) {
+    return fail('target-exists', `目标已存在（显式 overwrite:true 才替换）：${r.rel}`, warnings)
+  }
+  return { ok: true, file: r.rel, created: result.created ?? created, warnings }
 }
 
 // ── wikiDelete（.trash 可逆 + 双确认；INV-7 / OW-US-6）────────────────────────
@@ -382,8 +405,14 @@ export async function wikiDelete(target, opts = {}) {
   }
   const f = fence(v.root, r.rel, warnings, { mustExist: true })
   if (!f.ok) return f
-  const st = await fs.promises.stat(f.real)
-  const kind = st.isDirectory() ? 'directory' : 'file'
+  // fix r1 #2：lstat 源路径自身（不解引用）——in-root symlink 源（link.md→real.md）照 stat(f.real) 解引用
+  // 会判 real.md 是文件而放行 → rename(f.real) 移走真实页、源路径残留 dangling（违零空源残渣）。
+  // 源节点非真实文件/目录（symlink/其他）即拒 not-a-file；真实目录仍可删（保留 .trash 目录特性）。
+  const srcNode = await fs.promises.lstat(path.join(v.root, r.rel)).catch(() => null)
+  if (srcNode === null || srcNode.isSymbolicLink() || (!srcNode.isFile() && !srcNode.isDirectory())) {
+    return fail('not-a-file', `仅普通文件/目录可删（拒 symlink/其他，防源路径残渣）：${r.rel}`, warnings)
+  }
+  const kind = srcNode.isDirectory() ? 'directory' : 'file'
   // .trash 就位（失败=拒，绝不落到直接删）
   const trashDir = path.join(v.root, '.trash')
   try {
@@ -455,9 +484,12 @@ export async function wikiRename(from, to, opts = {}) {
   // 围栏 + 语义校验
   const ff = fence(v.root, rf.rel, warnings, { mustExist: true })
   if (!ff.ok) return { ...ff, from: rf.rel, to: rt.rel }
-  const fromStat = await fs.promises.stat(ff.real)
-  if (!fromStat.isFile() || !rf.rel.endsWith('.md')) {
-    return fail('not-a-file', `仅 .md 页支持改名/移动（零断链承诺范围）：${rf.rel}`, warnings, { from: rf.rel, to: rt.rel })
+  // fix r1 #2：lstat 源路径自身（不解引用）——in-root symlink 源（link.md→real.md）照 stat(ff.real) 解引用
+  // 判 real.md 是文件而放行 → 后续 rm(ff.real) 删真实页、源路径残留 dangling + oldKey 取自请求名致 [[real]] 断链。
+  // 源节点非普通 .md 文件（symlink/目录/其他）即拒 not-a-file（正是「仅 .md 页」门本意）。
+  const srcNode = await fs.promises.lstat(path.join(v.root, rf.rel)).catch(() => null)
+  if (srcNode === null || !srcNode.isFile() || !rf.rel.endsWith('.md')) {
+    return fail('not-a-file', `仅 .md 普通文件页支持改名/移动（拒 symlink/目录/其他；零断链承诺范围）：${rf.rel}`, warnings, { from: rf.rel, to: rt.rel })
   }
   const tf = fence(v.root, rt.rel, warnings)
   if (!tf.ok) return { ...tf, from: rf.rel, to: rt.rel }
@@ -602,10 +634,26 @@ export async function wikiRename(from, to, opts = {}) {
   }
 
   try {
-    // ① 目标副本（零断链窗口：改写前新名已在场）
-    const destEntry = entryFor(tf.real)
-    await writeAtomic(tf.real, selfPlan.text)
-    destEntry.written = Buffer.from(selfPlan.text, 'utf8')
+    // ① 目标副本（零断链窗口：改写前新名已在场）——fix r1 #1：写入进 withLeaseLock(tf.real)，
+    //    锁内重检覆盖门（与写入原子，堵『检查后写入前』并发建目标被静默覆盖）+ fresh 快照
+    //    （回滚面同步受锁：还原真实写前态，绝不把并发者文件逆放成『不存在』——(b) 坑）。
+    const destWrite = await withLeaseLock(tf.real, async (meta) => {
+      if (meta.tookOver) {
+        warnings.push(`stale-lock-takeover：${rt.rel}（陈旧 ${Math.round(meta.staleAgeMs)}ms，已接管）`)
+      }
+      const gate = await overwriteGate(tf.real, opts.overwrite)
+      if (gate.rejected) return gate // overwrite:false 且锁内存在即拒（pre-write 面）
+      const e = entryFor(tf.real) // 写入面才进 entries（拒绝面零回滚项）
+      e.snap = await journalSave(tf.real) // 锁内 fresh 快照=回滚基（覆盖前真实内容）
+      await writeAtomic(tf.real, selfPlan.text)
+      e.written = Buffer.from(selfPlan.text, 'utf8')
+      return { ok: true }
+    })
+    if (destWrite?.rejected) {
+      const err = new Error(`目标已存在（显式 overwrite:true 才替换）：${rt.rel}`)
+      err.reason = 'target-exists'
+      throw err // pre-write：failTx → rolledBack:false「未写盘、无逆放发生」
+    }
     if (opts._failAt === 'after-dest') throw faultError('after-dest')
 
     // ② 逐文件锁内 RMW（六坑③：锁内读新鲜内容——快照后被改=冲突中止，绝不吞并发写）

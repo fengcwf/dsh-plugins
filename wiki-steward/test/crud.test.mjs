@@ -261,6 +261,31 @@ test('wikiDelete 默认只读 + not-found：拒 + 零副作用', async () => {
   assert.equal(fs.existsSync(path.join(root, '.trash')), false)
 })
 
+// ── fix r1 #2 symlink 源门（源路径自身 lstat，拒 symlink/其他——防残渣+断链）────────
+
+test('wikiRename/wikiDelete symlink 源拒（fix r1 #2）：in-root link.md→real.md → 拒 not-a-file，真实页/链接原样零残渣', async () => {
+  const root = mkVault()
+  put(root, 'wiki/real.md', '真实页内容 [[real]]')
+  put(root, 'wiki/ref.md', '指向 [[real]]')
+  fs.symlinkSync('real.md', path.join(root, 'wiki', 'link.md')) // in-root symlink 源：link.md→real.md
+  // rename symlink 源 → 拒
+  const rr = await wikiRename('wiki/link.md', 'wiki/moved.md', { vaultRoot: root, readOnly: false })
+  assert.equal(rr.ok, false)
+  assert.equal(rr.reason, 'not-a-file', 'symlink 源必须拒（仅 .md 普通文件页门）')
+  // delete symlink 源 → 拒
+  const rd = await wikiDelete('wiki/link.md', { vaultRoot: root, readOnly: false, confirm: 'wiki/link.md' })
+  assert.equal(rd.ok, false)
+  assert.equal(rd.reason, 'not-a-file')
+  // 真实页原样（未被 rm(ff.real) 误删）
+  assert.equal(fs.readFileSync(path.join(root, 'wiki/real.md'), 'utf8'), '真实页内容 [[real]]', '真实页完好无损')
+  assert.equal(fs.readFileSync(path.join(root, 'wiki/ref.md'), 'utf8'), '指向 [[real]]', '链接原样未改写')
+  // 源路径仍是有效 symlink（无 dangling 残渣，零空源残渣）
+  assert.equal(fs.lstatSync(path.join(root, 'wiki/link.md')).isSymbolicLink(), true, 'link.md 仍是指向 real.md 的 symlink（非 dangling）')
+  assert.equal(fs.existsSync(path.join(root, 'wiki/moved.md')), false, '零写盘')
+  assert.equal(fs.existsSync(path.join(root, '.trash')), false, '.trash 零触碰')
+  assert.deepEqual(scanBrokenLinks(root), [], '零断链')
+})
+
 // ── ⑦ wikiRename 正常路径：风格保持 / 锚别名回填 / frontmatter / 代码块豁免 ──
 
 test('wikiRename 改名/移动：wikilink 全形态改写（风格保持 + #锚|别名回填 + frontmatter 内链接 + 代码块豁免）', async () => {
@@ -393,6 +418,52 @@ test('wikiRename overwrite:true：目标被替换；中途故障 → 目标还�
   assert.equal(fs.readFileSync(path.join(root, 'wiki/b/new.md'), 'utf8'), '覆盖前内容', '目标还原为覆盖前内容')
   assert.equal(fs.readFileSync(path.join(root, 'wiki/a/old.md'), 'utf8'), '源内容')
   assert.equal(fs.readFileSync(path.join(root, 'wiki/ref.md'), 'utf8'), '[[a/old]]')
+})
+
+// ── fix r1 #1 并发竞态（锁外创建目标→写入必须拒/按 overwrite 语义；六坑④ 检查与写入原子）──
+
+test('wikiRename 并发竞态·overwrite:false：锁外建目标 → 写入拒 target-exists（绝不静默覆盖并发者文件）', async () => {
+  const root = mkVault('wiki/b')
+  put(root, 'wiki/a/old.md', '源内容')
+  put(root, 'wiki/ref.md', '[[a/old]]')
+  const r = await wikiRename('wiki/a/old.md', 'wiki/b/new.md', {
+    vaultRoot: root,
+    readOnly: false,
+    _beforeApply: () => {
+      // 真实并发写（非 mock）：另一个写者在『检查后、写入前』窗口建了目标（快照时尚不存在）
+      fs.mkdirSync(path.join(root, 'wiki/b'), { recursive: true })
+      fs.writeFileSync(path.join(root, 'wiki/b/new.md'), '并发者抢先建的目标')
+    },
+  })
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'target-exists', '锁内重检覆盖门必须拒（overwrite:false）')
+  assert.equal(r.rolledBack, false, 'pre-write：未写盘、无逆放发生')
+  assert.equal(fs.readFileSync(path.join(root, 'wiki/b/new.md'), 'utf8'), '并发者抢先建的目标',
+    '并发者文件绝不被静默覆盖（fix r1 #1 核心）')
+  assert.equal(fs.readFileSync(path.join(root, 'wiki/a/old.md'), 'utf8'), '源内容', '源完好')
+  assert.equal(fs.readFileSync(path.join(root, 'wiki/ref.md'), 'utf8'), '[[a/old]]', '引用未动')
+})
+
+test('wikiRename 并发竞态·overwrite:true：锁外建目标 → 覆盖语义不变；中途故障回滚还原并发者内容（不逆放成不存在）', async () => {
+  const root = mkVault('wiki/b')
+  put(root, 'wiki/a/old.md', '源内容')
+  put(root, 'wiki/ref.md', '[[a/old]]')
+  const r = await wikiRename('wiki/a/old.md', 'wiki/b/new.md', {
+    vaultRoot: root,
+    readOnly: false,
+    overwrite: true,
+    _failAt: 'before-delete',
+    _beforeApply: () => {
+      fs.mkdirSync(path.join(root, 'wiki/b'), { recursive: true })
+      fs.writeFileSync(path.join(root, 'wiki/b/new.md'), '并发者抢先建的目标')
+    },
+  })
+  assert.equal(r.ok, false)
+  assert.equal(r.rolledBack, true)
+  // (b) 坑修复实证：快照时目标不存在，但并发者在窗口内建了它——回滚必须还原并发者内容，绝不逆放成『不存在』
+  assert.equal(fs.readFileSync(path.join(root, 'wiki/b/new.md'), 'utf8'), '并发者抢先建的目标',
+    '回滚面同步受锁（fresh 快照）：并发者文件还原为写前内容，绝不被删除')
+  assert.equal(fs.readFileSync(path.join(root, 'wiki/a/old.md'), 'utf8'), '源内容')
 })
 
 // ── ⑥ 事务中途故障整体回滚（OW-INV-4：journal 逆放 + 断链扫描）────────────────
