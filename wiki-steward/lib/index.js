@@ -1,17 +1,25 @@
-// wiki-steward — Obsidian vault 写侧记账插件（入口；T8 壳 → T9 捕获接线）
-// 职责边界：导出契约 + Config 定义 + apply 挂载点（fail-open 配置校验 + 捕获三事件缝接线）；
-// 捕获语义在 lib/capture.js（投影/中和/状态机）、落盘在 lib/buffer.js（缓冲/双轨/锁/重试）；
-// 后续任务平铺扩展：validate（T10）、mark（T11）、crud（T12）、queue/alert（T13）。
+// wiki-steward — Obsidian vault 写侧记账插件（入口；T8 壳 → T9 捕获接线 → T12 工具注册收口）
+// 职责边界：导出契约 + Config 定义 + apply 挂载点（fail-open 配置校验 + 捕获三事件缝接线 + 全 steward 工具面）；
+// 捕获语义在 lib/capture.js（投影/中和/状态机）、落盘在 lib/buffer.js（缓冲/双轨/锁/重试）、
+// 校验/回写/CRUD 在 lib/validate.js / mark.js / crud.js（本文件只做 defineTool 注册收口）。
 // ⚠️ R13 教训：default 导出必须是 {inject, apply} 对象——工厂函数形态会被宿主静默忽略。
-// ⚠️ T9 裁定（task-9 报告申报②）：inject 维持 []——捕获全走 ctx.on 公开事件缝
-//   （session/event + agent/turn-stopping + session/disposed），零宿主服务消费（sessionQuery 不需要：
-//   projectSessionConversation 官方语义在 capture.js 本地复刻）；T11/T12 扩 ['tools']、T13 timer 同理。
+// ⚠️ T9 裁定（task-9 报告申报②）：捕获全走 ctx.on 公开事件缝（session/event + agent/turn-stopping +
+//   session/disposed），零宿主服务消费；**T12 收口：inject = ['tools']**（工具注册宿主缝，kb-context 同款）。
+// ⚠️ T12 Ruling（撞名防雷，wire.test 钉住）：wiki_read / wiki_search **不注册**——工具名归 kb-context
+//   （ToolRuntime NamedEntries 同名注册 throw「already registered」，跨插件同层撞名=工具面整体炸）；
+//   crud.js 仍导出 wikiRead 函数面（事务内部消费/测试）。steward 工具面 = kb_validate / kb_mark /
+//   wiki_write / wiki_delete / wiki_rename（proposal §6 设计全貌页 + T12 验收标准）。
+import path from 'node:path'
 import { z } from 'zod'
+import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createCaptureState, observe, stopping, turnEnded, isSubagentHeader } from './capture.js'
 import { createBuffer, bumpStat } from './buffer.js'
+import { kbValidate, RULES } from './validate.js'
+import { kbMark } from './mark.js'
+import { wikiWrite, wikiDelete, wikiRename } from './crud.js'
 
 export const name = 'wiki-steward'
-export const inject = []
+export const inject = ['tools']
 
 // vault 根路径出厂默认（kb-context R2 裁定同构，单一来源）：
 // T9 补键裁定——delta-spec §2 Config 未列 vaultRoot，但捕获必须落盘（测试临时 root 注入 +
@@ -55,6 +63,275 @@ function warn(ctx, line) {
   console.warn(line)
 }
 
+// ── 工具面（T12 注册收口：validate/mark/crud 全部 defineTool）────────────────
+// 语义要点进 description（模型引导面）：默认只读（INV-7，config write.readOnly 热改）；
+// 删除=.trash 可逆+双确认（confirm=路径复述）；覆盖=显式 overwrite 缺省拒（防静默覆盖）；
+// 改名/移动=多文件事务（journal 快照+整体回滚+wikilink/INDEX 同事务+零断链）。
+// vaultRoot 一律取 config（模型不可改），readOnly 门在工具层 + crud 层双保险。
+const WARN_PROP = {
+  warnings: {
+    type: 'array',
+    items: { type: 'string' },
+    description: '留痕（INV-15 禁静默）：拒绝细节/歧义不动/接管/边界声明/回滚跳过',
+  },
+}
+const OK_PROP = { ok: { type: 'boolean', required: true, description: '是否成功' } }
+
+/** 工具面构造（defineTool 真件由 index.js 静态导入传入；kb-context buildTools 同款姿势） */
+export function buildTools({ defineTool, configSource = () => ({}) }) {
+  /** per-call 现读 config（热改语义）；非法配置回退全默认（与 apply 期告警面一致） */
+  const readCfg = () => {
+    const p = Config.safeParse(configSource())
+    return p.success ? p.data : Config.parse({})
+  }
+
+  const kbValidateTool = defineTool({
+    name: 'kb_validate',
+    description:
+      '机械校验 vault 页面/目录（只读）：①frontmatter 六字段 ②INDEX 双向（漏登/死链/歧义）'
+      + '③类型化命名 ④目录归属 ⑤结构四段+wikilink 语法 ⑥证据清单（INV-15）。'
+      + `target= vault 相对路径（文件或目录）；rules 可裁剪执行面（${RULES.join('/')}，缺省全跑）。`
+      + '返回 {file, findings:[{rule, line?, message, severity}], verdict}（verdict: pass/warn/fail），'
+      + '目录 target 另带 results 逐文件同形。用法：写/改名后跑校验把关。',
+    parameters: {
+      target: { type: 'string', required: true, description: 'vault 相对路径（文件或目录，如 wiki/concepts/x.md）' },
+      rules: { type: 'array', items: { type: 'string' }, description: `裁剪规则面（${RULES.join('/')}），缺省全跑` },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: true,
+        properties: {
+          file: { type: 'string', required: true, description: '被校验目标（绝对路径）' },
+          findings: {
+            type: 'array',
+            required: true,
+            description: '发现列表（rule/line?/message/severity）',
+            items: {
+              type: 'object',
+              additionalProperties: true,
+              properties: {
+                rule: { type: 'string', required: true },
+                message: { type: 'string', required: true },
+                severity: { type: 'string', required: true, enum: ['error', 'warn'] },
+              },
+            },
+          },
+          verdict: { type: 'string', required: true, enum: ['pass', 'warn', 'fail'], description: '三级裁定' },
+          ...WARN_PROP,
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(args) {
+      const cfg = readCfg()
+      // 模型给 vault 相对路径 → 锚定 vaultRoot 后交 kbValidate（其内部 realpathGuard 围栏照跑）
+      return kbValidate(path.resolve(cfg.vaultRoot, args.target), { vaultRoot: cfg.vaultRoot, rules: args.rules })
+    },
+  })
+
+  const kbMarkTool = defineTool({
+    name: 'kb_mark',
+    description:
+      'sha256 机械标记原子回写（写侧，INV-1）：只换 frontmatter sha256 行的值字节（缺行则补插闭合 --- 前），'
+      + '其余字节逐字不动；body 口径=闭合 --- 之后内容 universal-newlines 归一后 sha256（INV-13 与 ingest 同源）。'
+      + 'expectedRevision=写前乐观并发（当前 sha256 值，冲突=拒绝不覆盖并留痕；缺省无条件）。'
+      + '原子写（O_EXCL+fsync+rename）+ 写后未动段校验（写坏=逆放拒）。默认只读（config write.readOnly）。',
+    parameters: {
+      file: { type: 'string', required: true, description: 'vault 相对路径（如 raw/04-session_logs/xxx.md）' },
+      expectedRevision: { type: 'string', description: '期望的当前 sha256 值（乐观并发；缺省无条件）' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: true,
+        properties: {
+          ...OK_PROP,
+          file: { type: 'string', required: true },
+          changed: { type: 'boolean', description: '是否发生回写（幂等：同值 false 零写盘）' },
+          previous: { type: 'string', description: '回写前值（无标记行=null）' },
+          current: { type: 'string', description: '回写后的 body sha256' },
+          reason: { type: 'string', description: '失败原因枚举（no-frontmatter/ambiguous-sha256/revision-conflict/fenced/not-found/io-error/write-corrupt/read-only）' },
+          message: { type: 'string', description: '失败详情（含 rolledBack 口径说明）' },
+          ...WARN_PROP,
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(args) {
+      const cfg = readCfg()
+      const file = args.file
+      if (cfg.write.readOnly !== false) {
+        return {
+          ok: false,
+          file,
+          reason: 'read-only',
+          message: '默认只读（INV-7）：config write.readOnly:false 显式开启才动手',
+          warnings: ['kb_mark 拒：默认只读（write.readOnly=true）'],
+        }
+      }
+      return kbMark(path.resolve(cfg.vaultRoot, file), {
+        vaultRoot: cfg.vaultRoot,
+        ...(args.expectedRevision !== undefined ? { expectedRevision: args.expectedRevision } : {}),
+      })
+    },
+  })
+
+  const wikiWriteTool = defineTool({
+    name: 'wiki_write',
+    description:
+      '写单个 wiki 页面（wiki/ 域；默认只读，config write.readOnly:false 显式开启）。'
+      + '覆盖语义：目标已存在缺省拒（target-exists），显式 overwrite:true 才替换（防静默覆盖）。'
+      + 'realpath 围栏全链逐段解引用拒 symlink 逃逸/穿越；父目录必须存在（不自动建目录）；锁内原子写。',
+    parameters: {
+      path: { type: 'string', required: true, description: 'vault 相对路径（wiki/ 域，如 wiki/concepts/x.md）' },
+      content: { type: 'string', required: true, description: '页面内容（UTF-8 原样落盘）' },
+      overwrite: { type: 'boolean', description: '显式允许替换既有文件（缺省 false=拒）' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: true,
+        properties: {
+          ...OK_PROP,
+          file: { type: 'string', required: true },
+          created: { type: 'boolean', description: 'true=新建，false=替换既有' },
+          reason: { type: 'string', description: '失败原因枚举（vault-root-required/unsafe-form/not-wiki/read-only/fenced/not-found/target-exists/io-error）' },
+          message: { type: 'string' },
+          ...WARN_PROP,
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(args) {
+      const cfg = readCfg()
+      return wikiWrite(args.path, args.content, {
+        vaultRoot: cfg.vaultRoot,
+        readOnly: cfg.write.readOnly,
+        ...(args.overwrite !== undefined ? { overwrite: args.overwrite } : {}),
+      })
+    },
+  })
+
+  const wikiDeleteTool = defineTool({
+    name: 'wiki_delete',
+    description:
+      '删除 wiki 页面/目录 → 移入 `.trash/<路径>`（冲突改名 `.N` 防覆盖，内容逐字节可逆——从 .trash 移回即还原）。'
+      + '双确认（INV-7）：confirm 必须原样复述目标路径，缺失/不符即拒（零副作用）。'
+      + '默认只读（config write.readOnly:false 显式开启）；.trash 无法就位=拒（绝不直接删）。'
+      + '注意：删除不改写指向它的链接（零断链承诺只在 wiki_rename）。',
+    parameters: {
+      path: { type: 'string', required: true, description: 'vault 相对路径（wiki/ 域）' },
+      confirm: { type: 'string', required: true, description: '双确认：原样复述 path 的值' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: true,
+        properties: {
+          ...OK_PROP,
+          file: { type: 'string', required: true },
+          trashPath: { type: 'string', description: '.trash 内落点（vault 相对）' },
+          kind: { type: 'string', enum: ['file', 'directory'], description: '被删对象类型' },
+          reason: { type: 'string', description: '失败原因枚举（vault-root-required/unsafe-form/not-wiki/read-only/confirm-required/confirm-mismatch/fenced/not-found/io-error）' },
+          message: { type: 'string' },
+          ...WARN_PROP,
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(args) {
+      const cfg = readCfg()
+      return wikiDelete(args.path, {
+        vaultRoot: cfg.vaultRoot,
+        readOnly: cfg.write.readOnly,
+        confirm: args.confirm,
+      })
+    },
+  })
+
+  const wikiRenameTool = defineTool({
+    name: 'wiki_rename',
+    description:
+      '改名/移动 wiki 页面（同操作，to 可跨目录；仅 .md 页）——多文件事务：改前 journal 快照 → 逐文件原子写+锁 → '
+      + 'wikilink 重写（歧义不动+留痕、#锚|别名回填、裸名/全路径风格保持、toBase 不制造新歧义）→ INDEX 同事务 → '
+      + '失败整体回滚（journal 逆放，批量失败即中止）。顺序=先落目标→改写→最后删源（零断链窗口+无空源残渣）。'
+      + 'frontmatter 内链接也重写；围栏代码块豁免；改写范围=wiki/ 域（域外引用留痕未改写）。'
+      + '覆盖语义：to 已存在缺省拒（target-exists），显式 overwrite:true 才替换（失败回滚会还原目标原内容）。'
+      + 'dryRun:true 只给计划（planned/skipped）零写盘。默认只读（config write.readOnly:false 显式开启）。',
+    parameters: {
+      from: { type: 'string', required: true, description: '源路径（vault 相对，wiki/ 域）' },
+      to: { type: 'string', required: true, description: '目标路径（vault 相对，wiki/ 域；父目录须存在）' },
+      overwrite: { type: 'boolean', description: '显式允许替换既有目标（缺省 false=拒）' },
+      dryRun: { type: 'boolean', description: '只出计划零写盘（默认 false）' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: true,
+        properties: {
+          ...OK_PROP,
+          from: { type: 'string', required: true },
+          to: { type: 'string', required: true },
+          moved: { type: 'boolean', description: '真实执行完成' },
+          dryRun: { type: 'boolean', description: '计划预览（零写盘）' },
+          planned: {
+            type: 'array',
+            description: '将被改写的文件与处数（dryRun/成功）',
+            items: {
+              type: 'object',
+              additionalProperties: true,
+              properties: { file: { type: 'string', required: true }, changes: { type: 'number', required: true } },
+            },
+          },
+          rewritten: {
+            type: 'array',
+            description: '实际改写的文件与处数（成功时）',
+            items: {
+              type: 'object',
+              additionalProperties: true,
+              properties: { file: { type: 'string', required: true }, changes: { type: 'number', required: true } },
+            },
+          },
+          skipped: {
+            type: 'array',
+            description: '歧义不动的链接（多命中返回不动+留痕）',
+            items: {
+              type: 'object',
+              additionalProperties: true,
+              properties: {
+                file: { type: 'string', required: true },
+                line: { type: 'number', required: true },
+                target: { type: 'string', required: true },
+                reason: { type: 'string', required: true },
+              },
+            },
+          },
+          rolledBack: {
+            type: 'boolean',
+            description: '失败时回滚诚实位（false=pre-write 未写盘无逆放发生 / 逆放未完全需人工核对）',
+          },
+          reason: { type: 'string', description: '失败原因枚举（vault-root-required/unsafe-form/not-wiki/read-only/same-path/fenced/not-found/not-a-file/target-exists/journal-limit/concurrent-modification/transaction-failed/io-error）' },
+          message: { type: 'string' },
+          ...WARN_PROP,
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(args) {
+      const cfg = readCfg()
+      return wikiRename(args.from, args.to, {
+        vaultRoot: cfg.vaultRoot,
+        readOnly: cfg.write.readOnly,
+        ...(args.overwrite !== undefined ? { overwrite: args.overwrite } : {}),
+        ...(args.dryRun !== undefined ? { dryRun: args.dryRun } : {}),
+      })
+    },
+  })
+
+  return [kbValidateTool, kbMarkTool, wikiWriteTool, wikiDeleteTool, wikiRenameTool]
+}
+
 export function apply(ctx, rawConfig) {
   // 配置防御性校验：非法配置留痕告警后 fail-open（INV-15 禁静默）。只在 apply 期告警一次
   // （事件路径热改读取不重复告警，防刷屏）。
@@ -70,6 +347,17 @@ export function apply(ctx, rawConfig) {
   const readCfg = () => {
     const p = Config.safeParse(rawConfig)
     return p.success ? p.data : defaults
+  }
+
+  // ---- 工具注册收口（T12；kb-context T6 同款姿势）----
+  // 全 steward 工具面 validate/mark/crud defineTool；宿主工具缝缺失 fail-open 留痕不静默（INV-15）。
+  // 注册失败（如撞名 throw）同样留痕不静默——但绝不在这里吞掉后继续假装工具面完整。
+  if (typeof ctx?.tools?.register === 'function') {
+    for (const tool of buildTools({ defineTool, configSource: () => rawConfig })) {
+      ctx.tools.register(tool)
+    }
+  } else {
+    warn(ctx, '[wiki-steward] 宿主 ctx.tools 缺失，kb_validate/kb_mark/wiki_write/wiki_delete/wiki_rename 未注册（fail-open）')
   }
 
   // ---- 捕获接线（T9；Q7a/Q17 组合裁定）----

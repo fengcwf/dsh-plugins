@@ -10,7 +10,7 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 
 const {
-  writeAtomic, withFileLock, realpathGuard, journalSave, journalRollback,
+  writeAtomic, withFileLock, withLeaseLock, realpathGuard, journalSave, journalRollback,
 } = await import('../lib/fs-safe.js')
 
 const mkdtemp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ws-fs-safe-'))
@@ -292,4 +292,157 @@ test('journal 多文件逆放（T12 CRUD 组合范式）：双快照 → 双改 
   assert.equal(fs.readFileSync(f1, 'utf8'), 'ONE-orig')
   assert.equal(fs.readFileSync(f2, 'utf8'), 'TWO-orig')
   assert.deepEqual(fs.readdirSync(dir).sort(), ['one.md', 'two.md'], '无残留')
+})
+
+// ── ⑦ realpathGuard 多段中间链拓扑（T12 围栏加固：全链逐段解引用至真实节点或越 root 即拒） ──
+// 拓扑：链接目标本身是多段路径（a -> 'sub/b'），中间段又是 symlink（sub -> root 外）。
+// 修复前 symlinksEscape 对归一目标整路径 lstat（中间段被内核静默解引用）→ 末段缺失时 ENOENT
+// 被误判「真缺失」放行 → 围栏写穿（消费方按 real 写到 root 外）。以下负例必须全拒。
+
+test('realpathGuard 负例（多段中间链）：a→sub/b + sub→outside + 末段缺失必拒（修复前 {ok:true,exists:false} 写穿）', () => {
+  const dir = mkdtemp()
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-outside-'))
+  try {
+    fs.symlinkSync(outside, path.join(dir, 'sub')) // 中间段外指
+    fs.symlinkSync(path.join('sub', 'b'), path.join(dir, 'a')) // 多段链接目标：a -> sub/b
+    // 末段缺失（outside/b 不存在）：目标自身 / 写侧新文件都必须拒
+    assert.deepEqual(realpathGuard(dir, 'a'), { ok: false, reason: 'symlink-escape' },
+      '多段链接目标中间段外指：目标自身必须拒（修复前 fallback 放行）')
+    assert.deepEqual(realpathGuard(dir, 'a/new.md'), { ok: false, reason: 'symlink-escape' },
+      '多段链接目标中间段外指：写侧新文件必须拒')
+    // 末段存在：realpath 主判归一后越 root
+    fs.writeFileSync(path.join(outside, 'b'), 'OUT')
+    assert.deepEqual(realpathGuard(dir, 'a'), { ok: false, reason: 'outside-root' })
+    // 穿越 root 外文件之下的路径：realpath ENOTDIR → fallback 逐段解引用在中间段即拒
+    // （symlink-escape；与主判 outside-root 双码同效——判据=必拒，不锁具体码）
+    const deep = realpathGuard(dir, 'a/new.md')
+    assert.equal(deep.ok, false, '末段存在后穿越路径同样必拒')
+    assert.ok(deep.reason === 'outside-root' || deep.reason === 'symlink-escape')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+    fs.rmSync(outside, { recursive: true, force: true })
+  }
+})
+
+test('realpathGuard 负例（多段中间链深/间接变体）：a→s1/s2/b + s1→outside；a→sub/b + sub→sub2→outside 都拒', () => {
+  const dir = mkdtemp()
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-outside-'))
+  try {
+    // 变体①：多段目标更深（s1/s2/b），中间段 s1 外指
+    fs.symlinkSync(outside, path.join(dir, 's1'))
+    fs.symlinkSync(path.join('s1', 's2', 'b'), path.join(dir, 'a'))
+    assert.deepEqual(realpathGuard(dir, 'a/new.md'), { ok: false, reason: 'symlink-escape' },
+      '三段链接目标中间段外指必拒')
+    assert.deepEqual(realpathGuard(dir, 'a'), { ok: false, reason: 'symlink-escape' })
+    // 变体②：中间段自身又是链（sub → sub2 → outside），多段目标 a→sub/b
+    fs.symlinkSync('sub2', path.join(dir, 'sub'))
+    fs.symlinkSync(outside, path.join(dir, 'sub2'))
+    fs.symlinkSync(path.join('sub', 'b'), path.join(dir, 'c'))
+    assert.deepEqual(realpathGuard(dir, 'c/new.md'), { ok: false, reason: 'symlink-escape' },
+      '中间段链式外指（sub→sub2→outside）同样必须逐段解引用后拒')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+    fs.rmSync(outside, { recursive: true, force: true })
+  }
+})
+
+test('realpathGuard 正例（多段链全在 root 内不误拒）：a→sub/b 归一 real、末段缺失放行 exists:false', () => {
+  const dir = mkdtemp()
+  const rootReal = fs.realpathSync(dir)
+  try {
+    fs.mkdirSync(path.join(dir, 'sub'))
+    fs.mkdirSync(path.join(dir, 'sub', 'b'))
+    fs.writeFileSync(path.join(dir, 'sub', 'b', 'ok.md'), 'x')
+    fs.symlinkSync(path.join('sub', 'b'), path.join(dir, 'a'))
+    const e = realpathGuard(dir, 'a/ok.md')
+    assert.equal(e.ok, true)
+    assert.equal(e.exists, true)
+    assert.equal(e.real, path.join(rootReal, 'sub', 'b', 'ok.md'), '多段链归一到真实路径')
+    // 末段缺失（sub/b 存在、new.md 不在）：真缺失放行（不误拒）
+    assert.deepEqual(realpathGuard(dir, 'a/new.md'),
+      { ok: true, real: path.join(rootReal, 'a', 'new.md'), exists: false })
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ── ⑧ withLeaseLock（T12 锁 stale 自愈：lease 时间戳 + 超时接管 + owner token 释放守卫） ──
+
+test('withLeaseLock 互斥 + fresh 锁超时不接管：ELOCKTIMEOUT 且 fn 绝不执行', async () => {
+  const dir = mkdtemp()
+  const target = path.join(dir, 'page.md')
+  let ran = 0
+  await withLeaseLock(target, async () => {
+    ran++
+    // 持锁期间第二把锁（fresh，未超 lease）必须等到超时且不接管
+    await assert.rejects(
+      withLeaseLock(target, () => { ran++ }, { waitMs: 120, pollMs: 10, leaseMs: 60_000 }),
+      (e) => e?.code === 'ELOCKTIMEOUT',
+    )
+    assert.equal(fs.existsSync(`${target}.lock`), true, '持锁期间锁目录在场')
+  }, { leaseMs: 60_000 })
+  assert.equal(ran, 1, 'fn 绝不执行')
+  assert.equal(fs.existsSync(`${target}.lock`), false, '释放后锁目录移除')
+})
+
+test('withLeaseLock stale 接管：lease 超龄 → 接管成功 + meta.tookOver 留痕 + onTakeover 回调', async () => {
+  const dir = mkdtemp()
+  const target = path.join(dir, 'page.md')
+  const lockDir = `${target}.lock`
+  fs.mkdirSync(lockDir)
+  // 陈旧持锁者残迹：lease 时间戳超龄 10 倍
+  fs.writeFileSync(path.join(lockDir, 'lease.json'),
+    JSON.stringify({ owner: 'dead-owner', at: Date.now() - 600_000 }))
+  const takeovers = []
+  const r = await withLeaseLock(target, (meta) => {
+    assert.equal(meta.tookOver, true, '接管必须留痕（meta.tookOver）')
+    assert.ok(meta.staleAgeMs >= 600_000 - 5_000, `staleAgeMs 量级正确（${meta.staleAgeMs}）`)
+    return 'ran'
+  }, { waitMs: 200, pollMs: 10, leaseMs: 60_000, onTakeover: (m) => takeovers.push(m) })
+  assert.equal(r, 'ran')
+  assert.equal(takeovers.length, 1, 'onTakeover 留痕回调恰一次')
+  assert.equal(takeovers[0].tookOver, true)
+  assert.equal(fs.existsSync(lockDir), false, '接管后正常释放')
+})
+
+test('withLeaseLock 释放守卫：接管发生后旧持有者 finally 不拆新持有者的锁（owner token）', async () => {
+  const dir = mkdtemp()
+  const target = path.join(dir, 'page.md')
+  const lockDir = `${target}.lock`
+  let releaseA
+  const aDone = new Promise((r) => { releaseA = r })
+  let gateB
+  const bHolds = new Promise((r) => { gateB = r })
+  // A 持锁（其临界区挂起），模拟崩溃残留：把 lease 改旧 → B 接管
+  const pA = withLeaseLock(target, async () => {
+    fs.writeFileSync(path.join(lockDir, 'lease.json'),
+      JSON.stringify({ owner: 'whatever', at: Date.now() - 600_000 }))
+    await aDone // A 迟迟不释放
+  }, { waitMs: 50, pollMs: 5, leaseMs: 60_000 })
+  await sleep(30) // 让 A 先拿稳
+  const pB = withLeaseLock(target, async (meta) => {
+    assert.equal(meta.tookOver, true)
+    gateB()
+    await new Promise((r) => { setTimeout(r, 120) }) // B 仍在临界区
+  }, { waitMs: 500, pollMs: 5, leaseMs: 60_000 })
+  await bHolds // B 已接管并持锁
+  releaseA() // A 此刻才 finally 释放——绝不能拆掉 B 的锁
+  await pA
+  assert.equal(fs.existsSync(lockDir), true, 'A 的迟到释放不得移除 B 的锁')
+  await pB
+  assert.equal(fs.existsSync(lockDir), false, 'B 正常释放后锁移除')
+})
+
+test('withLeaseLock 保守语义：无 lease.json 的锁目录（他原语产物）不接管，等待超时', async () => {
+  const dir = mkdtemp()
+  const target = path.join(dir, 'page.md')
+  fs.mkdirSync(`${target}.lock`) // withFileLock 风格残锁（无 lease 文件）
+  let ran = false
+  await assert.rejects(
+    withLeaseLock(target, () => { ran = true }, { waitMs: 100, pollMs: 5, leaseMs: 60_000 }),
+    (e) => e?.code === 'ELOCKTIMEOUT',
+  )
+  assert.equal(ran, false)
+  assert.equal(fs.existsSync(`${target}.lock`), true, '无 lease 文件不判 stale、不误删他人锁')
+  fs.rmSync(`${target}.lock`, { recursive: true, force: true })
 })

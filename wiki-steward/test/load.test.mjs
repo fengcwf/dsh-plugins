@@ -21,9 +21,9 @@ test('R13 回归：default 导出是 {inject, apply} 对象，不是工厂函数
   assert.equal(mod.default.apply, mod.apply)
 })
 
-test('T8 裁定钉住：inject = []（壳期零宿主服务依赖，任何 dsh 版本可加载；T11/T12 扩 tools）', async () => {
+test('T12 工具注册收口钉住：inject = [\'tools\']（宿主 tools 服务缝；T8 壳期 [] 的演进终点）', async () => {
   const { inject } = await import('../lib/index.js')
-  assert.deepEqual(inject, [])
+  assert.deepEqual(inject, ['tools'])
 })
 
 test('Config 全键默认值与契约精确一致（delta-spec §2 整行 + T9 vaultRoot 补键）', async () => {
@@ -74,7 +74,7 @@ test('Config 默认值无可变共享引用（多次 parse 互不污染）', asy
 test('apply：非法配置留痕不静默（INV-15），合法配置零告警', async () => {
   const { apply } = await import('../lib/index.js')
   const warnings = []
-  const ctx = { logger: { warn: (line) => warnings.push(line) }, on: () => {} } // T9：apply 注册三事件缝
+  const ctx = { logger: { warn: (line) => warnings.push(line) }, on: () => {}, tools: { register: () => {} } } // T9：apply 注册三事件缝；T12：tools 缝（缺失会另计 fail-open 留痕，见 wire.test）
   apply(ctx, { capture: { bufferRounds: '3' } })
   assert.equal(warnings.length, 1)
   assert.match(warnings[0], /bufferRounds/)
@@ -91,7 +91,7 @@ test('apply：无 logger 时回落 console.warn（行为不丢）', async () => 
   const orig = console.warn
   console.warn = (line) => recorded.push(line)
   try {
-    apply({ on: () => {} }, { secrets: { enabled: 'on' } })
+    apply({ on: () => {}, tools: { register: () => {} } }, { secrets: { enabled: 'on' } })
   } finally {
     console.warn = orig
   }

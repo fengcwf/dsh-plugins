@@ -15,10 +15,13 @@ const { resetStats, getStats } = await import('../lib/buffer.js')
 function mkCtx() {
   const handlers = {}
   const warnings = []
+  const registered = []
   return {
     handlers,
     warnings,
+    registered,
     logger: { warn: (l) => warnings.push(l) },
+    tools: { register: (tool) => registered.push(tool) },
     on(event, fn) {
       handlers[event] = fn
     },
@@ -201,4 +204,80 @@ test('capture.enabled=false 热改门：事件缝在场但零捕获零落盘', a
   await drive(ctx, session, 2, '禁用二问', '禁用二答')
   assert.equal(fs.existsSync(path.join(root, 'raw')), false, '禁用零落盘')
   assert.equal(getStats().committed, 0, '禁用零提交')
+})
+
+// ── T12 工具注册收口（validate/mark/crud 全部 defineTool；inject=['tools']）─────────
+
+test('工具注册收口：5 工具全注册（kb_validate/kb_mark/wiki_write/wiki_delete/wiki_rename）', (t) => {
+  const root = mkRoot(t)
+  const ctx = mkCtx()
+  apply(ctx, { vaultRoot: root })
+  const names = ctx.registered.map((x) => x.name).sort()
+  assert.deepEqual(names,
+    ['kb_mark', 'kb_validate', 'wiki_delete', 'wiki_rename', 'wiki_write'])
+  for (const tool of ctx.registered) {
+    assert.equal(typeof tool.execute, 'function', `${tool.name}.execute`)
+    assert.equal(typeof tool.description, 'string')
+    assert.ok(tool.description.length > 0, `${tool.name}.description 非空（模型引导面）`)
+  }
+  assert.equal(ctx.warnings.length, 0, '注册健康路径零留痕')
+})
+
+test('撞名防雷钉住（Ruling）：wiki_read/wiki_search 不注册——工具名归 kb-context（同层重复注册 throw）', (t) => {
+  const root = mkRoot(t)
+  const ctx = mkCtx()
+  apply(ctx, { vaultRoot: root })
+  const names = ctx.registered.map((x) => x.name)
+  assert.ok(!names.includes('wiki_read'), 'wiki_read 归 kb-context（NamedEntries 同名注册 throw）')
+  assert.ok(!names.includes('wiki_search'), 'wiki_search 归 kb-context')
+})
+
+test('ctx.tools 缺失 fail-open 留痕（INV-15 禁静默）', (t) => {
+  const root = mkRoot(t)
+  const ctx = mkCtx()
+  delete ctx.tools
+  apply(ctx, { vaultRoot: root })
+  assert.equal(typeof ctx.handlers['session/event'], 'function', '事件缝照常注册')
+  assert.equal(ctx.warnings.length, 1)
+  assert.match(ctx.warnings[0], /ctx\.tools 缺失.*未注册/)
+})
+
+test('wiki_write 工具面：默认只读拒（INV-7）→ write.readOnly:false 热改开启才写盘', async (t) => {
+  const root = mkRoot(t)
+  fs.mkdirSync(path.join(root, 'wiki')) // 父目录须在场（不自动建目录）
+  const ctx = mkCtx()
+  const config = { vaultRoot: root }
+  apply(ctx, config)
+  const wikiWrite = ctx.registered.find((x) => x.name === 'wiki_write')
+  const r1 = await wikiWrite.execute({ path: 'wiki/a.md', content: 'x' }, {})
+  assert.equal(r1.ok, false)
+  assert.equal(r1.reason, 'read-only')
+  assert.equal(fs.existsSync(path.join(root, 'wiki/a.md')), false, '默认只读零写盘')
+  config.write = { readOnly: false } // 热改（per-call 现读 rawConfig）
+  const r2 = await wikiWrite.execute({ path: 'wiki/a.md', content: '写入内容' }, {})
+  assert.equal(r2.ok, true)
+  assert.equal(fs.readFileSync(path.join(root, 'wiki/a.md'), 'utf8'), '写入内容')
+})
+
+test('kb_mark / kb_validate 工具面：真跑 sha256 回写与机械校验（结构化契约）', async (t) => {
+  const root = mkRoot(t)
+  fs.mkdirSync(path.join(root, 'raw'), { recursive: true })
+  fs.writeFileSync(path.join(root, 'raw/x.md'), '---\ntitle: t\n---\nbody\n')
+  const ctx = mkCtx()
+  const config = { vaultRoot: root, write: { readOnly: false } }
+  apply(ctx, config)
+  const kbMark = ctx.registered.find((x) => x.name === 'kb_mark')
+  const kbValidate = ctx.registered.find((x) => x.name === 'kb_validate')
+  const r = await kbMark.execute({ file: 'raw/x.md' }, {})
+  assert.equal(r.ok, true)
+  assert.equal(r.changed, true)
+  assert.match(fs.readFileSync(path.join(root, 'raw/x.md'), 'utf8'), /^---\ntitle: t\nsha256: [0-9a-f]{64}\n---\nbody\n$/)
+  const v = await kbValidate.execute({ target: 'raw/x.md' }, {})
+  assert.equal(typeof v.verdict, 'string')
+  assert.ok(Array.isArray(v.findings))
+  // kb_mark 只读门同样生效（热改面共用 write.readOnly）
+  config.write = { readOnly: true }
+  const r2 = await kbMark.execute({ file: 'raw/x.md' }, {})
+  assert.equal(r2.ok, false)
+  assert.equal(r2.reason, 'read-only')
 })
