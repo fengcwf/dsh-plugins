@@ -61,6 +61,7 @@ export function toEpochMillis(value, fallback = Date.now()) {
 /**
  * 指数退避 + 对称 jitter（RetryPolicySchema 参数形）：
  * base = min(initialDelayMs·2^(failures-1), maxDelayMs)；jitter ∈ [-jitterRatio, +jitterRatio] 对称。
+ * jitter 软封顶口径（Ruling②）：min(...)×(1+jitterRatio) 上界可略超 maxDelayMs（官方 schema 细节终审对齐）。
  * @param {number} failures 已失败次数（1=首败→初值 500ms）
  * @param {{initialDelayMs: number, maxDelayMs: number, jitterRatio: number}} [backoff]
  * @param {() => number} [rand] 0..1 注入缝（测试假随机；缺省 Math.random）
@@ -163,9 +164,62 @@ export function createQueue({
     }
   }
 
-  /** 崩溃回收：超龄 .processing 归还 pending；超龄 .tmp 清理（txl reclaimStaleClaims 同款+计数） */
+  /**
+   * 归还不覆盖守卫（fix round 1，Ruling）——sweep 归还 / release 归还 / break 未处理归还统一走此：
+   * 目标 <k>.json 在场时比 createdAt **保留较新**（并列取目标=后入队者，不覆盖）：
+   *   目标较新或并列 → 旧 claim 弃（rm claim + warn 留痕；目标 retries/nextRunAt 绝不被旧快照回退）
+   *   claim 较新      → claim 覆盖目标（+warn 留痕）
+   *   目标缺失        → rename（claim 原样）/ writeAtomic（release 改写态）归还（既有语义）
+   * 目标在场但不可解析/不可读 → claim 有效即胜（坏目标留 TTL 只会丢内容）；claim 不可解析 → 弃+留痕
+   * （不可证较新=绝不覆盖）。残余面=判在与写之间的竞态窗（报告「归还竞态」取舍段申报）。
+   * @param {string} claimPath `<k>.json.processing`
+   * @param {object|null} entry claim 条目（比 createdAt；坏条目传 null）
+   * @param {string|null} writeData release 改写态 JSON 串（null=claim 原样 rename 归还）
+   * @returns {Promise<'restored'|'replaced'|'discarded-stale'>}
+   */
+  async function returnToSlot(claimPath, entry, writeData = null) {
+    const target = claimPath.replace(/\.processing$/, '')
+    const writeBack = async () => {
+      if (writeData === null) {
+        await fs.promises.rename(claimPath, target) // 目标缺失/claim 胜：rename 归还（原子）
+      } else {
+        await writeAtomic(target, writeData) // release 改写态（retries/nextRunAt）
+        await fs.promises.rm(claimPath, { force: true })
+      }
+    }
+    let targetState = 'missing' // missing | ok | unparseable | unreadable
+    let targetEntry = null
+    try {
+      const raw = await fs.promises.readFile(target, 'utf8')
+      try {
+        targetEntry = JSON.parse(raw)
+        targetState = 'ok'
+      } catch {
+        targetState = 'unparseable'
+      }
+    } catch (e) {
+      if (e?.code !== 'ENOENT') targetState = 'unreadable'
+    }
+    if (targetState === 'missing') {
+      await writeBack()
+      return 'restored'
+    }
+    const claimAt = toEpochMillis(entry?.createdAt, 0)
+    const targetAt = targetState === 'ok' ? toEpochMillis(targetEntry?.createdAt, 0) : 0
+    const claimWins = claimAt > 0 && claimAt > targetAt // 并列（claimAt===targetAt）取目标=不覆盖
+    if (claimWins) {
+      await writeBack()
+      warn(`[wiki-steward] queue 归还覆盖（claim 较新，留痕）：${path.basename(target)} claim createdAt=${claimAt} > 目标=${targetState === 'ok' ? targetAt : targetState}`)
+      return 'replaced'
+    }
+    await fs.promises.rm(claimPath, { force: true }) // 旧 claim 弃（目标 retries/nextRunAt 不回退）
+    warn(`[wiki-steward] queue 归还不覆盖，旧 claim 弃（留痕）：${path.basename(target)} 目标较新或不可证较新（claim createdAt=${claimAt} vs 目标=${targetState === 'ok' ? targetAt : targetState}），保留目标条目`)
+    return 'discarded-stale'
+  }
+
+  /** 崩溃回收：超龄 .processing 归还 pending（归还不覆盖守卫）；超龄 .tmp 清理（txl reclaimStaleClaims 同款+计数） */
   async function sweep() {
-    const out = { reclaimed: 0, reapedTmp: 0 }
+    const out = { reclaimed: 0, reapedTmp: 0, staleDiscarded: 0 }
     let names
     try {
       names = await fs.promises.readdir(dir)
@@ -184,8 +238,15 @@ export function createQueue({
           }
         } else if (name.endsWith('.processing')) {
           if (t - st.mtimeMs > leaseMs) {
-            await fs.promises.rename(p, p.replace(/\.processing$/, '')) // 归还 pending（保留 retries/退避态）
-            out.reclaimed += 1
+            let claimEntry = null
+            try {
+              claimEntry = JSON.parse(await fs.promises.readFile(p, 'utf8'))
+            } catch {
+              /* 坏 claim 按最旧计（不可证较新=不覆盖在场目标）；目标缺失照样 rename 留 TTL 收 */
+            }
+            const verdict = await returnToSlot(p, claimEntry) // 归还前判目标：不覆盖并发同槽新条目
+            if (verdict === 'discarded-stale') out.staleDiscarded += 1
+            else out.reclaimed += 1
           }
         }
       } catch (e) {
@@ -206,7 +267,7 @@ export function createQueue({
    * 永不抛（异常全吞+留痕）。
    * @param {{handle: (entry: object) => Promise<any>|any}} opts handle 抛错或返 {ok:false}=失败
    * @returns {Promise<{ok: boolean, claimed: number, succeeded: number, failed: number, released: number,
-   *   unclaimed: number, exhausted: object[], reclaimed: number, reapedTmp: number,
+   *   unclaimed: number, staleDiscarded: number, exhausted: object[], reclaimed: number, reapedTmp: number,
    *   purgedTtl: number, purgedExhausted: number, broke: boolean, error?: Error}>}
    */
   async function replay({ handle } = {}) {
@@ -219,7 +280,7 @@ export function createQueue({
       const sw = await sweep()
       const res = {
         ok: true, claimed: 0, succeeded: 0, failed: 0, released: 0, unclaimed: 0,
-        exhausted: [], reclaimed: sw.reclaimed, reapedTmp: sw.reapedTmp,
+        staleDiscarded: sw.staleDiscarded, exhausted: [], reclaimed: sw.reclaimed, reapedTmp: sw.reapedTmp,
         purgedTtl: 0, purgedExhausted: 0, broke: false,
       }
       let names
@@ -297,13 +358,12 @@ export function createQueue({
           res.exhausted.push({ ...claim.entry, retries })
           continue
         }
-        // 两阶段归还（txl release 同款崩溃安全）+ 退避 nextRunAt
+        // 两阶段归还（txl release 同款崩溃安全）+ 退避 nextRunAt + 归还不覆盖守卫
         const entry2 = { ...claim.entry, retries, nextRunAt: now() + retryDelay(retries, backoff, random) }
-        const newPath = claim.path.replace(/\.processing$/, '')
         try {
-          await writeAtomic(newPath, JSON.stringify(entry2))
-          await fs.promises.rm(claim.path, { force: true })
-          res.released += 1
+          const verdict = await returnToSlot(claim.path, entry2, JSON.stringify(entry2))
+          if (verdict === 'discarded-stale') res.staleDiscarded += 1 // 同槽并发新条目胜出：旧 claim 弃（不回退）
+          else res.released += 1
         } catch (e) {
           warn(`[wiki-steward] queue release 失败（claim 留待 lease 回收，吞+留痕）：${e?.message ?? e}`)
         }
@@ -311,8 +371,9 @@ export function createQueue({
         res.broke = true
         for (const rest of claims.slice(i + 1)) {
           try {
-            await fs.promises.rename(rest.path, rest.path.replace(/\.processing$/, '')) // 未处理 claim 立即归还（不卡）
-            res.unclaimed += 1
+            const verdict = await returnToSlot(rest.path, rest.entry) // 未处理 claim 立即归还（不卡）+不覆盖守卫
+            if (verdict === 'discarded-stale') res.staleDiscarded += 1
+            else res.unclaimed += 1
           } catch (e) {
             warn(`[wiki-steward] queue 归还未处理 claim 失败（留待 lease 回收，吞+留痕）：${e?.message ?? e}`)
           }
@@ -322,7 +383,7 @@ export function createQueue({
       return res
     } catch (e) {
       warn(`[wiki-steward] queue replay 异常已吞（不阻塞）：${e?.message ?? e}`)
-      return { ok: false, error: e, claimed: 0, succeeded: 0, failed: 0, released: 0, unclaimed: 0, exhausted: [], reclaimed: 0, reapedTmp: 0, purgedTtl: 0, purgedExhausted: 0, broke: false }
+      return { ok: false, error: e, claimed: 0, succeeded: 0, failed: 0, released: 0, unclaimed: 0, staleDiscarded: 0, exhausted: [], reclaimed: 0, reapedTmp: 0, purgedTtl: 0, purgedExhausted: 0, broke: false }
     }
   }
 

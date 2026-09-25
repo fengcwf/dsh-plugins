@@ -248,6 +248,86 @@ test('⑥ replay 保序 break：首个可重试失败即停——后续条目不
   assert.equal(files.filter((f) => f.endsWith('.json')).length, 2, 'B（已 release）与 C 都在 pending')
 })
 
+// ── 归还不覆盖守卫（fix round 1 竞态）：claim 归还绝不静默覆盖同槽并发新条目 ──────
+
+test('归还守卫① sweep 竞态：claim 在途同槽入新条目——归还后磁盘是较新条目、retries/nextRunAt 不回退、旧 claim 弃+留痕', async (t) => {
+  const dir = mkDir(t)
+  const warns = []
+  const { q } = fakeQueue(dir, { warn: (l) => warns.push(l) })
+  const k = dedupKeyFor('s', 1)
+  // 旧 claim（崩溃残留、lease 超龄）：createdAt=T、retries=1（失败过的旧快照）
+  fs.writeFileSync(path.join(dir, `${k}.json.processing`), JSON.stringify({
+    dedupKey: k, payload: { n: 'old' }, createdAt: T, retries: 1,
+  }))
+  const old = new Date(T - CLAIM_LEASE_MS - 60_000)
+  fs.utimesSync(path.join(dir, `${k}.json.processing`), old, old)
+  // claim 在途（10min lease 窗）期间同槽又入队更全条目（createdAt 更新、自带 retries/nextRunAt）
+  fs.writeFileSync(path.join(dir, `${k}.json`), JSON.stringify({
+    dedupKey: k, payload: { n: 'new' }, createdAt: T + 5000, retries: 2, nextRunAt: T + 99_000,
+  }))
+  const r = await q.sweep()
+  assert.equal(r.staleDiscarded, 1, '旧 claim 弃（不计 reclaimed——槽位已有较新条目）')
+  assert.equal(r.reclaimed, 0)
+  assert.deepEqual(listFiles(dir), [`${k}.json`], 'claim 文件已清（弃），只留 pending')
+  const e = readEntry(dir, `${k}.json`)
+  assert.equal(e.payload.n, 'new', '磁盘上是较新条目（绝不回退旧快照）')
+  assert.equal(e.retries, 2, 'retries 未被回退')
+  assert.equal(e.nextRunAt, T + 99_000, 'nextRunAt 未被回退')
+  assert.ok(warns.some((l) => l.includes('归还') && l.includes('弃')), '弃路径留痕（INV-15 禁静默）')
+})
+
+test('归还守卫② release 竞态：handle 在途同槽入新条目——失败归还不覆盖、retries/nextRunAt 不回退、旧 claim 弃+留痕', async (t) => {
+  const dir = mkDir(t)
+  const warns = []
+  const { q } = fakeQueue(dir, { warn: (l) => warns.push(l) })
+  const k = dedupKeyFor('s', 1)
+  await q.enqueue({ dedupKey: k, payload: { n: 'old' } }) // createdAt=T（旧快照）
+  const r = await q.replay({
+    handle: async () => {
+      // claim 在途期间同槽又入队更全条目（毫秒窗同款竞态，release 侧）
+      await q.enqueue({ dedupKey: k, payload: { n: 'new' }, createdAt: T + 5000 })
+      return { ok: false, error: new Error('boom') }
+    },
+  })
+  assert.equal(r.failed, 1)
+  assert.equal(r.staleDiscarded, 1, '旧 claim 弃（release 不覆盖并发新条目）')
+  assert.equal(r.released, 0)
+  assert.deepEqual(listFiles(dir), [`${k}.json`], '零 .processing 残留')
+  const e = readEntry(dir, `${k}.json`)
+  assert.equal(e.payload.n, 'new', '磁盘上是较新条目')
+  assert.equal(e.retries, 0, 'retries 未被回退成 1')
+  assert.equal(e.nextRunAt, undefined, 'nextRunAt 未被旧快照退避态污染')
+  assert.ok(warns.some((l) => l.includes('弃')), '留痕')
+})
+
+test('归还守卫③ 保留较新：claim 较新→覆盖同槽旧目标（留痕）；createdAt 并列→目标留不覆盖；目标缺失→rename 归还照旧', async (t) => {
+  const dir = mkDir(t)
+  const warns = []
+  const { q } = fakeQueue(dir, { warn: (l) => warns.push(l) })
+  const put = (k, name, obj) => fs.writeFileSync(path.join(dir, `${k}${name}`), JSON.stringify(obj))
+  // (a) claim 较新（T+5000）胜过在场旧目标（T）→ 覆盖（保留较新，字面）
+  const ka = 'a'.repeat(32)
+  put(ka, '.json.processing', { dedupKey: ka, payload: { n: 'claim' }, createdAt: T + 5000, retries: 1 })
+  put(ka, '.json', { dedupKey: ka, payload: { n: 'target' }, createdAt: T, retries: 0 })
+  // (b) createdAt 并列 → 不覆盖（目标=后入队者留），旧 claim 弃
+  const kb = 'b'.repeat(32)
+  put(kb, '.json.processing', { dedupKey: kb, payload: { n: 'claim' }, createdAt: T, retries: 1 })
+  put(kb, '.json', { dedupKey: kb, payload: { n: 'target' }, createdAt: T, retries: 0 })
+  // (c) 目标缺失 → rename 归还照旧（既有语义零回退）
+  const kc = 'c'.repeat(32)
+  put(kc, '.json.processing', { dedupKey: kc, payload: { n: 'claim' }, createdAt: T, retries: 1 })
+  const old = new Date(T - CLAIM_LEASE_MS - 60_000)
+  for (const kk of [ka, kb, kc]) fs.utimesSync(path.join(dir, `${kk}.json.processing`), old, old)
+  const r = await q.sweep()
+  assert.equal(r.staleDiscarded, 1, '(b) 并列不覆盖=弃')
+  assert.equal(r.reclaimed, 2, '(a)(c) 归还')
+  assert.equal(readEntry(dir, `${ka}.json`).payload.n, 'claim', '(a) claim 较新→覆盖（保留较新）')
+  assert.equal(readEntry(dir, `${kb}.json`).payload.n, 'target', '(b) 并列→目标（后入队）留')
+  assert.equal(readEntry(dir, `${kc}.json`).payload.n, 'claim', '(c) 目标缺失→rename 归还照旧')
+  for (const f of listFiles(dir)) assert.ok(!f.endsWith('.processing'), '零 .processing 残留')
+  assert.ok(warns.some((l) => l.includes('覆盖')), '(a) 覆盖路径留痕')
+})
+
 // ── payload 落盘前脱敏（secrets.js 消费面：queue payload 序列化前）────────────────
 
 test('队列 payload 落盘前必过 redact（哨兵不进队列文件），计数回传', async (t) => {
