@@ -4,7 +4,8 @@
 //   ② 34 存量 syntheses 命名不误报（INV-10 硬验收；样本=实盘 wiki/syntheses 严格 kebab 违规全集，脚本复算锁定）
 //   ③ 证据清单缺引用必 FAIL（INV-15 反例）
 //   ④ INDEX 双向死链/漏登（登记形统一解析：路径形 [[a/b]]/[[a/b.md]]/[[wiki/…]] + stem 形 [[x]]/[[x.md]]，
-//      stem 多命中=歧义 warn 非死链）
+//      stem 多命中=歧义 warn 非死链；路径形 vault-root 回退：wiki/<target> 优先 → <vaultRoot>/<target>
+//      次之（[[raw/…]] 全库实存语义）→ 两处皆无才死链）
 //   ⑤ quickCheck 秒级语义（快检=①③④子集，不跑全量六规则）
 //   ⑥ 输出 JSON 形状稳定（无 -0/NaN；键面固定；JSON 往返等值）
 // 真被测件零 mock：lib/validate.js 直接真读文件系统；每测试独立 mkdtemp 临时 vault；零写盘（快照对账）。
@@ -247,10 +248,11 @@ test('① 项目文档 status 词表（overview: active/paused/completed；propo
   assert.match(r.findings[0].message, /status/)
 })
 
-// ── ④ INDEX 双向（正反例；登记形统一解析：路径形三种 + stem 形两种） ─────────
+// ── ④ INDEX 双向（正反例；登记形统一解析：路径形三种 + stem 形两种 + vault-root 回退） ─────────
 // 登记形语义（Obsidian 解析口径，前后向一致）：
-//   路径形 [[a/b]] / [[a/b.md]] / [[wiki/a/b(.md)]] → wiki/a/b.md 精确匹配；
-//   stem 形 [[x]] / [[x.md]] → wiki/**/x.md（含 wiki 根层；多命中=歧义 warn，非死链）。
+//   路径形 [[a/b]] / [[a/b.md]] / [[wiki/a/b(.md)]] → wiki/a/b.md 优先 → vault root <target>.md 回退
+//     （[[raw/…]] 等 vault 根实存语义；wiki/ 优先=单命中，同名双存不并入命中集不歧义）→ 两处皆无才死链；
+//   stem 形 [[x]] / [[x.md]] → wiki/**/x.md（含 wiki 根层；多命中=歧义 warn，非死链；vault-root 回退不适用）。
 
 test('④ index 正例：三种路径形登记（[[a/b]]/[[a/b.md]]/[[wiki/a/b]]）双向都认', async () => {
   const root = mkVault()
@@ -350,6 +352,44 @@ test('④ index 反例：INDEX 死链（条目指向不存在页面）→ error 
   assert.equal(typeof r.findings[0].line, 'number')
   assert.ok(r.findings[0].line >= 1)
   assert.match(r.findings[0].message, /死链|不存在/)
+})
+
+test('④ index 正例：路径形指向 vault root 实存（[[raw/…]]）→ 非死链（vault-root 回退）', async () => {
+  const root = mkVault()
+  put(root, 'wiki/concepts/梯度计费.md', page()) // INDEX_SEED 种子条目（隔离死链面）
+  put(root, 'raw/observer/记录.md', 'raw 侧素材（vault 根实存）\n')
+  put(root, 'raw/observer/带扩展.md', 'raw 侧素材（带 .md 扩展登记）\n')
+  const idx = put(root, 'wiki/INDEX.md', INDEX_SEED
+    + '- [[raw/observer/记录|记录]] — vault root 实存（无扩展）\n'
+    + '- [[raw/observer/带扩展.md|带扩展]] — vault root 实存（带 .md 扩展）\n')
+  const r = await kbValidate(idx, { rules: ['index'], vaultRoot: root })
+  assert.deepEqual(r.findings, [], 'vault root 实存的路径形目标不得报死链（全库实存语义）')
+  assert.equal(r.verdict, 'pass')
+})
+
+test('④ index 正例：wiki/ 优先于 vault root 同名（单命中不歧义不 warn）', async () => {
+  const root = mkVault()
+  put(root, 'wiki/concepts/梯度计费.md', page())
+  put(root, 'wiki/a/同名页.md', page()) // wiki/ 命中（应被优先认领）
+  put(root, 'a/同名页.md', 'vault root 同名件\n') // vault root 同名回退候选（不得并入命中集）
+  const idx = put(root, 'wiki/INDEX.md', INDEX_SEED + '- [[a/同名页|同名页]] — 双处同名\n')
+  const r = await kbValidate(idx, { rules: ['index'], vaultRoot: root })
+  assert.deepEqual(r.findings, [],
+    'wiki/ 优先=单命中：同名双存不得并入命中集报歧义（恰零 finding、不 warn）')
+  assert.equal(r.verdict, 'pass')
+})
+
+test('④ index 反例：路径形两处皆无（wiki/ 与 vault root 均缺）→ 仍死链 error 带行号', async () => {
+  const root = mkVault()
+  put(root, 'wiki/concepts/梯度计费.md', page())
+  const idx = put(root, 'wiki/INDEX.md', INDEX_SEED + '- [[raw/ghost/双缺页|双缺]] — x\n')
+  const r = await kbValidate(idx, { rules: ['index'], vaultRoot: root })
+  assert.equal(r.findings.length, 1, '恰一条死链（回退未命中不得静默放行）')
+  assert.equal(r.findings[0].rule, 'index')
+  assert.equal(r.findings[0].severity, 'error')
+  assert.match(r.findings[0].message, /死链|不存在/)
+  assert.ok(Number.isInteger(r.findings[0].line) && r.findings[0].line >= 1)
+  assert.equal(r.verdict, 'fail')
 })
 
 // ── ④ placement 正反例（目录归属，wiki-ingest 归属表 + 禁令） ────────────────

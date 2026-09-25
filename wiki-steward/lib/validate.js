@@ -8,9 +8,10 @@
 // 六规则（rule id 稳定面，rules 参数可裁剪；另 'io' 为辅助规则不可选）：
 //   ① frontmatter — 六字段内容（title≤50字/date YYYY-MM-DD 真值/tags≥1/status 词表/source/related 必填；
 //      solutions 页增 reusability ∈ {cross-project,project-specific,one-time}；项目文档 status 用项目词表）
-//   ② index — INDEX 双向（登记形统一解析：路径形 [[a/b]]/[[a/b.md]]/[[wiki/…]] → wiki/a/b.md 精确；
-//      stem 形 [[x]]/[[x.md]] → wiki/**/x.md 含根层，多命中=歧义 warn 非死链）：
-//      页面须登记 wiki/INDEX.md（漏登 error）；INDEX 条目指向须实存（死链 error 带行号）
+//   ② index — INDEX 双向（登记形统一解析：路径形 [[a/b]]/[[a/b.md]]/[[wiki/…]] → wiki/a/b.md 优先、
+//      vault root <target>.md 回退（[[raw/…]] 全库实存语义，同名双存 wiki/ 优先单命中不歧义）；
+//      stem 形 [[x]]/[[x.md]] → wiki/**/x.md 含根层，多命中=歧义 warn 非死链，不适用 vault-root 回退）：
+//      页面须登记 wiki/INDEX.md（漏登 error）；INDEX 条目指向须实存（两处皆无=死链 error 带行号）
 //   ③ naming — 类型化命名表（Q13）：硬禁止（`\ / : * ? " < > |`/超 50 字）= error；
 //      形态接受=时间戳形（YYYY-MM-DD[-HH-MM]-标题）/ Session 形（标题 - YYYY-MM-DD-HH-MM）/ 含中文名 /
 //      基础设施豁免 / 项目文档约定名；裸纯英文非豁免 = warn（形态欠账非硬禁令）
@@ -509,24 +510,32 @@ const isEvidenceDoc = (stem, fm) => {
 
 /**
  * 登记形统一解析（Obsidian 解析语义，前向/后向共用同一归一口径）：
- *   - 路径形 `[[a/b]]` / `[[a/b.md]]` / `[[wiki/a/b(.md)]]` → wiki/a/b.md 精确匹配；
- *   - stem 形 `[[x]]` / `[[x.md]]` → wiki/ 任意层下 x.md（含 wiki 根层；多命中=歧义非死链）。
+ *   - 路径形 `[[a/b]]` / `[[a/b.md]]` / `[[wiki/a/b(.md)]]` → wiki/a/b.md 优先，vault root 实存回退（见 pathHits）；
+ *   - stem 形 `[[x]]` / `[[x.md]]` → wiki/ 任意层下 x.md（含 wiki 根层；多命中=歧义非死链；不适用 vault-root 回退）。
  * 归一顺序：去 `.md` 扩展 → 剥 `wiki/` 锚定前缀 → 无 `/` 即 stem 形。
  * @param {string} target INDEX 条目目标（已去别名）
- * @returns {{kind: 'path'|'stem', key: string}}
+ * @returns {{kind: 'path'|'stem', key: string, rootKey: string}} key=wiki/ 锚定归一形；rootKey=仅去 .md 的登记原形（vault-root 回退锚定）
  */
 function parseRegTarget(target) {
   let t = target.trim()
   if (t.endsWith('.md')) t = t.slice(0, -3)
-  if (t.startsWith('wiki/')) return { kind: 'path', key: t.slice('wiki/'.length) }
-  if (t.includes('/')) return { kind: 'path', key: t }
-  return { kind: 'stem', key: t }
+  const rootKey = t
+  if (t.startsWith('wiki/')) return { kind: 'path', key: t.slice('wiki/'.length), rootKey }
+  if (t.includes('/')) return { kind: 'path', key: t, rootKey }
+  return { kind: 'stem', key: t, rootKey }
 }
 
-/** 路径形后向解析：wiki/<key>.md 精确命中（realpathGuard 围栏内） */
-const pathHits = (vaultRoot, key) => {
-  const g = realpathGuard(vaultRoot, `wiki/${key}.md`)
-  return g.ok && g.exists ? [`wiki/${key}.md`] : []
+/**
+ * 路径形后向解析（Obsidian 全库实存语义，Controller 裁定 fix round 2）：
+ * 解析序 = `wiki/<key>.md` 优先 → vault root `<rootKey>.md` 回退（`[[raw/…]]` 等 vault 根实存）→ 两处皆无=0 命中（死链）。
+ * wiki/ 优先即**单命中**语义：同名双存不并入命中集（不歧义不 warn）；候选各自过 realpathGuard 围栏。
+ */
+const pathHits = (vaultRoot, key, rootKey) => {
+  for (const rel of [`wiki/${key}.md`, `${rootKey}.md`]) {
+    const g = realpathGuard(vaultRoot, rel)
+    if (g.ok && g.exists) return [rel]
+  }
+  return []
 }
 
 /** stem 形后向解析：wiki/ 任意层下查找 <stem>.md（Obsidian 语义，含 wiki 根层），返回 vault 相对 posix 路径 */
@@ -544,9 +553,9 @@ function checkIndex(abs, vaultRoot, wikiRel, stem) {
   if (wikiRel === 'INDEX.md') {
     const out = []
     for (const { target, line } of idx.links) {
-      const { kind, key } = parseRegTarget(target)
+      const { kind, key, rootKey } = parseRegTarget(target)
       if (key === '') continue
-      const hits = kind === 'path' ? pathHits(vaultRoot, key) : stemHits(vaultRoot, key)
+      const hits = kind === 'path' ? pathHits(vaultRoot, key, rootKey) : stemHits(vaultRoot, key)
       if (hits.length === 0) {
         out.push(finding('index', 'error', `INDEX 死链：[[${target}]] 指向的页面不存在`, line))
       } else if (hits.length > 1) {
