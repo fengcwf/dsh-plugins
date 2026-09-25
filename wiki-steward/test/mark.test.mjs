@@ -1,14 +1,17 @@
 // mark 单测（T11 kb_mark：sha256 字节手术 + expectedRevision 乐观并发 + 原子写 + 未动段校验）：
 // ① INV-1 反例（改别行/多改一行必 FAIL——逐字节断言）② 补插语义（缺 sha256 行插闭合前）
 // ③ 无 frontmatter 拒+留痕 ④ expectedRevision 冲突拒 ⑤ bodyHash 与手算 sha256 对账
-// ⑥ 未动段 hash 校验（模拟写坏=拒+逆放还原）⑦ 重写幂等（同值再写 changed:false）。
+// ⑥ 未动段 hash 校验（模拟写坏=拒+逆放还原）⑦ 重写幂等（同值再写 changed:false）
+// ⑧ 错误面契约回归（fix round 1：竞态裸异常 + rolledBack 诚实留痕）。
 // 真被测件零 mock：lib/mark.js 直接真调用真文件系统；每测试独立 mkdtemp 目录，输出干净。
 // 故障注入仅一处：opts._write（写入缝，测试塞真实破坏性写入器——被测校验逻辑全程真验真文件）。
+// 竞态回归（⑧）用 FIFO 确定性重现「读入与快照之间」窗口（真文件系统语义，零 mock）。
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 
 const { kbMark, bodyHash } = await import('../lib/mark.js')
@@ -270,6 +273,85 @@ test('写入缝透传正例：_write 写入构造内容 → 正常成功（缝�
   assert.equal(r.ok, true)
   assert.equal(r.changed, true)
   assert.ok(seen.includes(Buffer.from(BODY_HASH, 'utf8')))
+})
+
+// ── ⑧ 错误面契约回归（fix round 1：竞态裸异常 + rolledBack 诚实留痕） ─────────────
+// FIFO 确定性重现「读入与快照之间」竞态：kbMark 的 readFile 阻塞在 FIFO open 上等写者，
+// 测试作为唯一写者送入内容后，在**同一同步块**内关写者（触发 EOF）+顶替/删除路径——
+// JS 同步块先于任何 promise 续体执行，顶替恰落在「读入完成后、journalSave 前」的竞态窗口
+// （零 mock、全程真文件系统语义；错误码探针实证：顶替=stat 过/journalSave 读 EISDIR，
+// 删除=stat 段先拦 ENOENT → not-found）。
+function raceSwap(f, content, swap) {
+  const p = kbMark(f) // 读者 open 阻塞等写者配对
+  const wfd = fs.openSync(f, 'w') // 与读者配对解除阻塞
+  fs.writeSync(wfd, content)
+  fs.closeSync(wfd) // EOF → readFile 即将携内容返回
+  swap() // 同步块内完成顶替/删除（先于 readFile 续体 = 精确落在竞态窗口）
+  return p
+}
+
+test('journalSave 竞态回归：读入与快照间目标被顶替（不可读）→ 结构化 io-error，绝不抛裸异常', async () => {
+  const dir = mkdtemp()
+  const f = path.join(dir, 'race.md')
+  assert.equal(spawnSync('mkfifo', [f]).status, 0, 'mkfifo 就绪')
+  const r = await raceSwap(f, sample(), () => {
+    fs.rmSync(f)
+    fs.mkdirSync(f) // 目标被目录顶替：读段 stat 过，journalSave 读必 EISDIR（原裸异常点）
+  })
+  assert.equal(r.ok, false, '结构化返回，不是 throw')
+  assert.equal(r.reason, 'io-error')
+  assert.equal(r.code, 'EISDIR', '竞态错误码留痕')
+  assert.equal(r.rolledBack, false, '未写盘、无逆放发生')
+  assert.match(r.message, /未写盘/)
+  assert.ok(!r.message.includes('已逆放'), 'message 不谎报逆放')
+})
+
+test('竞态回归（被删半边）：读入与快照间目标被删 → 结构化 not-found + 不复活文件', async () => {
+  const dir = mkdtemp()
+  const f = path.join(dir, 'race.md')
+  assert.equal(spawnSync('mkfifo', [f]).status, 0, 'mkfifo 就绪')
+  const r = await raceSwap(f, sample(), () => fs.rmSync(f))
+  assert.equal(r.ok, false, '绝不抛裸异常')
+  assert.equal(r.reason, 'not-found', '删除竞态被读段 stat 先拦 = 结构化拒')
+  assert.ok(typeof r.message === 'string' && r.message.length > 0, '留痕 message 非空')
+  assert.equal(fs.existsSync(f), false, '绝不复活被并发删除的文件')
+})
+
+test('rolledBack 诚实①：写入失败且逆放也失败 → rolledBack:false + 回滚错误进 message（绝不谎报 true）', async () => {
+  const content = sample()
+  const { f } = put(content)
+  const r = await kbMark(f, {
+    _write: async (target) => {
+      // 真实破坏：目标被目录顶替后写入失败——journalRollback 的 writeAtomic rename
+      // 落在目录上同样必败（EISDIR，探针实证）＝逆放失败的诚实留痕面
+      fs.rmSync(target)
+      fs.mkdirSync(target)
+      throw Object.assign(new Error('write failed'), { code: 'EIO' })
+    },
+  })
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'io-error')
+  assert.equal(r.code, 'EIO', '原始写入错误留痕')
+  assert.equal(r.rolledBack, false, '逆放失败不得谎报 rolledBack:true（恢复决策依赖此位）')
+  assert.match(r.message, /逆放失败（EISDIR/, '吞掉的回滚错误至少进 message')
+  assert.match(r.message, /EIO/, '原始写入错误也进 message')
+})
+
+test('rolledBack 诚实②：写后回读失败且逆放也失败 → rolledBack:false + 两处错误均进 message', async () => {
+  const { f } = put(sample())
+  const r = await kbMark(f, {
+    _write: async (target, data) => {
+      fs.writeFileSync(`${target}.injected`, data) // 注入写入物留证（输出干净）
+      fs.rmSync(target)
+      fs.mkdirSync(target) // 目标被顶替 → 写后回读 EISDIR
+    },
+  })
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'io-error')
+  assert.equal(r.code, 'EISDIR', '回读错误码留痕')
+  assert.equal(r.rolledBack, false, '逆放失败不得谎报 true')
+  assert.match(r.message, /回读失败（EISDIR/)
+  assert.match(r.message, /逆放失败（EISDIR/)
 })
 
 // ── ⑦ 重写幂等（同值再写 changed:false） ───────────────────────────────────────

@@ -5,8 +5,10 @@
 //
 // 契约（delta-spec §2 + Controller 裁定）：
 //   kbMark(file, {expectedRevision?, vaultRoot?, _write?})
-//     → 成功 {ok:true, file, changed, previous, current}（previous=回写前值，无标记行=null）
-//     → 失败 {ok:false, file, reason, message, …detail}（结构化错误，不抛裸异常——参数型错误除外）
+//     → 输出形状 = {ok, file, changed, previous?, current, warnings?}（任务上下文契约形状
+//       + Controller 裁定放行的 `ok` 键；warnings 可选省略——无产生场景时不出现）。
+//       成功 {ok:true, file, changed, previous, current}（previous=回写前值，无标记行=null）；
+//       失败 {ok:false, file, reason, message, …detail}（结构化错误，不抛裸异常——参数型错误除外）
 //   bodyHash(body) → sha256 十六进制（INV-13 同源口径；Buffer 原样/字符串按 utf8）
 //
 // 两态语义（Controller Ruling；INV-1 唯一明文例外 = sha256 一行，其余字节零改动）：
@@ -27,8 +29,10 @@
 //
 // 原子写（INV-6）：消费 fs-safe.writeAtomic（wx 独占临时文件 + 文件 fsync + rename + 目录 fsync +
 //   失败清残——冲突扫描裁定：T8 已修全链，此处消费勿重造）；mode 沿用原文件权限位。
+//   改前快照 journalSave 亦纳 try/catch（读入与快照间文件被删/不可读的竞态 → 结构化 io-error，绝不抛裸异常）。
 //   写后未动段 hash 校验：写前记「去掉 sha256 行整行」的内容 hash，写后重读磁盘核对——
 //   不一致 = write-corrupt + journalSave/journalRollback 逆放还原（不静默留坏文件）。
+//   三处逆放统一按回滚实际成败取值 rolledBack（诚实留痕，绝不无条件报 true）；逆放失败错误进 message。
 //
 // 已知边界（如实申报，task-11 报告）：
 //   - vaultRoot 缺省不围栏（契约 `kbMark(file, {expectedRevision?})` 无 root 面）——传 vaultRoot 时
@@ -117,6 +121,7 @@ const fail = (file, reason, message, extra = {}) => ({ ok: false, file, reason, 
  *   expectedRevision：写前乐观并发校验（undefined=无条件；null/''=期望无标记行/空值）；
  *   vaultRoot：围栏根（缺省不围栏=调用方自理；传入即 realpathGuard 四步拒逃逸）；
  *   _write：故障注入缝（默认 fs-safe.writeAtomic；测试塞破坏性写入器验 INV-6 校验拒绝路径）。
+ * 输出形状 = {ok, file, changed, previous?, current, warnings?}（契约形状 + 裁定放行的 ok 键；warnings 可选省略）。
  * @returns {Promise<{ok:true, file, changed:boolean, previous:string|null, current:string}
  *   | {ok:false, file, reason:'no-frontmatter'|'ambiguous-sha256'|'revision-conflict'|'fenced'
  *      |'not-found'|'io-error'|'write-corrupt', message:string, …detail}>}
@@ -214,13 +219,20 @@ export async function kbMark(file, opts = {}) {
   const preDigest = DIGEST(stripShaLine(buf, shaIdx.length === 1 ? lines[shaIdx[0]] : undefined))
 
   // ── 原子写（fs-safe.writeAtomic 全链：wx 独占 + 文件 fsync + rename + 目录 fsync + 失败清残） ──
-  const snap = await journalSave(abs) // 逆放凭据（content+sha256+mode）
+  // 改前快照（逆放凭据 content+sha256+mode）：journalSave 纳 try/catch——读入与快照之间文件
+  // 被删/不可读的竞态（EISDIR/EACCES/…）→ 结构化 io-error，绝不抛裸异常出 kbMark（未写盘）。
+  let snap
+  try {
+    snap = await journalSave(abs)
+  } catch (e) {
+    return fail(abs, 'io-error', `改前快照失败（读入与快照间竞态，目标被删/不可读），未写盘：${e?.code ?? e?.message ?? e}`, { code: e?.code, rolledBack: false })
+  }
   const write = opts._write ?? writeAtomic
   try {
     await write(abs, newBuf, { mode })
   } catch (e) {
-    await journalRollback(snap).catch(() => {}) // 写入失败也逆放（防半截/破坏性写入器留坏文件）
-    return fail(abs, 'io-error', `写入失败已逆放：${e?.code ?? e?.message ?? e}`, { code: e?.code, rolledBack: true })
+    const rb = await rollback(snap) // 写入失败也逆放（防半截/破坏性写入器留坏文件）
+    return fail(abs, 'io-error', `写入失败（${e?.code ?? e?.message ?? e}）；${rb.note}`, { code: e?.code, rolledBack: rb.rolledBack })
   }
 
   // ── 写后未动段 hash 校验（INV-6）：重读磁盘核对，写坏即逆放拒 ──
@@ -228,16 +240,28 @@ export async function kbMark(file, opts = {}) {
   try {
     disk = await fs.promises.readFile(abs)
   } catch (e) {
-    await journalRollback(snap).catch(() => {})
-    return fail(abs, 'io-error', `写后回读失败已逆放：${e?.code ?? e?.message ?? e}`, { code: e?.code, rolledBack: true })
+    const rb = await rollback(snap)
+    return fail(abs, 'io-error', `写后回读失败（${e?.code ?? e?.message ?? e}）；${rb.note}`, { code: e?.code, rolledBack: rb.rolledBack })
   }
   const verify = verifyUnchanged(disk, preDigest, newLine, shaIdx.length === 1)
   if (!verify.ok) {
-    let rolledBack = true
-    await journalRollback(snap).catch(() => { rolledBack = false })
-    return fail(abs, 'write-corrupt', `写后未动段 hash 校验失败（${verify.reason}）已逆放还原`, { rolledBack })
+    const rb = await rollback(snap)
+    return fail(abs, 'write-corrupt', `写后未动段 hash 校验失败（${verify.reason}）；${rb.note}`, { rolledBack: rb.rolledBack })
   }
   return { ok: true, file: abs, changed: true, previous, current }
+}
+
+/**
+ * 逆放收口（三处统一）：按 journalRollback 实际成败取值 rolledBack——诚实留痕，
+ * 回滚失败绝不谎报 true（恢复决策依赖此位）；吞掉的回滚错误至少进 note/message。
+ */
+async function rollback(snap) {
+  try {
+    await journalRollback(snap)
+    return { rolledBack: true, note: '已逆放还原' }
+  } catch (e) {
+    return { rolledBack: false, note: `逆放失败（${e?.code ?? e?.message ?? e}），文件可能处于中间态，需人工核对` }
+  }
 }
 
 /**
