@@ -289,11 +289,14 @@ test('kb_mark / kb_validate 工具面：真跑 sha256 回写与机械校验（�
   const v = await kbValidate.execute({ target: 'raw/x.md' }, {})
   assert.equal(typeof v.verdict, 'string')
   assert.ok(Array.isArray(v.findings))
-  // kb_mark 只读门同样生效（热改面共用 write.readOnly）
+  // kb_mark 豁免 readOnly（审前裁定②：INV-1 明文例外=sha256 机械回写非内容写）——只读下照样放行并真写盘
+  fs.writeFileSync(path.join(root, 'raw/x.md'), `---\ntitle: t\nsha256: ${'0'.repeat(64)}\n---\nbody2\n`)
   config.write = { readOnly: true }
   const r2 = await kbMark.execute({ file: 'raw/x.md' }, {})
-  assert.equal(r2.ok, false)
-  assert.equal(r2.reason, 'read-only')
+  assert.equal(r2.ok, true, 'mark 在 readOnly 下放行（②豁免，非 read-only 拒）')
+  assert.equal(r2.changed, true, '只读下真写盘（机械回写非内容写）')
+  assert.notEqual(r2.reason, 'read-only')
+  assert.match(fs.readFileSync(path.join(root, 'raw/x.md'), 'utf8'), /^---\ntitle: t\nsha256: [0-9a-f]{64}\n---\nbody2\n$/)
 })
 
 // ── T13：timer 接线 + 补跑账本（A6）+ T9 enqueue 缝 + 告警触发 ───────────────────

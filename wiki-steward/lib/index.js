@@ -13,6 +13,9 @@
 //   wiki_write / wiki_delete / wiki_rename（proposal §6 设计全貌页 + T12 验收标准）。
 // ⚠️ T14（写入拦截 v1.5）：ctx.on('tools/pre-execute') 构造性强制面接线（lib/gate.js 判定矩阵）——
 //   决策仅 allow/ask/deny 无输入改写；**工具级构造性强制非安全边界**（bash 等文本绕过拦不住，边界见 gate.js 头注）。
+//   审前裁定（Task 14 fix round 1）：①存量降格——存量一切 quickCheck 问题（含 error 级）→ ask，deny 只用于
+//   新建不合指引/readOnly 拦截/非法越界路径；②kb_mark 豁免 readOnly（INV-1 明文例外=sha256 机械回写非内容写），
+//   写类 readOnly 执行面收窄为 crud 族（wiki_write/wiki_delete/wiki_rename），kb_validate 只读永不拦。
 import os from 'node:os'
 import path from 'node:path'
 import { z } from 'zod'
@@ -144,7 +147,8 @@ export function buildTools({ defineTool, configSource = () => ({}) }) {
       'sha256 机械标记原子回写（写侧，INV-1）：只换 frontmatter sha256 行的值字节（缺行则补插闭合 --- 前），'
       + '其余字节逐字不动；body 口径=闭合 --- 之后内容 universal-newlines 归一后 sha256（INV-13 与 ingest 同源）。'
       + 'expectedRevision=写前乐观并发（当前 sha256 值，冲突=拒绝不覆盖并留痕；缺省无条件）。'
-      + '原子写（O_EXCL+fsync+rename）+ 写后未动段校验（写坏=逆放拒）。默认只读（config write.readOnly）。',
+      + '原子写（O_EXCL+fsync+rename）+ 写后未动段校验（写坏=逆放拒）。'
+      + '豁免 readOnly（审前裁定②，INV-1 明文例外=sha256 字段机械回写非内容写：write.readOnly 不拦 mark）。',
     parameters: {
       file: { type: 'string', required: true, description: 'vault 相对路径（如 raw/04-session_logs/xxx.md）' },
       expectedRevision: { type: 'string', description: '期望的当前 sha256 值（乐观并发；缺省无条件）' },
@@ -169,15 +173,9 @@ export function buildTools({ defineTool, configSource = () => ({}) }) {
     async execute(args) {
       const cfg = readCfg()
       const file = args.file
-      if (cfg.write.readOnly !== false) {
-        return {
-          ok: false,
-          file,
-          reason: 'read-only',
-          message: '默认只读（INV-7）：config write.readOnly:false 显式开启才动手',
-          warnings: ['kb_mark 拒：默认只读（write.readOnly=true）'],
-        }
-      }
+      // 审前裁定②：kb_mark 豁免 readOnly（INV-1 明文例外=「raw/ 唯一例外=sha256 字段机械回写」，
+      // 机械维护非内容写）——write.readOnly 不拦 mark；写类 readOnly 执行面收窄为 crud 族
+      // （wiki_write/wiki_delete/wiki_rename）。wire.test「mark 在 readOnly 下放行」钉住。
       return kbMark(path.resolve(cfg.vaultRoot, file), {
         vaultRoot: cfg.vaultRoot,
         ...(args.expectedRevision !== undefined ? { expectedRevision: args.expectedRevision } : {}),

@@ -11,13 +11,20 @@
 // 判定范围 = 写类工具（WRITE_TOOLS 判定表）且目标在 vault 内；读工具/非 vault 路径/delete 类
 //   一律放行且**零快检**（性能与边界）。
 //
-// 判定矩阵（quickCheck 存量分流，T10 concern② 裁定）：
-//   readOnly=true（INV-7）              → deny（vault 写类一律拒；非 vault 不误伤）
+// 判定矩阵（quickCheck 分流；审前裁定①存量降格 + ②kb_mark 豁免 readOnly，Task 14 fix round 1）：
+//   readOnly=true（INV-7）              → deny（表内写类一律拒；kb_mark 已出表豁免；非 vault 不误伤）
 //   新建文件 + 任何不合维护指引 finding  → deny + reason 指路
-//   存量文件 + error 级 finding         → deny + reason 指路（error 级不因存量降格）
-//   存量文件 + 仅 warn 级（形态欠账）    → ask（提示+指路，不阻塞存量修复）
+//   存量文件（exists）+ 任何 finding（含 error 级）→ ask（reason 含问题+指路）【①存量降格】
+//     ——deny 锁死「编辑来修复存量问题」的通道（真库 syntheses 115 处 frontmatter error 会瘫痪编辑）；
+//       构造性强制 = 指路非坐牢；deny 只用于：新建不合指引 / readOnly 拦截（②范围）/ 非法越界路径
+//       （路径面由 crud 围栏层拒——本面不新增路径拒，「只用于」为上界口径）
 //   合规                               → allow（next() 链续）
 //   vaultRoot 缺省/围栏不可判           → allow + 留痕（fail-open，同 T11 必传语义）
+//
+// ② kb_mark 豁免 readOnly（INV-1 明文例外=「raw/ 唯一例外=sha256 字段机械回写」；机械维护非内容写）：
+//   kb_mark/kb_validate **不在写类表**（不在拦列表：永不快检、永不拦）；写类 readOnly 执行面收窄为
+//   crud 族（wiki_write/wiki_delete/wiki_rename——crud.js 只读门「写/删/改名」，steward 自有工具
+//   防御性扩面回缩）。
 //
 // 快检缝 = validate.quickFindings（①frontmatter ③naming ④placement 秒级子集）；
 //   分级语义在 validate.js（勿在此重造规则）；reason 文案引用维护指引 skill 名
@@ -31,12 +38,13 @@ import path from 'node:path'
  * 写类工具判定表：目标路径取键序（宽容取键）+ 锚定基准（host 工具=绝对/进程 cwd；steward 工具=Vault 相对）+
  * 内容外推方式（full=参数全量；edit=补丁外推；disk=磁盘现状近似）。
  * 不在此表 = 非写类/未识别（读工具、delete 类、bash 等）→ 放行（构造性强制边界，如实申报）。
+ * ② kb_mark/kb_validate **不在表**（kb_mark=INV-1 明文例外机械维护非内容写、豁免 readOnly；
+ *   kb_validate 只读永不拦）；wiki_delete 不在表（crud 双确认+trash，本面只拦不改）。
  */
 export const WRITE_TOOLS = {
   write: { pathKeys: ['file_path', 'path', 'file', 'target'], contentKeys: ['content'], anchor: 'cwd', patch: 'full' },
   edit: { pathKeys: ['file_path', 'path', 'file'], anchor: 'cwd', patch: 'edit' },
   wiki_write: { pathKeys: ['path', 'file_path', 'target', 'file'], contentKeys: ['content'], anchor: 'vault', patch: 'full' },
-  kb_mark: { pathKeys: ['file', 'path', 'target'], anchor: 'vault', patch: 'disk' },
   wiki_rename: { pathKeys: ['to', 'path'], contentPathKey: 'from', anchor: 'vault', patch: 'disk' },
 }
 
@@ -134,24 +142,24 @@ export function createWriteGate({ quickFindings, getCfg, warn }) {
         }
       }
 
-      // 快检分流（T10 concern② 裁定矩阵）
+      // 快检分流（审前裁定①存量降格：存量一律 ask、deny 只用于新建不合指引/readOnly/非法越界路径）
       const content = resolveContent(spec, args, abs, vaultRoot)
       const exists = fs.existsSync(abs)
       if (!exists && content === undefined) return next() // 新建且无内容可检（fail-open，空参数宿主自会拒）
       const r = await quickFindings(abs, content, { vaultRoot })
       if (r?.ok !== false) return next() // 合规 → allow
       const findings = Array.isArray(r.findings) ? r.findings : []
-      const hasError = findings.some((f) => f?.severity === 'error')
-      if (!exists || hasError) {
-        const why = exists ? '写入不合维护指引（error 级）' : '新建页不合维护指引'
+      if (!exists) {
         return {
           kind: 'deny',
-          reason: `[wiki-steward 写入拦截] ${why}：${brief(findings)}；${GUIDE}修正后再写（六字段 frontmatter/类型化命名/目录归属）`,
+          reason: `[wiki-steward 写入拦截] 新建页不合维护指引：${brief(findings)}；${GUIDE}修正后再写（六字段 frontmatter/类型化命名/目录归属）`,
         }
       }
+      // ① 存量降格：exists 的一切 quickCheck 问题（含 error 级）一律 ask——deny 会锁死
+      //   「编辑来修复存量问题」的通道；构造性强制=指路非坐牢。
       return {
         kind: 'ask',
-        reason: `[wiki-steward 写入拦截] 存量页形态欠账（warn 级，不阻塞存量修复）：${brief(findings)}；${GUIDE}建议顺手修正`,
+        reason: `[wiki-steward 写入拦截] 存量页问题不阻塞修复（warn/error 同判一律提示，①存量降格）：${brief(findings)}；${GUIDE}建议顺手修正`,
       }
     } catch (e) {
       warn(`[wiki-steward] 写入拦截异常已吞（fail-open 不拦）：${e?.message ?? e}`)
