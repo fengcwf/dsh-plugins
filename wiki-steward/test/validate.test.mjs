@@ -716,3 +716,126 @@ test('⑥ 输出形状稳定：键面固定、line 为正整数或缺省、无 N
 test('⑥ RULES 常量 = 六规则名稳定面', () => {
   assert.deepEqual(RULES, ['frontmatter', 'index', 'naming', 'placement', 'structure', 'evidence'])
 })
+
+// ── ⑦ T15 验收用例：solutions 欠账修复前后对比（Q18 裁定；A2 用例面）─────────
+// fixture 模拟真 vault 修复前后形态（真 vault 对比证据见 task-15 报告；测试不依赖真 vault）。
+// 修复动作 dogfood 自家工具链：crud.wikiRename（拍平+wikilink 全库重写）→ crud.wikiWrite（补字段/INDEX 登记）
+// → kbValidate（修复前后对比）。
+// 分级口径（validate.js 头注释「T15 修复欠账的分级判据」）：error 级欠账（归属/漏登/六字段必填）修复后
+// 清零；命名形态（纯英文）/结构完整性（缺四段）等存量形态欠账留 warn = verdict fail→warn 降档（非清零）。
+const { wikiRename, wikiWrite } = await import('../lib/crud.js')
+
+const T15_PHASE8_BODY = `# Phase 8 Skill 执行强制方案
+
+> 创建时间：2026-06-27
+> 状态：方案设计
+
+## 问题
+
+clsh-project Phase 8 流程要求协调者只记录现象，执行中反复偏离。
+`
+
+const T15_LOOP_BEFORE = `---
+title: "Loop Engineering 全景报告"
+created: 2026-06-13
+type: report
+tags:
+  - "loop-engineering"
+---
+
+# Loop Engineering 全景报告
+
+## 一、核心定义
+
+Loop Engineering = 设计自动化系统替代人工指令循环。
+`
+
+/** 修复前形态（真 vault 2026-09-26 盘点对应：嵌套 solution 无 frontmatter + loop 报告缺五字段 + 双页漏登） */
+const t15Before = (root) => {
+  put(root, 'wiki/solutions/phase8-enforcement/solution.md', T15_PHASE8_BODY)
+  put(root, 'wiki/solutions/loop-engineering-report.md', T15_LOOP_BEFORE)
+  put(root, 'wiki/concepts/梯度计费.md', page()) // INDEX_SEED 登记目标实存（死链零误报前提）
+  put(root, 'wiki/concepts/引用页.md', '# 引用页\n\n[[solutions/phase8-enforcement/solution|Phase 8 方案]]\n')
+}
+
+test('⑦ T15 修复前形态：④归属 error（solutions 二级嵌套）/③命名 warn（纯英文）/②漏登 error 齐现', async () => {
+  const root = mkVault()
+  t15Before(root)
+
+  // ①嵌套页：归属 error + 漏登 error + 六字段缺失 error → fail
+  const nested = await kbValidate(path.join(root, 'wiki/solutions/phase8-enforcement/solution.md'), { vaultRoot: root })
+  assert.equal(nested.verdict, 'fail', '嵌套页修复前必 FAIL')
+  assert.ok(nested.findings.some((f) => f.rule === 'placement' && f.severity === 'error' && /二级嵌套/.test(f.message)), '④归属 error：solutions 二级嵌套')
+  assert.ok(nested.findings.some((f) => f.rule === 'index' && f.severity === 'error' && /漏登/.test(f.message)), '②漏登 error')
+  assert.ok(nested.findings.some((f) => f.rule === 'frontmatter' && f.severity === 'error'), '六字段必填缺失 error')
+
+  // ②loop 报告：reusability 缺失 error + 纯英文命名 warn + 漏登 error → fail
+  const loop = await kbValidate(path.join(root, 'wiki/solutions/loop-engineering-report.md'), { vaultRoot: root })
+  assert.equal(loop.verdict, 'fail', 'loop 报告修复前必 FAIL')
+  assert.ok(loop.findings.some((f) => f.rule === 'frontmatter' && f.severity === 'error' && /reusability/.test(f.message)), 'solutions 页 reusability 必填缺失')
+  assert.ok(loop.findings.some((f) => f.rule === 'naming' && f.severity === 'warn' && /纯英文/.test(f.message)), '③命名 warn：裸纯英文形态欠账')
+  assert.ok(loop.findings.some((f) => f.rule === 'index' && f.severity === 'error' && /漏登/.test(f.message)), '②漏登 error')
+})
+
+test('⑦ T15 修复后形态：crud 拍平+补字段+INDEX 登记 → error 清零、verdict fail→warn 降档（dogfood crud/validate）', async () => {
+  const root = mkVault()
+  t15Before(root)
+  const FROM = 'wiki/solutions/phase8-enforcement/solution.md'
+  const TO = 'wiki/solutions/phase8-enforcement-执行强制方案.md'
+  const before = {
+    nested: await kbValidate(path.join(root, FROM), { vaultRoot: root }),
+    loop: await kbValidate(path.join(root, 'wiki/solutions/loop-engineering-report.md'), { vaultRoot: root }),
+  }
+  assert.equal(before.nested.verdict, 'fail')
+  assert.equal(before.loop.verdict, 'fail')
+
+  // 修复①：拍平嵌套（crud wikiRename 事务：改名+移动同操作 + wikilink 全库重写）
+  const ren = await wikiRename(FROM, TO, { vaultRoot: root, readOnly: false })
+  assert.equal(ren.ok, true, `拍平必须成功：${ren.message ?? ''}`)
+  assert.equal(ren.moved, true)
+  assert.equal(fs.existsSync(path.join(root, FROM)), false, '旧嵌套路径必须消失')
+  assert.equal(fs.existsSync(path.join(root, TO)), true, '新平铺路径必须在场')
+  const ref = fs.readFileSync(path.join(root, 'wiki/concepts/引用页.md'), 'utf8')
+  assert.match(ref, /\[\[solutions\/phase8-enforcement-执行强制方案\|Phase 8 方案\]\]/, 'wikilink 全库重写（风格+别名保持）')
+
+  // 修复②：补字段（六字段 + reusability；正文原样保留=最小干预）
+  const phase8Fm = fm({ ...GOOD_FIELDS, title: '"Phase 8 Skill 执行强制方案"', reusability: 'project-specific' })
+  const w1 = await wikiWrite(TO, phase8Fm + '\n' + T15_PHASE8_BODY, { vaultRoot: root, readOnly: false, overwrite: true })
+  assert.equal(w1.ok, true, 'phase8 补字段写入必须成功')
+  const loopFm = fm({
+    title: '"Loop Engineering 全景报告"',
+    created: '2026-06-13',
+    date: '2026-06-13',
+    type: 'report',
+    tags: '[loop-engineering]',
+    status: 'active',
+    source: '"raw/01-articles/Loop Engineering（Agent 闭环工程）.md"',
+    related: '["[[concepts/loop-engineering]]"]',
+    reusability: 'cross-project',
+  })
+  const w2 = await wikiWrite('wiki/solutions/loop-engineering-report.md', loopFm + '\n# Loop Engineering 全景报告\n\n## 一、核心定义\n\nLoop Engineering = 设计自动化系统替代人工指令循环。\n', { vaultRoot: root, readOnly: false, overwrite: true })
+  assert.equal(w2.ok, true, 'loop 补字段写入必须成功')
+
+  // 修复③：INDEX 同步（登记后实存；死链零）
+  const w3 = await wikiWrite('wiki/INDEX.md', INDEX_SEED
+    + '- [[solutions/phase8-enforcement-执行强制方案|Phase 8 Skill 执行强制方案]]\n'
+    + '- [[solutions/loop-engineering-report|Loop Engineering 全景报告]]\n', { vaultRoot: root, readOnly: false, overwrite: true })
+  assert.equal(w3.ok, true, 'INDEX 登记写入必须成功')
+  const idx = await kbValidate(path.join(root, 'wiki/INDEX.md'), { rules: ['index'], vaultRoot: root })
+  assert.deepEqual(idx.findings, [], 'INDEX 登记指向实存（零死链）')
+
+  // 对比断言：error 级欠账清零 + verdict fail→warn 降档（warn 级存量形态欠账留面，非清零）
+  const after8 = await kbValidate(path.join(root, TO), { vaultRoot: root })
+  assert.deepEqual(after8.findings.filter((f) => f.severity === 'error'), [], '拍平+补字段后 error 级欠账必须清零')
+  assert.deepEqual(after8.findings.filter((f) => ['frontmatter', 'index', 'naming', 'placement'].includes(f.rule)), [], '①②③④ 规则面必须零 finding（混合名过命名规则）')
+  assert.equal(after8.verdict, 'warn', 'verdict 降档 fail→warn（缺四段存量形态欠账留 warn，最小干预不动正文）')
+  assert.ok(after8.findings.every((f) => f.rule === 'structure' && f.severity === 'warn'), '唯一留面=结构缺四段 warn')
+
+  const afterLoop = await kbValidate(path.join(root, 'wiki/solutions/loop-engineering-report.md'), { vaultRoot: root })
+  assert.deepEqual(afterLoop.findings.filter((f) => f.severity === 'error'), [], '补字段后 error 级欠账必须清零')
+  assert.deepEqual(afterLoop.findings.filter((f) => ['frontmatter', 'index'].includes(f.rule)), [], '①② 规则面必须零 finding')
+  assert.equal(afterLoop.verdict, 'warn', 'verdict 降档 fail→warn')
+  // ③命名 warn 存量留面（降档口径注记：loop 报告不改名，纯英文形态欠账保持 warn 不升 error）
+  assert.ok(afterLoop.findings.some((f) => f.rule === 'naming' && f.severity === 'warn'), '纯英文命名形态欠账留 warn（不改名，降档非清零）')
+  assert.ok(afterLoop.findings.some((f) => f.rule === 'structure' && f.severity === 'warn'), '缺四段结构欠账留 warn（最小干预不动正文）')
+})
