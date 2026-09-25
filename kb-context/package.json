@@ -18,7 +18,7 @@
     "check": "node --check lib/index.js && node --check lib/tools.js && node --check lib/diagnose.js && node --test"
   },
   "peerDependencies": {
-    "zod": "^4.3.6",
+    "zod": "^4.6.5",
     "@deepseek-ai/dsh-llm": ">=0.1.7-rc.1",
     "@deepseek-ai/dsh-tools": ">=0.1.7-rc.1"
   },

@@ -250,6 +250,7 @@ test('journal 往返：既有文件 save → 改 → rollback 字节还原 + sha
   const f = path.join(dir, 'page.md')
   const orig = '# 原文\nsha256: aaa\n'
   fs.writeFileSync(f, orig, { mode: 0o640 })
+  fs.chmodSync(f, 0o640) // 模式钉定（终审 fix-wave ④）：writeFileSync 的 mode 过 umask 截损（0077 下成 0o600），chmod 不受 umask 影响——fixture 摆脱 umask 环境依赖
   const snap = await journalSave(f)
   assert.equal(snap.existed, true)
   assert.equal(snap.content.toString('utf8'), orig)
@@ -263,7 +264,9 @@ test('journal 往返：既有文件 save → 改 → rollback 字节还原 + sha
   const back = fs.readFileSync(f, 'utf8')
   assert.equal(back, orig, '字节级还原')
   assert.equal(sha256(Buffer.from(back)), snap.sha256, '还原后 sha256 与快照一致')
-  assert.equal(fs.statSync(f).mode & 0o777, 0o640, '权限还原')
+  // 期望按当前 umask 计算（终审 fix-wave ④）：逆放经 writeAtomic=「mode 经 umask 生效」
+  // （T8 挂账 deferred minor，journal 同面，triage 结论不动）——022 下=0o640，0077 下=0o600，全套摆脱 umask 环境依赖
+  assert.equal(fs.statSync(f).mode & 0o777, 0o640 & ~process.umask(), '权限还原（经 umask 生效）')
 })
 
 test('journal 往返：不存在文件 save（existed:false）→ 创建后 rollback 删除；重复 rollback 幂等', async () => {

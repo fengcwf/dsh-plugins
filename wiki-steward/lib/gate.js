@@ -118,55 +118,68 @@ function resolveContent(spec, args, abs, vaultRoot) {
  * @returns {(exec: object, next: () => Promise<object>) => Promise<object>}
  */
 export function createWriteGate({ quickFindings, getCfg, warn }) {
-  return async function wikiStewardWriteGate(exec, next) {
-    try {
-      const spec = WRITE_TOOLS[exec?.name]
-      if (!spec) return next() // 读工具/非写类/delete 类：放行（零快检）
-      const args = exec.arguments
-      const rawTarget = pick(args, spec.pathKeys)
-      if (rawTarget === null) {
-        warn(`[wiki-steward] 写入拦截：写类工具 ${exec.name} 缺目标路径键（fail-open 不拦，留痕）`)
-        return next()
-      }
-      const cfg = getCfg() ?? {}
-      const vaultRoot = typeof cfg.vaultRoot === 'string' ? cfg.vaultRoot.trim() : ''
-      if (vaultRoot === '') {
-        warn('[wiki-steward] 写入拦截：vaultRoot 缺省，围栏不可判（fail-open 不拦，留痕）')
-        return next()
-      }
-      const abs = spec.anchor === 'vault' ? path.resolve(vaultRoot, rawTarget) : path.resolve(rawTarget)
-      if (!inVault(vaultRoot, abs)) return next() // 非 vault 路径：放行（零快检）
+  /**
+   * 判定段（try 域内）：产出决策对象或 undefined=放行链续。**绝不调用 next()**——
+   * 链续统一收在 try 域外一处（终审 fix-wave 裁定①：catch 域包住 next() 链续时，下游同步
+   * throw 被吞后二次 next() = 写类工具双执行）。
+   */
+  async function decide(exec) {
+    const spec = WRITE_TOOLS[exec?.name]
+    if (!spec) return undefined // 读工具/非写类/delete 类：放行（零快检）
+    const args = exec.arguments
+    const rawTarget = pick(args, spec.pathKeys)
+    if (rawTarget === null) {
+      warn(`[wiki-steward] 写入拦截：写类工具 ${exec.name} 缺目标路径键（fail-open 不拦，留痕）`)
+      return undefined
+    }
+    const cfg = getCfg() ?? {}
+    const vaultRoot = typeof cfg.vaultRoot === 'string' ? cfg.vaultRoot.trim() : ''
+    if (vaultRoot === '') {
+      warn('[wiki-steward] 写入拦截：vaultRoot 缺省，围栏不可判（fail-open 不拦，留痕）')
+      return undefined
+    }
+    const abs = spec.anchor === 'vault' ? path.resolve(vaultRoot, rawTarget) : path.resolve(rawTarget)
+    if (!inVault(vaultRoot, abs)) return undefined // 非 vault 路径：放行（零快检）
 
-      // INV-7：只读配置下 vault 写类一律拒（在快检之前——不需要 IO 也能拦）
-      if (cfg.write?.readOnly !== false) {
-        return {
-          kind: 'deny',
-          reason: `[wiki-steward 写入拦截] 默认只读（INV-7）：vault 写类一律拒，config write.readOnly:false 显式开启才动手；${GUIDE}`,
-        }
-      }
-
-      // 快检分流（审前裁定①存量降格：存量一律 ask、deny 只用于新建不合指引/readOnly/非法越界路径）
-      const content = resolveContent(spec, args, abs, vaultRoot)
-      const exists = fs.existsSync(abs)
-      if (!exists && content === undefined) return next() // 新建且无内容可检（fail-open，空参数宿主自会拒）
-      const r = await quickFindings(abs, content, { vaultRoot })
-      if (r?.ok !== false) return next() // 合规 → allow
-      const findings = Array.isArray(r.findings) ? r.findings : []
-      if (!exists) {
-        return {
-          kind: 'deny',
-          reason: `[wiki-steward 写入拦截] 新建页不合维护指引：${brief(findings)}；${GUIDE}修正后再写（六字段 frontmatter/类型化命名/目录归属）`,
-        }
-      }
-      // ① 存量降格：exists 的一切 quickCheck 问题（含 error 级）一律 ask——deny 会锁死
-      //   「编辑来修复存量问题」的通道；构造性强制=指路非坐牢。
+    // INV-7：只读配置下 vault 写类一律拒（在快检之前——不需要 IO 也能拦）
+    if (cfg.write?.readOnly !== false) {
       return {
-        kind: 'ask',
-        reason: `[wiki-steward 写入拦截] 存量页问题不阻塞修复（warn/error 同判一律提示，①存量降格）：${brief(findings)}；${GUIDE}建议顺手修正`,
+        kind: 'deny',
+        reason: `[wiki-steward 写入拦截] 默认只读（INV-7）：vault 写类一律拒，config write.readOnly:false 显式开启才动手；${GUIDE}`,
       }
+    }
+
+    // 快检分流（审前裁定①存量降格：存量一律 ask、deny 只用于新建不合指引/readOnly/非法越界路径）
+    const content = resolveContent(spec, args, abs, vaultRoot)
+    const exists = fs.existsSync(abs)
+    if (!exists && content === undefined) return undefined // 新建且无内容可检（fail-open，空参数宿主自会拒）
+    const r = await quickFindings(abs, content, { vaultRoot })
+    if (r?.ok !== false) return undefined // 合规 → allow
+    const findings = Array.isArray(r.findings) ? r.findings : []
+    if (!exists) {
+      return {
+        kind: 'deny',
+        reason: `[wiki-steward 写入拦截] 新建页不合维护指引：${brief(findings)}；${GUIDE}修正后再写（六字段 frontmatter/类型化命名/目录归属）`,
+      }
+    }
+    // ① 存量降格：exists 的一切 quickCheck 问题（含 error 级）一律 ask——deny 会锁死
+    //   「编辑来修复存量问题」的通道；构造性强制=指路非坐牢。
+    return {
+      kind: 'ask',
+      reason: `[wiki-steward 写入拦截] 存量页问题不阻塞修复（warn/error 同判一律提示，①存量降格）：${brief(findings)}；${GUIDE}建议顺手修正`,
+    }
+  }
+
+  return async function wikiStewardWriteGate(exec, next) {
+    let decision
+    try {
+      decision = await decide(exec)
     } catch (e) {
       warn(`[wiki-steward] 写入拦截异常已吞（fail-open 不拦）：${e?.message ?? e}`)
-      return next()
+      decision = undefined
     }
+    // next() 只在 try 域外调（判定段异常 fail-open 链续与放行链续同此一处）：
+    // 下游 throw（同步/异步）原样上抛给宿主——绝不吞、绝不二次 next()（写类工具双执行）。
+    return decision === undefined ? next() : decision
   }
 }

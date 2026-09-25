@@ -450,3 +450,25 @@ test('输出形状：成功面键固定 {ok,file,changed,previous,current} + JSO
   assert.equal(r.file, path.resolve(f))
   assert.deepEqual(JSON.parse(JSON.stringify(r)), r)
 })
+
+// ── 回归（终审 fix-wave ③）：写坏恰在值段——未动段 hash 盲区，须另核 sha256 行值字节 == current ──
+
+test('模拟写坏必拒（终审③）：写坏恰在 sha256 行值段（同长换值）→ write-corrupt + 逆放还原（值段字节核）', async () => {
+  const content = sample()
+  const { f } = put(content)
+  const r = await kbMark(f, {
+    _write: async (target, data) => {
+      // 只坏「值段」字节（同长换一个 hex 字符）：结构/行数/行位全不变、去掉 sha256 行的
+      // 未动段 hash 照样相等——恰打在旧校验盲区（只核未动段）上，必须靠值字节核拒。
+      const bad = Buffer.from(data).toString('utf8').replace(
+        /(sha256: )([0-9a-f]{64})/,
+        (m, pre, v) => pre + (v[0] === '0' ? '1' : '0') + v.slice(1),
+      )
+      fs.writeFileSync(target, bad)
+    },
+  })
+  assert.equal(r.ok, false, '值段被写坏必须拒（旧盲区：只核未动段 hash 会放行坏值）')
+  assert.equal(r.reason, 'write-corrupt')
+  assert.equal(r.rolledBack, true, '已逆放')
+  assert.equal(fs.readFileSync(f, 'utf8'), content, '逆放后与原字节全等（journal 回滚）')
+})

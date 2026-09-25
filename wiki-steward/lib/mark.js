@@ -243,7 +243,7 @@ export async function kbMark(file, opts = {}) {
     const rb = await rollback(snap)
     return fail(abs, 'io-error', `写后回读失败（${e?.code ?? e?.message ?? e}）；${rb.note}`, { code: e?.code, rolledBack: rb.rolledBack })
   }
-  const verify = verifyUnchanged(disk, preDigest, newLine, shaIdx.length === 1)
+  const verify = verifyUnchanged(disk, preDigest, newLine, shaIdx.length === 1, current)
   if (!verify.ok) {
     const rb = await rollback(snap)
     return fail(abs, 'write-corrupt', `写后未动段 hash 校验失败（${verify.reason}）；${rb.note}`, { rolledBack: rb.rolledBack })
@@ -266,9 +266,11 @@ async function rollback(snap) {
 
 /**
  * 写后核对：磁盘内容须可解析（frontmatter + 恰一条 sha256 行），且「去掉 sha256 行整行」的
- * 内容 hash 与写前记录一致（=除 sha256 行外逐字节未动，INV-1 hash 级对账 + INV-6 校验面）。
+ * 内容 hash 与写前记录一致（=除 sha256 行外逐字节未动，INV-1 hash 级对账 + INV-6 校验面），
+ * **且 sha256 行值字节 == 回写值 current**（终审 fix-wave ③：写坏恰在值段时未动段 hash 照样相等
+ * ——只核未动段是盲区，值段必须另核字节全等）。
  */
-function verifyUnchanged(disk, preDigest, newLine, isUpdate) {
+function verifyUnchanged(disk, preDigest, newLine, isUpdate, current) {
   const lines = splitLines(disk)
   if (lines.length === 0 || !isFence(disk, lines[0])) return { ok: false, reason: '结构不可解析' }
   let closeIdx = -1
@@ -283,6 +285,11 @@ function verifyUnchanged(disk, preDigest, newLine, isUpdate) {
   if (shaIdx.length !== 1) return { ok: false, reason: `sha256 行数 ${shaIdx.length} ≠ 1` }
   // 插补态核对锚点：新行应在原闭合锚点处（防写坏挪位）；更新态行位可随值长度变化，只核 hash
   if (!isUpdate && lines[shaIdx[0]].start !== newLine) return { ok: false, reason: 'sha256 行位置漂移' }
+  // 值段字节核（③盲区封口）：值字节逐字节 == 回写值（值段被写坏 = write-corrupt 拒）
+  const { vStart, vEnd } = valueSpan(disk, lines[shaIdx[0]])
+  const val = disk.subarray(vStart, vEnd)
+  const want = Buffer.from(current, 'utf8')
+  if (val.length !== want.length || !val.equals(want)) return { ok: false, reason: 'sha256 行值字节 ≠ 回写值（值段被写坏）' }
   const postDigest = DIGEST(stripShaLine(disk, lines[shaIdx[0]]))
   if (postDigest !== preDigest) return { ok: false, reason: '未动段 hash 不一致' }
   return { ok: true }

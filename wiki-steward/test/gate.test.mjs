@@ -304,3 +304,43 @@ test('写类表断言：crud 族（wiki_write/wiki_delete/wiki_rename）在表�
   assert.equal(WRITE_TOOLS.kb_validate, undefined, 'kb_validate 不在拦列表（只读永不拦）')
   assert.equal(WRITE_TOOLS.read, undefined, '读工具不入面')
 })
+
+// ── 回归（终审 fix-wave ①）：catch 域不得包住 next() 链续——下游 throw 被吞后二次 next()=写类工具双执行。
+// 形态注记：旧缺陷只在 next() **同步 throw** 时显形（`return next()` 不 await——async 拒绝不进 catch）；
+// 同步 throw 会被 try 吞掉后再次 next()（写类工具双执行）。sync/async 两种下游错误都必须恰一次上抛。 ──
+
+test('回归①a：非写类 allow 链续下游 throw → next() 恰调一次 + 错误原样上抛 + 不落 fail-open 吞痕', async (t) => {
+  const root = mkVault(t)
+  const boom = new Error('下游执行器 boom')
+  for (const variant of ['sync-throw', 'async-reject']) {
+    const { gate, warns } = mkGate({ vaultRoot: root, write: { readOnly: false } })
+    let calls = 0
+    const throwingNext = variant === 'sync-throw'
+      ? () => { calls += 1; throw boom } // 同步 throw（缺陷本体形态）
+      : async () => { calls += 1; throw boom } // async 拒绝
+    await assert.rejects(
+      gate(exec('read', { file_path: path.join(root, 'wiki', 'x.md') }), throwingNext),
+      (e) => e === boom,
+      `${variant}：下游 throw 原样上抛（错误身份一致，绝不吞）`,
+    )
+    assert.equal(calls, 1, `${variant}：next() 恰调一次——旧缺陷：catch 域包住 next() 链续，下游 throw 被吞后再二次 next()`)
+    assert.ok(!warns.some((l) => /异常已吞/.test(l)), `${variant}：下游 throw 非判定异常：绝不落 fail-open 吞痕（吞痕只属于判定段异常）`)
+  }
+})
+
+test('回归①b：写类工具 allow 链续下游 throw → 写入恰执行一次（双执行封死）+ 错误原样上抛', async (t) => {
+  const root = mkVault(t)
+  put(root, 'wiki/concepts/梯度计费.md', page())
+  const { gate } = mkGate({ vaultRoot: root, write: { readOnly: false } })
+  const boom = new Error('写工具执行 boom')
+  let executed = 0
+  // 计数执行器=写工具真实执行的替身（插桩非 mock）：执行次数即工具执行次数；
+  // 同步 throw（如执行器参数校验/写入中抛出）恰是被 try 吞掉后二次 next() 的缺陷形态
+  const throwingNext = () => { executed += 1; throw boom }
+  await assert.rejects(
+    gate(exec('wiki_write', { path: 'wiki/concepts/梯度计费.md', content: page() }), throwingNext),
+    (e) => e === boom,
+    '写工具 throw 原样上抛给宿主',
+  )
+  assert.equal(executed, 1, '写类工具恰执行一次——二次 next()=写类工具双执行（终审裁定①缺陷本体）')
+})
