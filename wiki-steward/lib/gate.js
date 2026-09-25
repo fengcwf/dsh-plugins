@@ -2,13 +2,14 @@
 //
 // ⚠️ 能力边界（P21/P23 教训，诚实声明）：**工具级构造性强制，非安全边界**——只拦工具级写调用
 //   （写类工具、结构化目标路径），拦不住模型文本绕过（bash 重定向/内嵌写盘等不经结构化路径的写）。
-//   Gate Enforcer 全量能力仍留 v2（Q17）。delete 类归 crud 围栏+双确认（INV-7），本面只拦不改。
+//   Gate Enforcer 全量能力仍留 v2（Q17）。delete 类走 crud 围栏+双确认（INV-7）双保险不变；wiki_delete 入表
+//   （终审裁定取字面）只为 pre-execute 一致性=readOnly 早拦+指路，本面只拦不改。
 //
 // 契约（delta-spec T9 切片 + dsh-tools PreToolDecision 实测面）：
 //   ctx.on('tools/pre-execute', (exec, next) => …) 决策仅 **allow/ask/deny** 三态，**无输入改写**——
 //   payload 恒原样（R7 实测：PreToolDecision 不含改写缝；arguments 深冻结），allow = next() 链续。
 //
-// 判定范围 = 写类工具（WRITE_TOOLS 判定表）且目标在 vault 内；读工具/非 vault 路径/delete 类
+// 判定范围 = 写类工具（WRITE_TOOLS 判定表）且目标在 vault 内；读工具/非 vault 路径
 //   一律放行且**零快检**（性能与边界）。
 //
 // 判定矩阵（quickCheck 分流；审前裁定①存量降格 + ②kb_mark 豁免 readOnly，Task 14 fix round 1）：
@@ -37,14 +38,16 @@ import path from 'node:path'
 /**
  * 写类工具判定表：目标路径取键序（宽容取键）+ 锚定基准（host 工具=绝对/进程 cwd；steward 工具=Vault 相对）+
  * 内容外推方式（full=参数全量；edit=补丁外推；disk=磁盘现状近似）。
- * 不在此表 = 非写类/未识别（读工具、delete 类、bash 等）→ 放行（构造性强制边界，如实申报）。
+ * 不在此表 = 非写类/未识别（读工具、bash 等）→ 放行（构造性强制边界，如实申报）。
  * ② kb_mark/kb_validate **不在表**（kb_mark=INV-1 明文例外机械维护非内容写、豁免 readOnly；
- *   kb_validate 只读永不拦）；wiki_delete 不在表（crud 双确认+trash，本面只拦不改）。
+ *   kb_validate 只读永不拦）；wiki_delete **在表**（终审裁定取字面：crud 族同面=readOnly 早拦+指路；
+ *   crud 双确认+trash 双保险不变，本面只拦不改——目标不存在 fail-open 放行，crud not-found 自拒）。
  */
 export const WRITE_TOOLS = {
   write: { pathKeys: ['file_path', 'path', 'file', 'target'], contentKeys: ['content'], anchor: 'cwd', patch: 'full' },
   edit: { pathKeys: ['file_path', 'path', 'file'], anchor: 'cwd', patch: 'edit' },
   wiki_write: { pathKeys: ['path', 'file_path', 'target', 'file'], contentKeys: ['content'], anchor: 'vault', patch: 'full' },
+  wiki_delete: { pathKeys: ['path', 'file_path', 'target', 'file'], anchor: 'vault', patch: 'disk' },
   wiki_rename: { pathKeys: ['to', 'path'], contentPathKey: 'from', anchor: 'vault', patch: 'disk' },
 }
 
@@ -88,7 +91,7 @@ function applyEdit(abs, args) {
   return parts.join(neu)
 }
 
-/** 内容外推：write/wiki_write=参数全量；edit=补丁外推；wiki_rename=源文件现状；kb_mark=undefined（磁盘近似） */
+/** 内容外推：write/wiki_write=参数全量；edit=补丁外推；wiki_rename=源文件现状；wiki_delete=磁盘近似（被删目标现状） */
 function resolveContent(spec, args, abs, vaultRoot) {
   if (spec.patch === 'full') return pick(args, spec.contentKeys ?? []) ?? undefined
   if (spec.patch === 'edit') return applyEdit(abs, args)

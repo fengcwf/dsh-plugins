@@ -4,15 +4,16 @@
 //   ① 越权/不合指引新建 = deny + reason 含 obsidian-operations 维护指引
 //   ② 存量形态问题（warn 级）= ask（提示+指路）
 //   ③ 合规写 = allow（next() 链续）
-//   ④ 非 vault 路径/读工具/delete 类 = allow（零快检）
-//   ⑤ readOnly 全 deny（INV-7；非 vault 不误伤；kb_mark 已出表豁免）
+//   ④ 非 vault 路径/读工具 = allow（零快检）；wiki_delete 目标不存在 = fail-open 放行（crud not-found 自拒）
+//   ⑤ readOnly 全 deny（INV-7；非 vault 不误伤；kb_mark 已出表豁免；wiki_delete 同拦=裁定取字面）
 //   ⑥ vaultRoot 缺省 = 不拦 + 留痕
 //   ⑦ 三态无改写断言（payload 原样、决策键面固定、kind ∈ allow/ask/deny）
 //   附加（bug-killer）：存量 error 级=ask（①存量降格：含 error 级一律 ask）｜存量修复性编辑=allow
 //     （补丁外推——预存态误判反例）｜edit 引入 error=ask（①同判；补丁外推仍按编辑后内容判）｜
 //     raw/ 写零误拦（捕获/回写不误拦）｜quickFindings 异常 fail-open 留痕｜
 //     steward 写类工具同面（wiki_write/wiki_rename）+ kb_mark 出表（② INV-1 明文例外）｜
-//     mark 在 readOnly 下放行（②）｜写类表反向断言（mark/validate 不在拦列表）
+//     mark 在 readOnly 下放行（②）｜写类表断言（crud 族含 wiki_delete 在表；mark/validate 不在拦列表）｜
+//     wiki_delete 入表（终审裁定取字面）：readOnly=deny+指路早拦／存量欠账目标=ask 不阻塞／合规 delete=放行
 // 真被测件零 mock：quickFindings=真实现+调用计数包装（插桩非 mock）；mkdtemp 真文件系统；决策零写盘。
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -135,14 +136,14 @@ test('③ 合规写 = allow（next() 链续）', async (t) => {
   assert.equal(r, NEXT, '合规写委托 next()（链续=allow）')
 })
 
-test('④ 非 vault 路径/读工具/delete 类 = allow 且零快检', async (t) => {
+test('④ 非 vault 路径/读工具 = allow 且零快检；wiki_delete 目标不存在 = fail-open 放行', async (t) => {
   const root = mkVault(t)
   const { gate, calls } = mkGate({ vaultRoot: root, write: { readOnly: false } })
   // 读工具
   assert.equal(await gate(exec('read', { file_path: path.join(root, 'wiki', 'x.md') }), next), NEXT)
   // 非 vault 写
   assert.equal(await gate(exec('write', { file_path: path.join(os.tmpdir(), 'ws-gate-outside.md'), content: '随便' }), next), NEXT)
-  // delete 类归 crud 双确认（INV-7），本面不拦
+  // wiki_delete 已入表（裁定取字面）：目标不存在 → fail-open 放行（crud not-found 自会拒），零快检
   assert.equal(await gate(exec('wiki_delete', { path: 'wiki/concepts/x.md', confirm: 'wiki/concepts/x.md' }), next), NEXT)
   assert.equal(calls.length, 0, '零快检（性能与边界）')
 })
@@ -273,13 +274,33 @@ test('mark 在 readOnly 下放行（② kb_mark 豁免 readOnly：INV-1 明文�
   assert.equal(calls.length, 0, '零快检（出表永不快检）')
 })
 
-test('写类表反向断言：mark/validate 不在拦列表（②；kb_mark=INV-1 明文例外、kb_validate 只读永不拦）', () => {
-  for (const name of ['write', 'edit', 'wiki_write', 'wiki_rename']) {
+test('wiki_delete 入表（终审裁定取字面）：readOnly = deny+指路早拦；存量欠账目标 = ask 不阻塞；合规 delete = 放行', async (t) => {
+  const root = mkVault(t)
+  put(root, 'wiki/concepts/存量缺字段.md', MISSING_RELATED)
+  put(root, 'wiki/concepts/梯度计费.md', page())
+  // INV-7 门面：delete 同样早拦+指路（crud 层双确认+trash 双保险不变，本行只是 pre-execute 一致性）
+  const g1 = mkGate({ vaultRoot: root, write: { readOnly: true } })
+  const r1 = await g1.gate(exec('wiki_delete', { path: 'wiki/concepts/存量缺字段.md', confirm: 'wiki/concepts/存量缺字段.md' }), next)
+  assert.equal(r1.kind, 'deny', 'readOnly 下 wiki_delete 同样 deny（crud 族同面）')
+  assert.match(r1.reason, /只读|readOnly/)
+  assert.match(r1.reason, /obsidian-operations/, 'deny 同样指路')
+  assert.equal(g1.calls.length, 0, '早拦在快检之前（readOnly 不需要 IO 也能拦）')
+  // 取字面代价（裁定注记）：readOnly:false 下 delete 目标存量欠账 → ask 提示（不阻塞，①存量降格同判）
+  const g2 = mkGate({ vaultRoot: root, write: { readOnly: false } })
+  const r2 = await g2.gate(exec('wiki_delete', { path: 'wiki/concepts/存量缺字段.md', confirm: 'wiki/concepts/存量缺字段.md' }), next)
+  assert.equal(r2.kind, 'ask', 'delete 目标存量欠账 → ask（提示不阻塞）')
+  assert.match(r2.reason, /obsidian-operations/)
+  // 合规 delete 不被误拦 → 放行（crud 双确认+trash 照旧接手续）
+  const r3 = await g2.gate(exec('wiki_delete', { path: 'wiki/concepts/梯度计费.md', confirm: 'wiki/concepts/梯度计费.md' }), next)
+  assert.equal(r3, NEXT, '合规 delete 放行（本面只拦不改）')
+})
+
+test('写类表断言：crud 族（wiki_write/wiki_delete/wiki_rename）在表；mark/validate 不在拦列表（②；kb_mark=INV-1 明文例外、kb_validate 只读永不拦）', () => {
+  for (const name of ['write', 'edit', 'wiki_write', 'wiki_delete', 'wiki_rename']) {
     assert.ok(WRITE_TOOLS[name], `${name} 在写类判定表`)
     assert.ok(Array.isArray(WRITE_TOOLS[name].pathKeys) && WRITE_TOOLS[name].pathKeys.length > 0)
   }
   assert.equal(WRITE_TOOLS.kb_mark, undefined, 'kb_mark 不在拦列表（豁免 readOnly，②）')
   assert.equal(WRITE_TOOLS.kb_validate, undefined, 'kb_validate 不在拦列表（只读永不拦）')
-  assert.equal(WRITE_TOOLS.wiki_delete, undefined, 'delete 类归 crud 双确认（本面只拦不改）')
   assert.equal(WRITE_TOOLS.read, undefined, '读工具不入面')
 })
