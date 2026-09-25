@@ -16,7 +16,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 
-const { kbValidate, quickCheck, RULES } = await import('../lib/validate.js')
+const { kbValidate, quickCheck, quickFindings, RULES } = await import('../lib/validate.js')
 
 // ── fixture 工具 ─────────────────────────────────────────────────────────────
 
@@ -663,6 +663,23 @@ test('⑤ quickCheck：内容省略时真读盘（与传内容同判定）', asy
   const f = put(root, 'wiki/concepts/梯度计费.md', page())
   const r = await quickCheck(f, undefined, { vaultRoot: root })
   assert.deepEqual(r, { ok: true, reasons: [] })
+})
+
+test('⑤ quickFindings：findings 带 severity 分级（T14 分流缝）+ quickCheck reasons 形状兼容', async () => {
+  const root = mkVault()
+  const f = put(root, 'wiki/topics/loop-engineering.md', page()) // 裸纯英文名 → naming warn
+  const r = await quickFindings(f, undefined, { vaultRoot: root })
+  assert.deepEqual(Object.keys(r).sort(), ['findings', 'ok'])
+  assert.equal(r.ok, false)
+  assert.ok(r.findings.every((x) => ['error', 'warn'].includes(x.severity)), 'findings 带 error/warn 分级')
+  assert.ok(r.findings.some((x) => x.rule === 'naming' && x.severity === 'warn'), '形态欠账=warn 级')
+  // quickCheck = 旧契约包装（{ok, reasons[]}，[rule] message 形状不变）
+  const q = await quickCheck(f, undefined, { vaultRoot: root })
+  assert.deepEqual(q, { ok: false, reasons: r.findings.map((x) => `[${x.rule}] ${x.message}`) })
+  // error 级样例：缺必填字段
+  const bad = put(root, 'wiki/concepts/缺字段.md', fm({ title: '"缺字段"' }) + '\n' + BODY)
+  const r2 = await quickFindings(bad, undefined, { vaultRoot: root })
+  assert.ok(r2.findings.some((x) => x.rule === 'frontmatter' && x.severity === 'error'), '缺必填=error 级')
 })
 
 // ── ⑥ 输出 JSON 形状稳定（无 -0/NaN） ───────────────────────────────────────

@@ -3,6 +3,7 @@
 //   kbValidate(target, {rules?, vaultRoot?}) → {file, findings:[{rule, line?, message, severity}], verdict}
 //   目录 target → {file, findings, verdict, results:[{file, findings, verdict}]}（聚合 findings 额带 file 键）
 //   quickCheck(path, content?, {vaultRoot?}) → {ok, reasons[]}（T14 pre-execute 快检缝）
+//   quickFindings(path, content?, {vaultRoot?}) → {ok, findings[]}（同判定面带 severity 分级，T14 分流缝）
 // 消费方：T15 欠账修复（findings 驱动）、T14 写入拦截（quickCheck）。勿在消费方重造规则。
 //
 // 六规则（rule id 稳定面，rules 参数可裁剪；另 'io' 为辅助规则不可选）：
@@ -575,27 +576,26 @@ function checkIndex(abs, vaultRoot, wikiRel, stem) {
 }
 
 /**
- * 快检缝（T14 pre-execute 消费）：**秒级子集**，不跑全量六规则。
- * 只查 ①六字段形态 + ③命名（硬禁止+形态）+ ④放置禁令——纯内容/路径判定，零 INDEX/结构/证据扫描。
- * raw/ 侧路径不套 wiki 维护指引（捕获/回写落盘不得被误拦）。
+ * 分级快检缝（T14 pre-execute 分流消费）：quickCheck 同一判定面，findings 带 severity 分级。
+ * 分流判据（T10 concern② 裁定）：warn 级=形态欠账（存量编辑→ask）；error 级=违反必填/禁令（→deny）。
  * @param {string} filePath 目标路径
  * @param {string} [content] 已知内容（pre-execute 提供则零 IO）；缺省真读盘
- * @returns {Promise<{ok: boolean, reasons: string[]}>}
+ * @returns {Promise<{ok: boolean, findings: {rule: string, line?: number, message: string, severity: string}[]}>}
  */
-export async function quickCheck(filePath, content, opts = {}) {
+export async function quickFindings(filePath, content, opts = {}) {
   const abs = path.resolve(filePath)
-  const reasons = []
+  const findings = []
   let text = content
   if (text === undefined) {
     const r = readUtf8(abs)
-    if (!r.ok) return { ok: false, reasons: [`[io] 目标不可读：${r.error?.code ?? r.error?.message}`] }
+    if (!r.ok) return { ok: false, findings: [finding('io', 'error', `目标不可读：${r.error?.code ?? r.error?.message}`)] }
     text = r.text
   }
   const vaultRoot = opts.vaultRoot ? path.resolve(opts.vaultRoot) : findVaultRoot(path.dirname(abs))
   const rel = vaultRoot === null ? null : path.relative(vaultRoot, abs).split(path.sep).join('/')
-  if (rel === null || rel.startsWith('..')) return { ok: true, reasons: [] } // vault 外/raw 侧：不套 wiki 维护指引
+  if (rel === null || rel.startsWith('..')) return { ok: true, findings: [] } // vault 外/raw 侧：不套 wiki 维护指引
   const wikiRel = rel.startsWith('wiki/') ? rel.slice('wiki/'.length) : null
-  if (wikiRel === null) return { ok: true, reasons: [] }
+  if (wikiRel === null) return { ok: true, findings: [] }
 
   const stem = path.basename(abs, '.md')
   const isInfra = INFRA_STEMS.has(stem)
@@ -603,14 +603,26 @@ export async function quickCheck(filePath, content, opts = {}) {
   const top = segs.length > 1 ? segs[0] : ''
   const fm = parseFrontmatter(text)
   if (!isInfra && top !== 'reference') {
-    for (const f of checkFrontmatter(fm, { stem, isSolutions: top === 'solutions', isProject: top === 'projects' })) {
-      reasons.push(`[${f.rule}] ${f.message}`)
-    }
+    findings.push(...checkFrontmatter(fm, { stem, isSolutions: top === 'solutions', isProject: top === 'projects' }))
   }
   if (!isInfra) {
-    for (const f of checkNaming(stem)) reasons.push(`[${f.rule}] ${f.message}`)
-    for (const f of checkNamingForm(stem, top)) reasons.push(`[${f.rule}] ${f.message}`)
+    findings.push(...checkNaming(stem))
+    findings.push(...checkNamingForm(stem, top))
   }
-  for (const f of checkPlacement(wikiRel, stem)) reasons.push(`[${f.rule}] ${f.message}`)
-  return { ok: reasons.length === 0, reasons }
+  findings.push(...checkPlacement(wikiRel, stem))
+  return { ok: findings.length === 0, findings }
+}
+
+/**
+ * 快检缝（T14 pre-execute 消费）：**秒级子集**，不跑全量六规则。
+ * 只查 ①六字段形态 + ③命名（硬禁止+形态）+ ④放置禁令——纯内容/路径判定，零 INDEX/结构/证据扫描。
+ * raw/ 侧路径不套 wiki 维护指引（捕获/回写落盘不得被误拦）。
+ * 形状兼容契约：{ok, reasons[]}（reasons = `[rule] message` 串）；分级语义见 quickFindings。
+ * @param {string} filePath 目标路径
+ * @param {string} [content] 已知内容（pre-execute 提供则零 IO）；缺省真读盘
+ * @returns {Promise<{ok: boolean, reasons: string[]}>}
+ */
+export async function quickCheck(filePath, content, opts = {}) {
+  const r = await quickFindings(filePath, content, opts)
+  return { ok: r.ok, reasons: r.findings.map((f) => `[${f.rule}] ${f.message}`) }
 }

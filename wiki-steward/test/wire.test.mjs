@@ -452,3 +452,45 @@ test('告警触发：补交重试耗尽→retry-exhausted；连续 2 轮失败�
   assert.match(alerts, /`consecutive-failures`/, '连续失败阈值（2）→告警')
   assert.equal(fs.readdirSync(paths.queueDir).length, 0, '耗尽条目删除（retries≥3 删）')
 })
+
+// ── T14：写入拦截（tools/pre-execute 构造性强制面；真实 quickFindings 端到端） ─────
+
+const GOOD_PAGE = '---\ntitle: "测试页"\ndate: 2026-05-05\ntags: [测试]\nstatus: active\nsource: "raw/素材.md"\nrelated: []\n---\n\n## 概述\nx\n'
+const BAD_NEW = '---\ntitle: "缺字段"\n---\n\nx\n'
+
+test('T14 写入拦截接线：tools/pre-execute 注册 + 端到端 deny/allow/读工具链续', async (t) => {
+  const root = mkRoot(t)
+  fs.mkdirSync(path.join(root, 'wiki'), { recursive: true })
+  const ctx = mkCtx()
+  apply(ctx, { vaultRoot: root, write: { readOnly: false } }, { paths: mkPaths(root) })
+  const gate = ctx.handlers['tools/pre-execute']
+  assert.equal(typeof gate, 'function', 'pre-execute 缝已注册')
+  const next = async () => 'NEXT'
+  const r1 = await gate({ name: 'write', arguments: { file_path: path.join(root, 'wiki', '越权根放页.md'), content: BAD_NEW } }, next)
+  assert.equal(r1.kind, 'deny', '越权/不合指引新建 → deny')
+  assert.match(r1.reason, /obsidian-operations/, 'reason 指路引用维护指引')
+  const r2 = await gate({ name: 'write', arguments: { file_path: path.join(root, 'wiki', 'concepts', '梯度计费.md'), content: GOOD_PAGE } }, next)
+  assert.equal(r2, 'NEXT', '合规写链续 allow')
+  const r3 = await gate({ name: 'read', arguments: { file_path: path.join(root, 'wiki', 'x.md') } }, next)
+  assert.equal(r3, 'NEXT', '读工具链续 allow')
+})
+
+test('T14 写入拦截接线：默认 readOnly 全 deny（INV-7）；vaultRoot 空串 fail-open 不拦+留痕', async (t) => {
+  const root = mkRoot(t)
+  fs.mkdirSync(path.join(root, 'wiki'), { recursive: true })
+  const next = async () => 'NEXT'
+  // 默认配置（write.readOnly 缺省 true）→ vault 写一律 deny
+  const ctx = mkCtx()
+  apply(ctx, { vaultRoot: root }, { paths: mkPaths(root) })
+  const r1 = await ctx.handlers['tools/pre-execute'](
+    { name: 'write', arguments: { file_path: path.join(root, 'wiki', 'concepts', '梯度计费.md'), content: GOOD_PAGE } }, next)
+  assert.equal(r1.kind, 'deny', 'readOnly 缺省 true → 全 deny')
+  assert.match(r1.reason, /只读|readOnly/)
+  // vaultRoot 空串 → 围栏不可判，fail-open 不拦 + 留痕
+  const ctx2 = mkCtx()
+  apply(ctx2, { vaultRoot: '' }, { paths: mkPaths(root) })
+  const r2 = await ctx2.handlers['tools/pre-execute'](
+    { name: 'write', arguments: { file_path: path.join(root, 'wiki', '越权根放页.md'), content: BAD_NEW } }, next)
+  assert.equal(r2, 'NEXT', 'vaultRoot 缺省 → 不拦')
+  assert.ok(ctx2.warnings.some((l) => /vaultRoot/.test(l)), '缺省留痕（INV-15 禁静默）')
+})

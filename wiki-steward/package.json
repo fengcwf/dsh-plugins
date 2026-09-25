@@ -15,7 +15,7 @@
   ],
   "scripts": {
     "test": "node --test",
-    "check": "node --check lib/index.js && node --check lib/secrets.js && node --check lib/fs-safe.js && node --check lib/capture.js && node --check lib/buffer.js && node --check lib/validate.js && node --check lib/mark.js && node --check lib/crud.js && node --check lib/queue.js && node --check lib/alert.js && node --test"
+    "check": "node --check lib/index.js && node --check lib/secrets.js && node --check lib/fs-safe.js && node --check lib/capture.js && node --check lib/buffer.js && node --check lib/validate.js && node --check lib/mark.js && node --check lib/crud.js && node --check lib/queue.js && node --check lib/alert.js && node --check lib/gate.js && node --test"
   },
   "peerDependencies": {
     "zod": "^4.6.5",

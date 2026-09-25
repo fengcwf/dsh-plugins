@@ -11,6 +11,8 @@
 //   （ToolRuntime NamedEntries 同名注册 throw「already registered」，跨插件同层撞名=工具面整体炸）；
 //   crud.js 仍导出 wikiRead 函数面（事务内部消费/测试）。steward 工具面 = kb_validate / kb_mark /
 //   wiki_write / wiki_delete / wiki_rename（proposal §6 设计全貌页 + T12 验收标准）。
+// ⚠️ T14（写入拦截 v1.5）：ctx.on('tools/pre-execute') 构造性强制面接线（lib/gate.js 判定矩阵）——
+//   决策仅 allow/ask/deny 无输入改写；**工具级构造性强制非安全边界**（bash 等文本绕过拦不住，边界见 gate.js 头注）。
 import os from 'node:os'
 import path from 'node:path'
 import { z } from 'zod'
@@ -19,9 +21,10 @@ import { createCaptureState, observe, stopping, turnEnded, isSubagentHeader } fr
 import { createBuffer, bumpStat, getStats, resetStats, appendCapture } from './buffer.js'
 import { createQueue, createTick } from './queue.js'
 import { createAlert } from './alert.js'
-import { kbValidate, RULES } from './validate.js'
+import { kbValidate, quickFindings, RULES } from './validate.js'
 import { kbMark } from './mark.js'
 import { wikiWrite, wikiDelete, wikiRename } from './crud.js'
+import { createWriteGate } from './gate.js'
 
 export const name = 'wiki-steward'
 export const inject = ['tools']
@@ -374,6 +377,16 @@ export function apply(ctx, rawConfig, opts = {}) {
   } else {
     warn(ctx, '[wiki-steward] 宿主 ctx.tools 缺失，kb_validate/kb_mark/wiki_write/wiki_delete/wiki_rename 未注册（fail-open）')
   }
+
+  // ---- 写入拦截（T14；tools/pre-execute 构造性强制面）----
+  // 判定矩阵与能力边界声明见 lib/gate.js 头注（工具级构造性强制，非安全边界）；快检缝=validate.quickFindings
+  // （①③④ 秒级子集）；决策仅 allow/ask/deny、无输入改写（PreToolDecision 契约）；异常/围栏不可判 fail-open 留痕。
+  // getConfig=热改现读（write.readOnly 热改面与工具层同源）。
+  ctx.on('tools/pre-execute', createWriteGate({
+    quickFindings,
+    getCfg: readCfg,
+    warn: (line) => warn(ctx, line),
+  }))
 
   // ---- 队列 / 告警 / timer 轻活（T13；delta-spec §2 队列条目/timer 契约）----
   // 三件轻活（Q10 定时分工）：队列补交（T9 enqueue 的治愈面）/ 索引增量刷新（钩子，缺省不归我管）/
