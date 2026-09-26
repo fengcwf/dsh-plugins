@@ -17,19 +17,25 @@
   ],
   "scripts": {
     "test": "node --test",
-    "check": "node --check lib/index.js && node --check lib/vault-ops.js && node --check lib/share.js && node --check lib/render.js && node --check lib/redact.js && node --test"
+    "check": "node --check lib/index.js && node --check lib/vault-ops.js && node --check lib/share.js && node --check lib/render.js && node --check lib/render-inline.js && node --check lib/web-routes.js && node --check lib/redact.js && node --test",
+    "build": "vite build --config web/vite.config.js",
+    "dev": "vite --config web/vite.config.js"
   },
   "peerDependencies": {
-    "zod": "^4.6.5",
     "@deepseek-ai/dsh-atomic-write": ">=0.1.7-rc.1",
     "@deepseek-ai/dsh-llm": ">=0.1.7-rc.1",
-    "@deepseek-ai/dsh-tools": ">=0.1.7-rc.1"
+    "@deepseek-ai/dsh-tools": ">=0.1.7-rc.1",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
-    "zod": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/zod",
     "@deepseek-ai/dsh-atomic-write": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-atomic-write",
     "@deepseek-ai/dsh-llm": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm",
-    "@deepseek-ai/dsh-tools": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-tools"
+    "@deepseek-ai/dsh-tools": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-tools",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "element-plus": "^2.14.6",
+    "vite": "^8.3.1",
+    "vue": "^3.5.43",
+    "zod": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/zod"
   },
   "dsh": {
     "bundle": {

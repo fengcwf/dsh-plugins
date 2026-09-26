@@ -2,7 +2,12 @@
 // 职责边界：本文件只做导出契约 + Config 定义 + apply 挂载缝位；
 // 业务模块（vault-ops/share/render/redact）与 web/ 前端构建物由后续任务（T2-T13）在此壳上叠加。
 // ⚠️ R13 教训：default 导出必须是 {inject, apply} 对象——工厂函数形态会被宿主静默忽略。
+import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
+import { registerWebRoutes } from './web-routes.js'
+
+// /ob/ UI 静态构建物默认位（web/dist 随包分发，见 web/README.md）
+const DEFAULT_DIST_DIR = fileURLToPath(new URL('../web/dist', import.meta.url))
 
 export const name = 'obsidian-web'
 
@@ -66,10 +71,9 @@ export function apply(ctx, rawConfig) {
     warn(ctx, `[obsidian-web] 配置校验失败，回退默认值（fail-open）：${detail}`)
   }
 
-  // ── OW-INV-8 鉴权缝（T2+ 每条 /ob/ REST 与 UI 路由逐条套用；本壳不注册任何路由）──────────
-  // handler 第一行必须先过官方鉴权缝（Host/Origin 围栏 + 签名 cookie，防 DNS rebinding/跨站）：
-  //   const rejection = ctx.connection.requestRejection(request)
-  //   if (rejection !== undefined) { res.statusCode = rejection; res.end(); return }  // 401/403
+  // ── OW-INV-8 鉴权缝（web-routes 每条 /ob/ REST 与 UI 路由逐条套用，handler 第一行）──────
+  //   const rejection = ctx.connection.requestRejection({ headers: request.headers })
+  //   → 401/403 直接回拒（Host/Origin 围栏 + 签名 cookie，防 DNS rebinding/跨站）。
   // secret 一律走 ctx.credentials（key 不进设置面）；对外签名场景另走 HMAC（先例 dsh-webhook-github）。
 
   // ── OW-INV-10 暴露面（主 UI 面零新增暴露）────────────────────────────────────────────
@@ -77,6 +81,18 @@ export function apply(ctx, rawConfig) {
   // 复用宿主既有鉴权边界）；分享服务（server.sharePort=3500）是唯一独立入口，生命周期独立可
   // 单独关停（T9 接线 + 关停演练），放行面恰 `/ob_share/<token>` 一处（PRODUCT OW-INV-2/6），
   // share.enabled=false 时全 404（fail-closed，PRODUCT OW-INV-1 默认不对外）。
+
+  // ── T2 接线：/ob/ UI 静态面 + JSON 读接口（树/读+live 渲染/反链）────────────────────────
+  // 缺宿主缝（独立测试/非宿主上下文）不炸不注册；有缝则挂载并把 dispose 交 ctx.effect 收敛。
+  if (typeof ctx?.webServer?.register === 'function' && typeof ctx?.connection?.requestRejection === 'function') {
+    // 热改语义：getConfig 每次请求现读当前配置（不启动时冻结）
+    const getConfig = () => {
+      const current = Config.safeParse(rawConfig)
+      return current.success ? current.data : Config.parse({})
+    }
+    const dispose = registerWebRoutes(ctx, getConfig, { distDir: DEFAULT_DIST_DIR })
+    if (typeof ctx.effect === 'function') ctx.effect(dispose)
+  }
 }
 
 // ⚠️ default 必须是对象（R13）：宿主读 default.inject / default.apply
