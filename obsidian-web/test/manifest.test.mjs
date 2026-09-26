@@ -7,12 +7,30 @@ import { fileURLToPath } from 'node:url'
 const readJson = (rel) => JSON.parse(fs.readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8'))
 const readText = (rel) => fs.readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8')
 
-test('零第三方运行时依赖：dependencies 不得存在（zod/dsh 全走 peer+dev 双声明）', () => {
+// 依赖白名单（2026-09-26 裁定续）：lib 零第三方被「渲染管线族白名单」显式豁免——
+// remark/unified/rehype/micromark 族及必要插件为白名单运行时依赖（ARC-1 精神=唯一源非自研）；
+// 白名单之外仍然零第三方。zod/dsh 共享包照旧 peer+dev 双声明。
+const PIPELINE_WHITELIST = new Set([
+  'unified',
+  'remark-parse',
+  'remark-rehype',
+  'remark-frontmatter',
+  'remark-gfm',
+  'remark-breaks',
+  'rehype-stringify',
+  'rehype-sanitize',
+])
+
+test('依赖白名单：dependencies 仅限渲染管线族（白名单外零第三方），zod/dsh 全走 peer+dev 双声明', () => {
   const pkg = readJson('../package.json')
-  assert.deepEqual(pkg.dependencies ?? {}, {})
+  assert.ok(Object.keys(pkg.dependencies ?? {}).length > 0, '渲染管线族应显式声明为运行时依赖')
+  for (const name of Object.keys(pkg.dependencies ?? {})) {
+    assert.ok(PIPELINE_WHITELIST.has(name), `白名单外运行时依赖：${name}（白名单=渲染管线族，2026-09-26 裁定）`)
+  }
   for (const name of ['zod', '@deepseek-ai/dsh-atomic-write', '@deepseek-ai/dsh-llm', '@deepseek-ai/dsh-tools']) {
     assert.ok(pkg.peerDependencies?.[name], `${name} 必须在 peerDependencies`)
     assert.ok(pkg.devDependencies?.[name], `${name} 必须在 devDependencies（独立测试副本）`)
+    assert.ok(!pkg.dependencies?.[name], `${name} 走 peer+dev 双声明，不得进 dependencies`)
   }
 })
 

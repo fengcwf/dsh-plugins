@@ -1,20 +1,35 @@
-// render — live 渲染管线（笔记渲染唯一源，OW-INV-6 消毒面雏形）
-// ARC-1：前端零第二套 markdown 实现/零自研 regex 渲染——web/ 只展示本模块输出的受控 HTML。
-// T2 最小版契约（renderMarkdown(md) → {html, toc}）：
-//   - 一切用户文本过 escapeHtml；输出只由白名单标签构成，raw HTML 零透传（<script> 注入负例必测）
-//   - heading id 服务端 slugify+去重（历史坑：id 必须服务端生成）；toc 形状锁定 {id,text,level}
-//   - YAML frontmatter 不进渲染面；wikilink/embed 出 data-target 龙链接卡（不渲染画布）
-// ⚠️ 最小面 = T2 停站：块级支持 heading/段落/软换行/列表/引用/围栏代码/hr/强调/链接/wikilink。
-//    unified/remark/rehype 管线与 callout/highlight/Excalidraw 等 Obsidian flavor 由 T4+ 归位扩展，
-//    出口形状 {html, toc} 保持不变（替换内部实现不破坏前端与分享页契约）。
-import { renderInline, escapeHtml, plainFromHtml } from './render-inline.js'
+// render — live 渲染管线（笔记渲染唯一源，OW-INV-6 消毒面）
+// T4 unified 管线归位（2026-09-26 白名单裁定续：渲染管线族 remark/unified/rehype/micromark
+// 及必要插件=显式白名单运行时依赖；ARC-1 精神=唯一源非自研）——去 T2 最小解析器限期停站。
+// 出口形状 {html, toc} 不变（T2 回归网 test/render.test.mjs 零改动，字节级实体口径同锁）。
+// 管线顺序（顺序敏感，历史坑都在注释里）：
+//   remark-parse → frontmatter（YAML 不进渲染面）→ gfm（表格/脚注/任务清单/删除线）
+//   → flavor（wikilink/embed 链接卡 + raw HTML→文本=转义原始 HTML）
+//   → breaks（软换行→<br>，Obsidian 断行语义）
+//   → heading toc（id 服务端 slugify+去重——历史坑：id 必须服务端生成；toc 形 {id,text,level} 锁定）
+//   → remark-rehype（link/image 句柄=URL 白名单 safeHref；clobberPrefix ''）
+//   → 形状归一（blockquote/li 内 <p> 解包、pre[data-lang]>code——T2 字节形）
+//   → rehype-sanitize 白名单消毒层（OW-INV-6 第二道：标签+属性+协议白名单，raw 节点剥除）
+//   → 实体口径占位回填（&gt; &quot; &#39;——escapeHtml 字节口径，search snippet 门同款）
+//   → 事件属性中和（on*= 的 = 出实体，防属性注入字面漏出）
+import { unified } from 'unified'
+import remarkParse from 'remark-parse'
+import remarkFrontmatter from 'remark-frontmatter'
+import remarkGfm from 'remark-gfm'
+import remarkBreaks from 'remark-breaks'
+import remarkRehype from 'remark-rehype'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
+import rehypeStringify from 'rehype-stringify'
+import { remarkObsidianFlavor, plainTextOf, obLinkHandler, obImageHandler } from './render-flavor.js'
 
 const CONTROL_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g
-const HR_RE = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/
-const HEADING_RE = /^(#{1,6})\s+(.+?)\s*#*\s*$/
-const FENCE_RE = /^\s*(`{3,}|~{3,})\s*(\S*)\s*$/
-const QUOTE_RE = /^\s*>/
-const LIST_ITEM_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/
+
+// ── 实体口径占位（hast-util-to-html 文本子集硬编码 ['<','&']——源码实测 textEntitySubset；
+//    '>' '\"' \"'\" 会裸出，与 escapeHtml 口径不符。输入端已 strip 控制符，占位零碰撞）────────
+const MASK = { '>': '\u0001', '"': '\u0002', "'": '\u0003' }
+const UNMASK = { '\u0001': '&gt;', '\u0002': '&quot;', '\u0003': '&#39;' }
+const maskValue = (s) => s.replace(/[>"']/g, (c) => MASK[c])
+const unmaskHtml = (html) => html.replace(/[\u0001\u0002\u0003]/g, (c) => UNMASK[c])
 
 /** 事件型属性串中和（OW-INV-6）：on*= 的 = 出实体，正文与属性值都防属性注入（幂等） */
 function neutralizeEventAttrs(html) {
@@ -49,132 +64,138 @@ function uniqueSlug(base, seen) {
   return candidate
 }
 
-/** YAML frontmatter（首行 --- 且有闭合 ---）整体不进渲染面 */
-function stripFrontMatter(lines) {
-  if (lines[0]?.trim() !== '---') return lines
-  for (let j = 1; j < lines.length; j += 1) {
-    if (lines[j].trim() === '---') return lines.slice(j + 1)
-  }
-  return lines
-}
-
-function serializeList(list) {
-  const tag = list.ordered ? 'ol' : 'ul'
-  const items = list.items.map((it) => `<li>${it.inline}${it.subs.map(serializeList).join('')}</li>`).join('')
-  return `<${tag}>${items}</${tag}>`
-}
-
-/** 缩进栈建嵌套列表（ul/ol/嵌套，li 内零 <p> 包裹） */
-function renderList(items) {
-  const root = { ordered: items[0].ordered, items: [] }
-  const stack = [{ indent: items[0].indent, list: root }]
-  for (const it of items) {
-    while (stack.length > 1 && it.indent < stack[stack.length - 1].indent) stack.pop()
-    const top = stack[stack.length - 1]
-    const node = { inline: it.inline, subs: [] }
-    if (it.indent > top.indent) {
-      const lastItem = top.list.items[top.list.items.length - 1]
-      const sub = { ordered: it.ordered, items: [node] }
-      lastItem.subs.push(sub)
-      stack.push({ indent: it.indent, list: sub })
-    } else {
-      top.list.items.push(node)
+// ── heading toc（mdast 级：id 落 hProperties，toc 形 {id,text,level} 锁定）────────
+function remarkHeadingToc(toc) {
+  return function headingTocAttacher() {
+    return (tree) => {
+      const seen = new Map()
+      const walk = (node) => {
+        if (node.type === 'heading') {
+          const text = plainTextOf(node)
+          const id = uniqueSlug(slugify(text), seen)
+          node.data = { ...node.data, hProperties: { ...node.data?.hProperties, id } }
+          toc.push({ id, text, level: node.depth })
+        }
+        for (const child of node.children ?? []) walk(child)
+      }
+      walk(tree)
     }
   }
-  return serializeList(root)
 }
 
-function isBlockStart(line) {
-  return HR_RE.test(line) || HEADING_RE.test(line) || FENCE_RE.test(line) || QUOTE_RE.test(line) || LIST_ITEM_RE.test(line)
-}
-
-function renderBlocks(lines, toc, seenSlugs) {
+// ── 形状归一（hast 级，T2 字节形）────────────────────────────────────────────────
+/** blockquote/li 内 <p> 解包为行内流（T2 形：引文/列表项零 <p> 包裹）；段落间以 <br><br> 续 */
+function unwrapParas(children) {
   const out = []
-  let i = 0
-  while (i < lines.length) {
-    const line = lines[i]
-    if (line.trim() === '') {
-      i += 1
-      continue
-    }
-
-    const fence = FENCE_RE.exec(line)
-    if (fence) {
-      const marker = fence[1]
-      const lang = fence[2] || ''
-      const body = []
-      i += 1
-      while (i < lines.length && lines[i].trim() !== marker) {
-        body.push(lines[i])
-        i += 1
+  let paras = 0
+  for (const child of children) {
+    if (child.type === 'element' && child.tagName === 'p') {
+      if (paras > 0) {
+        out.push({ type: 'element', tagName: 'br', properties: {}, children: [] })
+        out.push({ type: 'element', tagName: 'br', properties: {}, children: [] })
       }
-      i += 1 // 闭合围栏（缺闭合吃到文件尾，不越界）
-      out.push(`<pre data-lang="${escapeHtml(lang)}"><code>${escapeHtml(body.join('\n'))}</code></pre>`)
-      continue
+      paras += 1
+      out.push(...child.children)
+    } else {
+      out.push(child)
     }
-
-    const heading = HEADING_RE.exec(line)
-    if (heading) {
-      const level = heading[1].length
-      const inner = renderInline(heading[2])
-      const text = plainFromHtml(inner)
-      const id = uniqueSlug(slugify(text), seenSlugs)
-      toc.push({ id, text, level })
-      out.push(`<h${level} id="${escapeHtml(id)}">${inner}</h${level}>`)
-      i += 1
-      continue
-    }
-
-    if (HR_RE.test(line)) {
-      out.push('<hr />')
-      i += 1
-      continue
-    }
-
-    if (QUOTE_RE.test(line)) {
-      const quote = []
-      while (i < lines.length && QUOTE_RE.test(lines[i])) {
-        quote.push(lines[i].replace(/^\s*>\s?/, ''))
-        i += 1
-      }
-      out.push(`<blockquote>${renderInline(quote.join('\n'))}</blockquote>`)
-      continue
-    }
-
-    if (LIST_ITEM_RE.test(line)) {
-      const items = []
-      while (i < lines.length) {
-        const m = LIST_ITEM_RE.exec(lines[i])
-        if (!m) break
-        items.push({
-          indent: m[1].replace(/\t/g, '  ').length,
-          ordered: /\d/.test(m[2][0]),
-          inline: renderInline(m[3]),
-        })
-        i += 1
-      }
-      out.push(renderList(items))
-      continue
-    }
-
-    const para = []
-    while (i < lines.length && lines[i].trim() !== '' && !isBlockStart(lines[i])) {
-      para.push(lines[i])
-      i += 1
-    }
-    out.push(`<p>${renderInline(para.join('\n'))}</p>`)
   }
-  return out.join('\n')
+  return out
+}
+
+/** 代码块出 T2 形：<pre data-lang="lang"><code>（lang 从 language-* 类名归位，code 零属性） */
+function normalizePre(el) {
+  const code = el.children.find((c) => c.type === 'element' && c.tagName === 'code')
+  if (!code) return
+  const cls = code.properties?.className
+  const item = Array.isArray(cls) ? cls.find((x) => String(x).startsWith('language-')) : undefined
+  el.properties = { 'data-lang': item === undefined ? '' : String(item).slice('language-'.length) }
+  code.properties = {}
+}
+
+function rehypeNormalizeShape() {
+  return (tree) => {
+    const walk = (node) => {
+      if (node.type === 'element') {
+        if (node.tagName === 'blockquote' || node.tagName === 'li') node.children = unwrapParas(node.children)
+        if (node.tagName === 'pre') normalizePre(node)
+      }
+      for (const child of node.children ?? []) walk(child)
+    }
+    walk(tree)
+  }
+}
+
+/** 实体口径占位（序列化前）：文本值与属性值里 > \" ' 换占位（控制符），序列化后回填规范实体 */
+function rehypeEntityPlaceholders() {
+  return (tree) => {
+    const walk = (node) => {
+      if (node.type === 'text') node.value = maskValue(node.value)
+      if (node.properties) {
+        for (const [key, value] of Object.entries(node.properties)) {
+          if (typeof value === 'string') node.properties[key] = maskValue(value)
+          else if (Array.isArray(value)) node.properties[key] = value.map((v) => (typeof v === 'string' ? maskValue(v) : v))
+        }
+      }
+      for (const child of node.children ?? []) walk(child)
+    }
+    walk(tree)
+  }
+}
+
+// ── 消毒层（OW-INV-6 第二道：rehype-sanitize 白名单——标签/属性/协议，raw 剥除）────────
+const SANITIZE_SCHEMA = {
+  ...defaultSchema,
+  clobberPrefix: '', // id 服务端 slug 生成（字符集受控），保留字节形 id="hello-world"
+  tagNames: [
+    'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code',
+    'em', 'strong', 'del', 'hr', 'br', 'a', 'span', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
+    'sup', 'sub', 'section', 'input',
+  ],
+  attributes: {
+    '*': ['id'],
+    a: ['className', 'href', 'data-target', 'dataTarget', 'data-footnote-ref', 'dataFootnoteRef', 'data-footnote-backref', 'dataFootnoteBackref', 'ariaDescribedBy', 'ariaLabel'],
+    span: ['className', 'data-target', 'dataTarget'],
+    pre: ['data-lang', 'dataLang'],
+    ul: ['className'],
+    li: ['id', 'className'],
+    section: ['className', 'data-footnotes', 'dataFootnotes'],
+    h2: ['id', 'className'],
+    th: ['align'],
+    td: ['align'],
+    input: [['type', 'checkbox'], ['disabled', true], 'checked'],
+  },
+  protocols: { href: ['http', 'https', 'mailto'] },
+}
+
+function buildProcessor(toc) {
+  return unified()
+    .use(remarkParse)
+    .use(remarkFrontmatter)
+    .use(remarkGfm)
+    .use(remarkObsidianFlavor)
+    .use(remarkBreaks)
+    .use(remarkHeadingToc(toc))
+    .use(remarkRehype, {
+      clobberPrefix: '',
+      handlers: { link: obLinkHandler, image: obImageHandler },
+    })
+    .use(rehypeNormalizeShape)
+    .use(rehypeSanitize, SANITIZE_SCHEMA)
+    .use(rehypeEntityPlaceholders)
+    .use(rehypeStringify, { characterReferences: { useNamedReferences: true } })
 }
 
 /**
- * markdown → 受控 HTML + TOC（唯一渲染源出口）
+ * markdown → 受控 HTML + TOC（唯一渲染源出口，形不变）
  * @returns {{html: string, toc: Array<{id: string, text: string, level: number}>}}
  */
 export function renderMarkdown(markdown) {
   const source = typeof markdown === 'string' ? markdown.replace(/\r\n?/g, '\n').replace(CONTROL_CHARS, '') : ''
-  const lines = stripFrontMatter(source.split('\n'))
   const toc = []
-  const html = renderBlocks(lines, toc, new Map())
+  const processor = buildProcessor(toc)
+  const mdast = processor.parse(source)
+  const hast = processor.runSync(mdast)
+  const html = unmaskHtml(String(processor.stringify(hast)))
   return { html: neutralizeEventAttrs(html), toc }
 }

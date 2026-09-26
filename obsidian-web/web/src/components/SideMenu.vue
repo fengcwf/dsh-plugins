@@ -5,6 +5,7 @@ const emit = defineEmits(['select'])
 
 const items = [
   { key: 'read', label: '阅读' },
+  { key: 'edit', label: '编辑' },
   { key: 'search', label: '搜索' },
   { key: 'backlinks', label: '反链' },
 ]

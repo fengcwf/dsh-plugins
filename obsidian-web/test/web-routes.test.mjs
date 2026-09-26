@@ -4,6 +4,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { apply } from '../lib/index.js'
@@ -70,13 +71,15 @@ async function withServer(fn, opts = {}) {
 }
 
 // ── 注册面（API 形锁定到接线层）───────────────────────────────────────────────
-test('注册面锁定：apply 恰注册 4 条 exact API + /ob 重定向 + prefix /ob 静态面', () => {
+test('注册面锁定：apply 恰注册 6 条 exact API（含 T4 保存/渲染面）+ /ob 重定向 + prefix /ob 静态面', () => {
   const { routes, ctx } = makeCtx()
   apply(ctx, { vaultRoot: VAULT })
   assert.deepEqual([...routes.keys()].sort(), [
     'exact:/ob',
     'exact:/ob/api/backlinks',
     'exact:/ob/api/file',
+    'exact:/ob/api/render',
+    'exact:/ob/api/save',
     'exact:/ob/api/search',
     'exact:/ob/api/tree',
     'prefix:/ob',
@@ -86,7 +89,7 @@ test('注册面锁定：apply 恰注册 4 条 exact API + /ob 重定向 + prefix
 test('dispose 全量注销；无宿主缝（独立测试上下文）不炸不注册', () => {
   const { routes, ctx } = makeCtx()
   const dispose = registerWebRoutes(ctx, () => ({ vaultRoot: VAULT, ui: { pageSize: 50 } }), { distDir: DIST })
-  assert.equal(routes.size, 6)
+  assert.equal(routes.size, 8)
   dispose()
   assert.equal(routes.size, 0)
   assert.doesNotThrow(() => apply({}, { vaultRoot: VAULT }), '缺 webServer/connection 缝时跳过注册（非宿主上下文）')
@@ -268,5 +271,132 @@ test('静态面：/ob/ 出 index、资源出文件、/ob 302 → /ob/、穿越�
     }
     assert.equal((await fetch(`${base}/ob/nope.js`)).status, 404)
     // exact API 优先于 prefix：/ob/api/tree 不会被静态面吞掉（已在上面 200 JSON 佐证）
+  })
+})
+
+// ── /ob/api/save（T4 保存面：OW-INV-3 乐观锁 + 冲突三选）────────────────────
+const TMP_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '.tmp-routes')
+
+function tmpVault(t) {
+  fs.mkdirSync(TMP_ROOT, { recursive: true })
+  const dir = fs.mkdtempSync(path.join(TMP_ROOT, 'v'))
+  fs.cpSync(VAULT, dir, { recursive: true })
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  return dir
+}
+
+async function postJson(base, url, body) {
+  const res = await fetch(base + url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  return { status: res.status, body: await res.json() }
+}
+
+test('POST /ob/api/save 形状锁定：200 {data:{ok,...,diffUndo}} 且 GET /ob/api/file 读回一致', async (t) => {
+  const root = tmpVault(t)
+  const config = { vaultRoot: root, ui: { pageSize: 50 } }
+  await withServer(async (base) => {
+    const before = await (await fetch(`${base}/ob/api/file?path=notes%2Fa.md`)).json()
+    const { status, body } = await postJson(base, '/ob/api/save', {
+      path: 'notes/a.md',
+      content: '# 经 HTTP 保存\n',
+      expectedMtime: before.data.mtime,
+    })
+    assert.equal(status, 200)
+    assert.deepEqual(Object.keys(body).sort(), ['data'])
+    assert.deepEqual(Object.keys(body.data).sort(), ['diffUndo', 'etag', 'mtime', 'ok', 'path', 'size'])
+    assert.equal(body.data.ok, true)
+    assert.deepEqual(Object.keys(body.data.diffUndo).sort(), ['after', 'before'])
+    assert.equal(body.data.diffUndo.before.content, before.data.content, '保存前快照过线（diff undo 材料）')
+    const after = await (await fetch(`${base}/ob/api/file?path=notes%2Fa.md`)).json()
+    assert.equal(after.data.content, '# 经 HTTP 保存\n', '保存后读回一致')
+    assert.equal(after.data.etag, body.data.etag)
+  }, { config })
+})
+
+test('POST /ob/api/save 冲突：200 {data:{conflict:true, diffUndo:{before,incoming}}}（三选弹层材料）', async (t) => {
+  const root = tmpVault(t)
+  const config = { vaultRoot: root, ui: { pageSize: 50 } }
+  await withServer(async (base) => {
+    const before = await (await fetch(`${base}/ob/api/file?path=notes%2Fa.md`)).json()
+    const { status, body } = await postJson(base, '/ob/api/save', {
+      path: 'notes/a.md',
+      content: '我方内容',
+      expectedMtime: before.data.mtime - 1000,
+    })
+    assert.equal(status, 200)
+    assert.equal(body.data.conflict, true)
+    assert.deepEqual(Object.keys(body.data).sort(), ['conflict', 'diffUndo', 'path'])
+    assert.deepEqual(Object.keys(body.data.diffUndo).sort(), ['before', 'incoming'])
+    assert.equal(body.data.diffUndo.before.content, before.data.content)
+    assert.equal(body.data.diffUndo.incoming.content, '我方内容')
+    const disk = await (await fetch(`${base}/ob/api/file?path=notes%2Fa.md`)).json()
+    assert.equal(disk.data.content, before.data.content, '冲突零写入')
+  }, { config })
+})
+
+test('POST /ob/api/save 负例：无乐观锁 400（无乐观锁不落盘）/ 缺 path 400 / GET 405 / 穿越 400', async (t) => {
+  const root = tmpVault(t)
+  const config = { vaultRoot: root, ui: { pageSize: 50 } }
+  await withServer(async (base) => {
+    for (const body of [
+      { path: 'notes/a.md', content: 'x' },
+      { path: 'notes/a.md', content: 'x', expectedMtime: undefined, etag: undefined },
+      { content: 'x', expectedMtime: 1 },
+      { path: '../escape.md', content: 'x', expectedMtime: 1 },
+    ]) {
+      const { status, body: out } = await postJson(base, '/ob/api/save', body)
+      assert.equal(status, 400, JSON.stringify(body))
+      assert.equal(out.error.code, 'bad_request')
+    }
+    const get = await fetch(`${base}/ob/api/save`)
+    assert.equal(get.status, 405, 'GET /ob/api/save 405')
+    assert.equal((await get.json()).error.code, 'method_not_allowed')
+  }, { config })
+})
+
+test('POST /ob/api/save 鉴权缝（OW-INV-8）：写面同样过 requestRejection', async (t) => {
+  const root = tmpVault(t)
+  await withServer(async (base) => {
+    const { status, body } = await postJson(base, '/ob/api/save', { path: 'notes/a.md', content: 'x', expectedMtime: 1 })
+    assert.equal(status, 403)
+    assert.equal(body.error.code, 'forbidden')
+  }, { config: { vaultRoot: root, ui: { pageSize: 50 } }, rejection: 403 })
+})
+
+// ── /ob/api/render（T4 预览面：唯一渲染源 ARC-1，分屏预览不过前端解析）────────
+test('POST /ob/api/render 形状锁定：{data:{html,toc}} 与 render.js 出口同源一致', async () => {
+  await withServer(async (base) => {
+    const { status, body } = await postJson(base, '/ob/api/render', { content: '# 预览标题\n\n正文 **粗**' })
+    assert.equal(status, 200)
+    assert.deepEqual(Object.keys(body).sort(), ['data'])
+    assert.deepEqual(Object.keys(body.data).sort(), ['html', 'toc'])
+    assert.ok(body.data.html.includes('<h1'), body.data.html)
+    assert.ok(body.data.html.includes('<strong>粗</strong>'), body.data.html)
+    assert.deepEqual(body.data.toc.map((x) => x.text), ['预览标题'])
+  })
+})
+
+test('POST /ob/api/render 消毒面：XSS 向量过线零透传（预览与分享页同管线口径）', async () => {
+  await withServer(async (base) => {
+    const { body } = await postJson(base, '/ob/api/render', {
+      content: '<script>alert(1)</script>\n\n[x](javascript&#x3a;alert(1))\n\n<img src=x onerror=alert(1)>',
+    })
+    const html = body.data.html
+    assert.ok(!html.toLowerCase().includes('<script'), html)
+    assert.ok(!html.toLowerCase().includes('onerror='), html)
+    assert.ok(!/href="[^"]*javascript\s*:/i.test(html), html)
+  })
+})
+
+test('POST /ob/api/render 负例：缺 content 400 / 非字符串 400', async () => {
+  await withServer(async (base) => {
+    for (const body of [{}, { content: 42 }]) {
+      const { status, body: out } = await postJson(base, '/ob/api/render', body)
+      assert.equal(status, 400)
+      assert.equal(out.error.code, 'bad_request')
+    }
   })
 })

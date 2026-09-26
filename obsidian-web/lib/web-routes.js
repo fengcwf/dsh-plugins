@@ -1,12 +1,18 @@
-// web-routes — /ob/ 主 UI 面（T2 API 形，报告写明）
+// web-routes — /ob/ 主 UI 面（T2 API 形 + T4 保存/渲染面，报告写明）
 // 注册面（OW-INV-10：一律 ctx.webServer.register 挂 dsh web 同域 3080，零新增暴露面）：
-//   exact /ob/api/tree      GET → {data:{root,nodes}, total}          树列表（total=递归节点数）
-//   exact /ob/api/file      GET → {data:{path,content,mtime,etag,size,rendered:{html,toc}}}  读+live 渲染
-//   exact /ob/api/backlinks GET → {data:{path,backlinks:[{path,line,text}]}, total}
-//   exact /ob/api/search    GET → {data:{backend,degraded,query,results}, total}  全文+标题搜索（T3/OW-US-2）
-//   exact /ob               GET → 302 /ob/                            尾斜杠规整
-//   prefix /ob              GET → web/dist 静态构建物（index.html + assets）
+//   exact /ob/api/tree      GET  → {data:{root,nodes}, total}          树列表（total=递归节点数）
+//   exact /ob/api/file      GET  → {data:{path,content,mtime,etag,size,rendered:{html,toc}}}  读+live 渲染
+//   exact /ob/api/backlinks GET  → {data:{path,backlinks:[{path,line,text}]}, total}
+//   exact /ob/api/search    GET  → {data:{backend,degraded,query,results}, total}  全文+标题搜索（T3/OW-US-2）
+//   exact /ob/api/save      POST → {data:保存结果}      安全保存（T4/OW-INV-3：乐观锁+diff undo）
+//   exact /ob/api/render    POST → {data:{html,toc}}   live 渲染（T4 分屏预览；ARC-1 前端零 markdown 解析）
+//   exact /ob               GET  → 302 /ob/                            尾斜杠规整
+//   prefix /ob              GET  → web/dist 静态构建物（index.html + assets）
 // API 形（沿历史 obsidian-workbench 惯例）：成功 {data, total?}；失败 {error:{code,message}}。
+// 保存结果形（OW-INV-3 契约，lib/vault-ops.saveNote 同形）：
+//   成功 {ok,path,mtime,etag,size,diffUndo:{before,after}}（before=保存前快照=一键还原源）
+//   冲突 {conflict:true,path,diffUndo:{before,incoming}}（200 域内结果；三选：覆盖/重载/对比）
+//   ——冲突是业务结果非传输失败：走 {data} 信封（信封纪律：{data,...} 或 {error:{code,message}} 二选一）。
 // 搜索结果项形（键集锁定）：{path, line, snippet, score, title}；
 //   snippet=转义 HTML + <mark> 高亮（唯一标签，ARC-1 消毒口径）；
 //   score=排序权重（越大越优，仅用于结果排序，非匹配概率/百分比——detpecca 教训语义进描述/文案）；
@@ -17,11 +23,12 @@
 // 宿主 match 语义（dsh-host-webserver 源码实测）：exact 优先 → 最长前缀，prefix 匹配 p 与 p/<anything>。
 import fs from 'node:fs'
 import path from 'node:path'
-import { listTree, readNote, scanBacklinks } from './vault-ops.js'
+import { listTree, readNote, scanBacklinks, saveNote } from './vault-ops.js'
 import { renderMarkdown } from './render.js'
 import { createSearchService } from './search.js'
 
 const JSON_TYPE = 'application/json; charset=utf-8'
+const MAX_BODY_BYTES = 5 * 1024 * 1024 // 保存/渲染请求体上限（笔记级；超限拒）
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -68,11 +75,45 @@ function authGate(ctx, req, res) {
   return false
 }
 
-function methodGuard(req, res) {
-  if (req.method === 'GET' || req.method === 'HEAD') return true
-  res.setHeader('allow', 'GET, HEAD')
+function methodGuard(req, res, allowed) {
+  if (allowed.includes(req.method)) return true
+  res.setHeader('allow', allowed.join(', '))
   sendJson(res, 405, { error: { code: 'method_not_allowed', message: `不支持 ${req.method}` } })
   return false
+}
+
+function badRequest(message) {
+  return Object.assign(new Error(message), { code: 'bad_request' })
+}
+
+/** JSON 请求体读取（上限 MAX_BODY_BYTES；坏 JSON/超限一律 bad_request） */
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    let size = 0
+    let overflow = false
+    req.on('data', (chunk) => {
+      size += chunk.length
+      if (size > MAX_BODY_BYTES) {
+        overflow = true
+        chunks.length = 0
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      if (overflow) {
+        reject(badRequest(`请求体超限（>${MAX_BODY_BYTES} 字节）`))
+        return
+      }
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'))
+      } catch {
+        reject(badRequest('请求体不是合法 JSON'))
+      }
+    })
+    req.on('error', reject)
+  })
 }
 
 function countNodes(nodes) {
@@ -155,6 +196,39 @@ function redirectHandler(req, res) {
   res.end()
 }
 
+// ── /ob/api/save（T4 保存面：OW-INV-3 乐观锁 + 冲突三选 + diff undo）────────────
+function saveHandler(getConfig) {
+  return async (req, res) => {
+    try {
+      const body = await readJsonBody(req)
+      const relPath = body?.path
+      if (typeof relPath !== 'string' || relPath === '') throw badRequest('path 参数缺失')
+      if (typeof body?.content !== 'string') throw badRequest('content 必须是字符串')
+      const lock = {}
+      if (body.expectedMtime !== undefined) lock.expectedMtime = body.expectedMtime
+      if (body.etag !== undefined) lock.etag = body.etag
+      // 无乐观锁不落盘（OW-INV-3）：saveNote 校验，缺锁 400
+      const result = await saveNote(getConfig().vaultRoot, relPath, body.content, lock)
+      sendJson(res, 200, { data: result })
+    } catch (err) {
+      failRequest(res, err)
+    }
+  }
+}
+
+// ── /ob/api/render（T4 预览面：唯一渲染源 ARC-1——分屏预览/分享页同管线）─────────
+function renderHandler() {
+  return async (req, res) => {
+    try {
+      const body = await readJsonBody(req)
+      if (typeof body?.content !== 'string') throw badRequest('content 必须是字符串')
+      sendJson(res, 200, { data: renderMarkdown(body.content) })
+    } catch (err) {
+      failRequest(res, err)
+    }
+  }
+}
+
 /** 静态构建物服务（web/dist）：解码→围栏→realpath 前缀核（穿越/缺文件全不 200） */
 function staticHandler(distDir) {
   const base = path.resolve(distDir)
@@ -212,15 +286,17 @@ export function registerWebRoutes(ctx, getConfig, { distDir, search }) {
   const disposers = []
   const searchService = createSearchService(search ?? {})
   const add = (kind, routePath, handler) => disposers.push(ctx.webServer.register({ kind, path: routePath, handler }))
-  const wrap = (handler) => (req, res) => {
+  const wrap = (handler, allowed = ['GET', 'HEAD']) => (req, res) => {
     if (!authGate(ctx, req, res)) return
-    if (!methodGuard(req, res)) return
+    if (!methodGuard(req, res, allowed)) return
     handler(req, res)
   }
   add('exact', '/ob/api/tree', wrap(treeHandler(getConfig)))
   add('exact', '/ob/api/file', wrap(fileHandler(getConfig)))
   add('exact', '/ob/api/backlinks', wrap(backlinksHandler(getConfig)))
   add('exact', '/ob/api/search', wrap(searchHandler(getConfig, searchService)))
+  add('exact', '/ob/api/save', wrap(saveHandler(getConfig), ['POST']))
+  add('exact', '/ob/api/render', wrap(renderHandler(), ['POST']))
   add('exact', '/ob', wrap(redirectHandler))
   add('prefix', '/ob', wrap(staticHandler(distDir)))
   return () => {
