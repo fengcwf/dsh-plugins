@@ -7,7 +7,7 @@ const props = defineProps({
   selected: { type: String, default: '' },
   expanded: { type: Array, default: () => [] },
 })
-const emit = defineEmits(['select', 'delete'])
+const emit = defineEmits(['select', 'delete', 'download'])
 
 const treeRef = ref(null)
 const wrapRef = ref(null)
@@ -41,6 +41,11 @@ function onNodeClick(data) {
 function onDeleteClick(data) {
   emit('delete', { key: data.key, type: data.type })
 }
+
+// 下载入口（T7）：只上抛（业务=App 编排 + lib/download.js 落盘）；文件=md 流、目录=zip 流
+function onDownloadClick(data) {
+  emit('download', { key: data.key, type: data.type })
+}
 </script>
 
 <template>
@@ -58,6 +63,13 @@ function onDeleteClick(data) {
       <template #default="{ data }">
         <span class="ob-tree-node" :data-type="data.type">
           {{ data.label }}
+          <button
+            type="button"
+            class="ob-tree-dl"
+            :aria-label="`下载 ${data.key}`"
+            title="下载（单文件=原文件；目录=zip 打包）"
+            @click.stop="onDownloadClick(data)"
+          >下载</button>
           <button
             type="button"
             class="ob-tree-del"

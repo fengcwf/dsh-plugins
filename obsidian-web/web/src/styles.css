@@ -59,8 +59,9 @@ body {
   white-space: nowrap;
 }
 
-/* 删除入口（T6）：悬停/键盘聚焦显露，点击不触发选中（@click.stop） */
-.ob-tree-del {
+/* 删除入口（T6）+ 下载入口（T7）：悬停/键盘聚焦显露，点击不触发选中（@click.stop） */
+.ob-tree-del,
+.ob-tree-dl {
   margin-left: 6px;
   padding: 0 6px;
   border: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
@@ -74,7 +75,9 @@ body {
 }
 
 .ob-tree-node:hover .ob-tree-del,
-.ob-tree-del:focus-visible {
+.ob-tree-del:focus-visible,
+.ob-tree-node:hover .ob-tree-dl,
+.ob-tree-dl:focus-visible {
   opacity: 1;
 }
 

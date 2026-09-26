@@ -7,6 +7,7 @@
 //   exact /ob/api/save      POST → {data:保存结果}      安全保存（T4/OW-INV-3：乐观锁+diff undo）
 //   exact /ob/api/rename    POST → {data:rename 结果}   改名/移动多文件事务（T5/OW-US-5/OW-INV-4）
 //   exact /ob/api/delete    POST → {data:删除结果}      删除可逆（T6/OW-US-6/OW-INV-5：双确认+.trash）
+//   exact /ob/api/download  GET  → 文本流|zip 流       下载导出（T7/OW-US-7、OW-INV-9：限额超限拒+提示）
 //   exact /ob/api/render    POST → {data:{html,toc}}   live 渲染（T4 分屏预览；ARC-1 前端零 markdown 解析）
 //   exact /ob               GET  → 302 /ob/                            尾斜杠规整
 //   prefix /ob              GET  → web/dist 静态构建物（index.html + assets）
@@ -25,7 +26,10 @@
 // 宿主 match 语义（dsh-host-webserver 源码实测）：exact 优先 → 最长前缀，prefix 匹配 p 与 p/<anything>。
 import fs from 'node:fs'
 import path from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import { deletePath, listTree, readNote, renameNote, scanBacklinks, saveNote } from './vault-ops.js'
+import { planExport, MAX_FILES, MAX_BYTES } from './export.js'
+import { writeZipTo } from './zip.js'
 import { renderMarkdown } from './render.js'
 import { createSearchService } from './search.js'
 
@@ -48,6 +52,7 @@ const MIME = {
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
   '.txt': 'text/plain; charset=utf-8',
+  '.md': 'text/markdown; charset=utf-8',
 }
 
 function sendJson(res, status, body) {
@@ -252,6 +257,93 @@ function deleteHandler(getConfig) {
   }
 }
 
+// ── /ob/api/download（T7 下载导出：OW-US-7 / OW-INV-9）────────────────────────
+// 信封（T5/T6 惯例二选一定稿）：域结果（限额超限/回收站拒/门拒/缺文件）一律 200 {data:{ok:false, reason,
+//   message}}——UI 按 reason 决策；仅形参/围栏非法 400 {error:{code,message}}；成功=二进制流（非信封）：
+//   单文件=文本流（text/markdown 等 MIME），目录=zip 流（lib/zip.js）。
+// 限额（OW-INV-9）：预扫在产流之前（lib/export.js planExport）——超限拒 + 可解释提示，绝不截断导出。
+// 安全面：resolved abs 围栏 + lstat 门（symlink 不跟随）+ .trash 拒导出；Content-Disposition 文件名
+//   消毒（contentDisposition：控制字符剥除+引号/反斜杠换 '_' + filename* RFC 5987，防头注入）。
+// 留痕：symlink 跳过逐条 ctx.logger.warn + 计数头 x-ob-export-skipped（INV-15 风格）；
+//   流中途故障=断流不谎报（headersSent 后 res.destroy，绝不拼半截 zip 假装成功）。
+/** Content-Disposition 构造（头注入消毒）：控制字符（含 CR/LF/NUL）剥除、引号/反斜杠换 '_'；
+ *  ASCII 回退名 + filename*=UTF-8''RFC 5987 percent-encode（' 一并编码防 attr-char 断裂）。 */
+export function contentDisposition(filename) {
+  const clean = String(filename ?? '')
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .replace(/["\\]/g, '_')
+  const base = clean === '' ? 'download' : clean
+  const ascii = base.replace(/[^\x20-\x7E]/g, '_')
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(base).replace(/'/g, '%27')}`
+}
+
+function logWarn(ctx, line) {
+  try {
+    if (ctx?.logger?.warn) {
+      ctx.logger.warn(line)
+      return
+    }
+  } catch { /* logger 抛错不阻塞下载 */ }
+  console.warn(line)
+}
+
+function downloadHandler(ctx, getConfig) {
+  return async (req, res) => {
+    try {
+      const relPath = new URL(req.url, 'http://localhost').searchParams.get('path')
+      if (typeof relPath !== 'string' || relPath === '') throw badRequest('path 参数缺失')
+      const plan = planExport(getConfig().vaultRoot, relPath) // 域拒在产流前收口（throw bad_request=围栏非法）
+      if (!plan.ok) {
+        sendJson(res, 200, { data: plan })
+        return
+      }
+      for (const line of plan.skipped) logWarn(ctx, `[obsidian-web] 下载跳过：${line}`)
+      const headers = {
+        'content-disposition': contentDisposition(plan.downloadName),
+        'cache-control': 'no-store',
+        'x-ob-export-files': String(plan.totalFiles),
+        'x-ob-export-bytes': String(plan.totalBytes),
+        'x-ob-export-skipped': String(plan.skipped.length),
+      }
+      if (plan.kind === 'file') {
+        // 打包前 lstat 复核（TOCTOU 防御）：symlink 换入/被删 → 域拒，不产流
+        const st = fs.lstatSync(plan.entries[0].abs, { throwIfNoEntry: false })
+        if (st == null || !st.isFile()) {
+          sendJson(res, 200, { data: { ok: false, reason: 'not-a-file', message: `导出前复核失败（文件已非普通文件）：${relPath}` } })
+          return
+        }
+        headers['content-type'] = MIME[path.extname(plan.entries[0].name).toLowerCase()] ?? 'application/octet-stream'
+        headers['content-length'] = String(st.size)
+        res.writeHead(200, headers)
+        if (req.method === 'HEAD') {
+          res.end()
+          return
+        }
+        await pipeline(fs.createReadStream(plan.entries[0].abs), res)
+        return
+      }
+      headers['content-type'] = 'application/zip'
+      res.writeHead(200, headers)
+      if (req.method === 'HEAD') {
+        res.end()
+        return
+      }
+      await writeZipTo(res, plan.entries, {
+        onSkip: (entry) => logWarn(ctx, `[obsidian-web] 下载跳过（打包期 lstat 复核）：${entry.name}`),
+        maxFiles: MAX_FILES, // 打包期限额复核（OW-INV-9 TOCTOU 防御）：预扫后增长即断流，绝不静默超限出包
+        maxBytes: MAX_BYTES,
+      })
+      res.end()
+    } catch (err) {
+      if (res.headersSent) {
+        res.destroy(err) // 流中途故障：断流不谎报（绝不半截 zip 假成功）
+        return
+      }
+      failRequest(res, err)
+    }
+  }
+}
+
 // ── /ob/api/render（T4 预览面：唯一渲染源 ARC-1——分屏预览/分享页同管线）─────────
 function renderHandler() {
   return async (req, res) => {
@@ -334,6 +426,7 @@ export function registerWebRoutes(ctx, getConfig, { distDir, search }) {
   add('exact', '/ob/api/save', wrap(saveHandler(getConfig), ['POST']))
   add('exact', '/ob/api/rename', wrap(renameHandler(getConfig), ['POST']))
   add('exact', '/ob/api/delete', wrap(deleteHandler(getConfig), ['POST']))
+  add('exact', '/ob/api/download', wrap(downloadHandler(ctx, getConfig)))
   add('exact', '/ob/api/render', wrap(renderHandler(), ['POST']))
   add('exact', '/ob', wrap(redirectHandler))
   add('prefix', '/ob', wrap(staticHandler(distDir)))

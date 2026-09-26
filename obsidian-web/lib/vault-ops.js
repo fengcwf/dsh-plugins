@@ -33,7 +33,8 @@ function assertRelPath(relPath) {
   if (relPath.split('/').some((seg) => seg === '..')) throw fail('bad_request', 'path 拒绝穿越')
 }
 
-function resolveInRoot(root, relPath) {
+// 路径围栏单一来源（T7 导出面复用）：词法围栏 + resolve 后越界拒
+export function resolveInRoot(root, relPath) {
   assertRelPath(relPath)
   const base = path.resolve(root)
   const abs = path.resolve(base, relPath)

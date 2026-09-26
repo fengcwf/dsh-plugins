@@ -3,7 +3,8 @@
 // T4：分屏编辑（OW-US-3）+ 安全保存（OW-US-4/OW-INV-3）——保存状态机/防抖/对比全在
 //     web/src/lib/save-client.js 纯函数（单测锁形），本文件只编排 I/O 与面板。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { fetchTree, fetchFile, fetchBacklinks, fetchRender, saveFile, deleteFile } from './api.js'
+import { fetchTree, fetchFile, fetchBacklinks, fetchRender, saveFile, deleteFile, fetchDownload } from './api.js'
+import { runDownload, saveBlob } from './lib/download.js'
 import { buildTreeModel, selectNode, resolveNotePath } from './lib/tree.js'
 import { extractToc } from './lib/toc.js'
 import {
@@ -201,6 +202,12 @@ async function afterDeleted(deletedPath, warnings) {
   }
 }
 
+// ── 下载（T7/OW-US-7、OW-INV-9）：单 md 流/目录 zip——落盘与域拒分流全在 lib/download.js，这里只接线 ──
+function onDownloadNode(node) {
+  error.value = ''
+  runDownload(node.key, { fetchDownload, saveBlob, onError: (m) => { error.value = m } })
+}
+
 // 阅读视图状态独立持久化（delta-spec §3：与分屏编辑互不覆盖，key=ob:read-state）
 watch(activePanel, (panel) => {
   if (panel === 'edit') ensureSession()
@@ -233,6 +240,7 @@ onBeforeUnmount(() => {
       :expanded="state.expanded"
       @select="onSelect"
       @delete="onDeleteNode"
+      @download="onDownloadNode"
     />
     <main class="ob-center">
       <p v-if="error" class="ob-empty" role="alert">{{ error }}</p>
