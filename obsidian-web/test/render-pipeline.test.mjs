@@ -18,7 +18,7 @@ function assertWhitelisted(html, label) {
 /** OW-INV-6 属性白名单：输出属性名必须落在白名单（事件属性零裸出） */
 const ATTRS = /\s([a-zA-Z-][a-zA-Z0-9-]*)=/g
 const ATTR_WHITELIST = new Set([
-  'id', 'class', 'href', 'data-target', 'data-lang', 'align', 'type', 'checked', 'disabled',
+  'id', 'class', 'href', 'data-target', 'data-lang', 'align', 'type', 'checked', 'disabled', 'start',
   'data-footnote-ref', 'data-footnote-backref', 'aria-describedby', 'aria-label',
 ])
 function assertAttrsWhitelisted(html, label) {
@@ -82,6 +82,19 @@ test('复杂语法：任务清单（GFM）——勾选框 disabled 不可交互'
   assert.match(html, /<input[^>]*type="checkbox"[^>]*disabled/, `任务清单：${html}`)
   assert.ok(!/\son\w+=/i.test(html), '任务清单输出零事件属性')
   assertWhitelisted(html, '任务清单')
+})
+
+test('回归 fix#1：有序列表起始编号（ol start）不被消毒白名单剥——合法 CommonMark 形', () => {
+  const { html } = renderMarkdown('5. 五\n6. 六')
+  assert.ok(html.includes('<ol start="5">'), `有序列表起始编号丢失（白名单剥 start）：${html}`)
+  assert.ok(html.includes('<li>五</li>\n<li>六</li>'), `列表项形漂移：${html}`)
+  assertAttrsWhitelisted(html, 'ol start')
+  assertWhitelisted(html, 'ol start')
+  const nested = renderMarkdown('3. 甲\n\n   2. 嵌套').html
+  assert.ok(nested.includes('<ol start="3">'), `外层起始编号丢失：${nested}`)
+  assert.ok(nested.includes('<ol start="2">'), `嵌套列表起始编号丢失：${nested}`)
+  const one = renderMarkdown('1. 一\n2. 二').html
+  assert.ok(one.includes('<ol>') && !one.includes('start='), `start=1 不得输出 start 属性：${one}`)
 })
 
 // ── ③ OW-INV-6 全向量 + 3 变形负例 ───────────────────────────────────────────

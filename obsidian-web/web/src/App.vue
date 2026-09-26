@@ -7,7 +7,7 @@ import { fetchTree, fetchFile, fetchBacklinks, fetchRender, saveFile } from './a
 import { buildTreeModel, selectNode, resolveNotePath } from './lib/tree.js'
 import { extractToc } from './lib/toc.js'
 import {
-  createEditorSession, reduceSession, lockParamsFor, createDebouncer, SAVE_DEBOUNCE_MS, PREVIEW_DEBOUNCE_MS,
+  createEditorSession, reduceSession, createSaveCoordinator, createDebouncer, PREVIEW_DEBOUNCE_MS,
 } from './lib/save-client.js'
 import { loadReadState, saveReadState } from './lib/view-state.js'
 import SideMenu from './components/SideMenu.vue'
@@ -33,8 +33,16 @@ const centerRef = ref(null)
 // ── 编辑会话（T4）：状态机纯函数在 lib/save-client.js，这里只编排 I/O ────────────
 const session = ref(null)
 const previewHtml = ref('')
-const saveDebouncer = createDebouncer(() => triggerSave(), SAVE_DEBOUNCE_MS)
 const previewDebouncer = createDebouncer((content) => refreshPreview(content), PREVIEW_DEBOUNCE_MS)
+// 保存时序（fix#2 在途守卫+排队重存）锁形于 createSaveCoordinator（test/save-inflight.test.mjs 真验），这里只接线
+const saveCoordinator = createSaveCoordinator({
+  getSession: () => session.value,
+  setSession: (next) => { session.value = next },
+  saveFile,
+  fetchFile,
+  onFileSaved: (path, data) => { if (file.value?.path === path) file.value = data },
+})
+const triggerSave = () => saveCoordinator.triggerSave()
 
 const treeModel = computed(() => buildTreeModel(nodes.value))
 const tocItems = computed(() => extractToc(file.value?.rendered))
@@ -70,32 +78,10 @@ async function refreshPreview(content) {
   }
 }
 
-async function triggerSave() {
-  const current = session.value
-  if (!current) return
-  saveDebouncer.cancel()
-  const savedDraft = current.draft
-  session.value = reduceSession(session.value, { type: 'save_start' })
-  try {
-    const r = await saveFile(current.path, savedDraft, lockParamsFor(current))
-    if (r.data.conflict) {
-      // 冲突（OW-INV-3）：零写入，转三选弹层（覆盖/重载/对比）
-      session.value = reduceSession(session.value, { type: 'conflict', result: r.data })
-      return
-    }
-    session.value = reduceSession(session.value, { type: 'save_ok', result: r.data })
-    if (session.value.draft !== savedDraft) saveDebouncer.schedule() // 保存期间又改了 → 再存
-    const f = await fetchFile(current.path)
-    if (file.value?.path === current.path) file.value = f.data
-  } catch (e) {
-    session.value = reduceSession(session.value, { type: 'save_error', message: e.message })
-  }
-}
-
 function onEdit(content) {
   session.value = reduceSession(session.value, { type: 'edit', content })
   previewDebouncer.schedule(content) // 预览联动（服务端唯一渲染源）
-  saveDebouncer.schedule() // 保存防抖（delta-spec §3：≥500ms）
+  saveCoordinator.scheduleSave() // 保存防抖（delta-spec §3：≥500ms）
 }
 
 function onChoose(choice) {
@@ -176,7 +162,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   previewDebouncer.cancel()
   if (session.value && session.value.status !== 'clean') triggerSave()
-  saveDebouncer.cancel()
+  saveCoordinator.cancelScheduled()
 })
 </script>
 

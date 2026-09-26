@@ -158,6 +158,7 @@ const SANITIZE_SCHEMA = {
     span: ['className', 'data-target', 'dataTarget'],
     pre: ['data-lang', 'dataLang'],
     ul: ['className'],
+    ol: ['start', 'type'], // 有序列表起始编号/编号形（CommonMark 合法形；fix#1：曾被白名单剥掉静默丢号）
     li: ['id', 'className'],
     section: ['className', 'data-footnotes', 'dataFootnotes'],
     h2: ['id', 'className'],

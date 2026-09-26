@@ -112,3 +112,59 @@ export function createDebouncer(fn, ms) {
     },
   }
 }
+
+/**
+ * 保存编排器（fix#2 在途守卫 + 排队重存）：I/O 全注入（api.js 真实现），编排逻辑在此锁形单测
+ * （test/save-inflight.test.mjs）。App.vue 只接线会话状态与 I/O，不持有保存时序。
+ * 语义：
+ *   · 同一时刻至多一笔保存在途（inFlight 包住 saveFile 往返）；在途期间的触发不并飞，置 pending
+ *     排队，save_ok 后经防抖恰一次重存（重存钩子：pending || 草稿又改）。慢盘（Ruling 5：CIFS fsync
+ *     可超 2s）下并飞会用旧 expectedMtime 撞服务端陈旧锁 → 自我 conflict（fix#2 根因）。
+ *   · 守卫判据=inFlight 而非 session.status==='saving'：choose:'overwrite' 会先把状态置 'saving'
+ *     再触发保存（待保存≠在途），用 status 判据会把覆盖保存自己吞掉（卡死在 saving）。
+ *   · 冲突期间的 pending 由三选承接：overwrite 的重存即承接（triggerSave 起步即清 pending）；
+ *     reload 丢弃我方稿，pending 随下次保存自然清零。
+ */
+export function createSaveCoordinator({
+  getSession, setSession, saveFile, fetchFile, onFileSaved, debounceMs = SAVE_DEBOUNCE_MS,
+}) {
+  const debouncer = createDebouncer(() => { void triggerSave() }, debounceMs)
+  let inFlight = false
+  let pending = false
+
+  async function triggerSave() {
+    const current = getSession()
+    if (!current) return
+    if (inFlight) { pending = true; return } // 在途守卫：排队不并飞（fix#2）
+    pending = false // 本次保存承接排队触发
+    debouncer.cancel()
+    const savedDraft = current.draft
+    setSession(reduceSession(getSession(), { type: 'save_start' }))
+    try {
+      let r
+      try {
+        inFlight = true
+        r = await saveFile(current.path, savedDraft, lockParamsFor(current))
+      } finally {
+        inFlight = false
+      }
+      if (r.data.conflict) {
+        // 冲突（OW-INV-3）：零写入，转三选弹层（覆盖/重载/对比）
+        setSession(reduceSession(getSession(), { type: 'conflict', result: r.data }))
+        return
+      }
+      setSession(reduceSession(getSession(), { type: 'save_ok', result: r.data }))
+      if (pending || getSession().draft !== savedDraft) debouncer.schedule() // 保存期间又触发/又改了 → 恰一次重存
+      const f = await fetchFile(current.path)
+      onFileSaved?.(current.path, f.data)
+    } catch (e) {
+      setSession(reduceSession(getSession(), { type: 'save_error', message: e.message }))
+    }
+  }
+
+  return {
+    triggerSave,
+    scheduleSave: () => debouncer.schedule(),
+    cancelScheduled: () => debouncer.cancel(),
+  }
+}
