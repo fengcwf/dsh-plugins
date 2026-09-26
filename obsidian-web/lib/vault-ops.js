@@ -1,7 +1,8 @@
 // vault-ops — vault 读写/改名/移动/删除/导出（T2 = 读侧；T4 = 保存写侧；T5-T7/T12 叠加改名/删除/导出）
 // 契约（delta-specs/obsidian-web.md §2）：
 //   - 保存 saveNote(root, path, content, {expectedMtime|etag}) → {ok,...,diffUndo} | {conflict,diffUndo}（OW-INV-3 乐观锁）
-//   - 改名/移动 rename(from, to, {overwrite?}) → journal 事务 {ok, rolledBack, warnings}（OW-INV-4）
+//   - 改名/移动 renameNote(root, from, to, {overwrite?})（契约名 rename，delta-specs §2）→ journal
+//     多文件事务 {ok, rolledBack, warnings, changed[]}（OW-INV-4；详见文件尾 renameNote 段）
 //   - 删除走 .trash 可逆 + 双确认（OW-INV-5）；下载 zip ≤5000 文件/500MB 超限拒（OW-INV-9）
 // 写安全（T4 归位）：@deepseek-ai/dsh-atomic-write（writeFileAtomic + withFileLock 单文件 lease，
 //   wx 独占+rename+失败清残内建于该包——2026-09-26 裁定写安全套件=该包）+ 提交后 fsync(文件)+fsync(目录)
@@ -17,6 +18,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { writeFileAtomic, withFileLock } from '@deepseek-ai/dsh-atomic-write'
+import { planRewrite, scanMdLinkTargets } from './wikilink-rewrite.js'
 
 function fail(code, message) {
   const err = new Error(message)
@@ -186,7 +188,8 @@ function matchesTarget(targetNote, srcPath, rawTarget) {
   return tName !== '' && tName === nName // Obsidian basename 语义（大小写敏感，T11 归位折叠）
 }
 
-function collectMarkdownFiles(root) {
+/** 全 vault 文件清单（dot 条目与 symlink 不入清单；mdOnly=.md 改写扫描面） */
+function collectFiles(root, { mdOnly = false } = {}) {
   const out = []
   const walk = (abs, rel) => {
     let dirents
@@ -199,11 +202,15 @@ function collectMarkdownFiles(root) {
       if (d.name.startsWith('.')) continue
       const childRel = rel ? `${rel}/${d.name}` : d.name
       if (d.isDirectory()) walk(path.join(abs, d.name), childRel)
-      else if (d.isFile() && d.name.toLowerCase().endsWith('.md')) out.push(childRel)
+      else if (d.isFile() && (!mdOnly || d.name.toLowerCase().endsWith('.md'))) out.push(childRel)
     }
   }
   walk(path.resolve(root), '')
   return out.sort()
+}
+
+function collectMarkdownFiles(root) {
+  return collectFiles(root, { mdOnly: true })
 }
 
 export function scanBacklinks(root, relPath) {
@@ -225,4 +232,361 @@ export function scanBacklinks(root, relPath) {
   }
   backlinks.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.line - b.line))
   return { path: relPath, backlinks }
+}
+
+// ── renameNote：改名/移动 = 多文件事务（T5 / OW-US-5 / OW-INV-4；iamzcr 六坑 + 修复轮教训）────
+// 事务序（六坑①⑥）：改前 journal 快照 → ①目标副本（含自指改写）→ ②逐文件锁内 RMW 改写
+//   （wikilink 重写四设计 + INDEX.md 同在扫描面=INDEX 同事务）→ ③最后删源 → 失败整体回滚（journal 逆放）。
+//   顺序=零断链窗口保证（新名先在场、引用改完才删源）+ 不留空源残渣。
+// 六坑逐条：①多文件事务化 ②批量失败即中止回滚（未轮到文件零触碰）③锁内 RMW fresh-read 比对
+//   （快照后被改=并发冲突中止，绝不吞并发写）④rename 前查目标存在（缺省拒，显式 overwrite:true）
+//   + 目标槽位检查与写入同锁内（TOCTOU 秒级窗可静默覆盖并发者——修复轮教训）⑤frontmatter title
+//   内链接同改写（wikilink-rewrite 扫描面不豁免 frontmatter）⑥改写后删源。
+// 回滚纪律（修复轮教训）：回滚基=锁内 fresh 快照（并发者内容不被逆放成「不存在」）；
+//   回滚只逆放「我们写过且现状仍是我们的写」——写后被并发改/删的项跳过逆放+留痕（绝不吞并发写）。
+// 域结果形（kb_mark ok 键惯例）：{ok, rolledBack, warnings, changed[]}——成功/域拒绝/回滚态一律
+//   结果对象（UI 按 reason 决策）；仅形参/围栏非法 throw bad_request（沿 saveNote 惯例）。
+//   changed=调用结束后盘上与调用前不同的路径（回滚完成=空数组；回滚未完全=残留项）。
+// 测试缝（仅一个）：opts._onStage(stage)——事务阶段点回调（'after-snapshot' | 'after-dest' |
+//   'before-rewrite:<rel>' | 'after-rewrite:<rel>' | 'before-delete' | 'after-delete'）：
+//   回调内真写盘=并发注入、抛错=中途故障注入（检测逻辑全程真验真文件，非 mock）。
+// 边界声明：改写扫描面=全 vault .md 页面（wikilink/INDEX 零断链承诺面）；md 形链接 [x](y.md)
+//   不改写只留痕（承诺范围外）；目录改名拒（not-a-file）；realpath/symlink 围栏归 T12（词法围栏同前）。
+const TX_LOCK_WAIT_MS = 10_000
+export const DEFAULT_JOURNAL_MAX_BYTES = 64 * 1024 * 1024
+
+/** 改前快照（journal 事务单文件原语）：existed:false=逆放即删除的凭据 */
+async function journalSave(abs) {
+  try {
+    const content = await fs.promises.readFile(abs)
+    const st = await fs.promises.stat(abs)
+    return { file: abs, existed: true, content, mode: st.mode & 0o777 }
+  } catch (err) {
+    if (err?.code === 'ENOENT') return { file: abs, existed: false, content: null, mode: null }
+    throw err
+  }
+}
+
+/** 逆放（journalSave 的回滚半边）：existed → 原字节+mode 精确还原（fchmod 不受 umask 截损）；
+ *  !existed → 删除事后创建的文件。幂等：force 忽略 ENOENT。 */
+async function journalRollback(snap) {
+  if (snap.existed) {
+    await writeFileAtomic(snap.file, snap.content, snap.mode == null ? {} : { mode: snap.mode })
+    fsyncPath(snap.file) // ARC-4：fsync 文件
+    fsyncPath(path.dirname(snap.file), { dir: true }) // ARC-4：目录 fsync
+    if (snap.mode != null) {
+      const fh = await fs.promises.open(snap.file, 'r')
+      try {
+        await fh.chmod(snap.mode)
+      } finally {
+        await fh.close()
+      }
+    }
+    return
+  }
+  await fs.promises.rm(snap.file, { force: true })
+  fsyncPath(path.dirname(snap.file), { dir: true })
+}
+
+/** 事务写：原子写 + ARC-4 fsync（文件+目录） */
+async function writeAtomicFsync(abs, data, mode) {
+  await writeFileAtomic(abs, data, mode == null ? {} : { mode })
+  fsyncPath(abs)
+  fsyncPath(path.dirname(abs), { dir: true })
+}
+
+/** 事务条目：{snap, rel, written: Buffer|null（本事务写入内容）, deleted: bool} */
+const entryOf = (snap, rel) => ({ snap, rel, written: null, deleted: false })
+
+/**
+ * 事务逆放（逆序逐条）：只逆放「我们确实改过且现状仍是我们写的样子」的条目——写后被并发改/删的
+ * 项跳过逆放+留痕（六坑③：绝不吞并发写）；删除项被并发重建同样跳过。返回 {problems, unrestored}。
+ */
+async function rollbackAll(entries, warnings) {
+  const problems = []
+  const unrestored = []
+  for (const e of [...entries].reverse()) {
+    try {
+      let cur = null
+      try {
+        cur = await fs.promises.readFile(e.snap.file)
+      } catch (err) {
+        if (err?.code !== 'ENOENT') throw err
+      }
+      if (e.deleted) {
+        if (cur !== null) {
+          if (e.snap.existed && cur.equals(e.snap.content)) continue // 已被并发还原为原状
+          problems.push(`${e.rel} 删除后被并发重建，未逆放`)
+          warnings.push(`回滚跳过：${e.rel} 删除后被并发重建（保留并发内容）`)
+          unrestored.push(e.rel)
+          continue
+        }
+        await journalRollback(e.snap) // 逆放复活源文件
+        continue
+      }
+      if (e.written !== null) {
+        if (cur === null) {
+          problems.push(`${e.rel} 本事务写入后被并发删除，未逆放`)
+          warnings.push(`回滚跳过：${e.rel} 写后被并发删除`)
+          unrestored.push(e.rel)
+          continue
+        }
+        if (!cur.equals(e.written)) {
+          problems.push(`${e.rel} 写后被并发修改，未逆放（保留并发内容）`)
+          warnings.push(`回滚跳过：${e.rel} 写后被并发修改（保留并发内容）`)
+          unrestored.push(e.rel)
+          continue
+        }
+        await journalRollback(e.snap)
+        continue
+      }
+      // 未动条目：零逆放项（并发内容保留）
+    } catch (err) {
+      problems.push(`${e.rel} 逆放失败（${err?.code ?? err?.message ?? err}）`)
+      unrestored.push(e.rel)
+    }
+  }
+  return { problems, unrestored }
+}
+
+/** 锁内 fresh-read（六坑③ 比对面）：并发删除视同并发修改（错误诚实性） */
+async function readFresh(abs) {
+  try {
+    return await fs.promises.readFile(abs)
+  } catch (err) {
+    if (err?.code === 'ENOENT') {
+      const e = new Error('并发修改检测：锁内目标已不存在（被并发删除），中止事务')
+      e.reason = 'concurrent-modification'
+      throw e
+    }
+    throw err
+  }
+}
+
+const keyOf = (rel) => (rel.endsWith('.md') ? rel.slice(0, -3) : rel)
+const stemOf = (rel) => {
+  const base = rel.split('/').pop()
+  return base.endsWith('.md') ? base.slice(0, -3) : base
+}
+
+/** md 形目标 → vault 相对路径（'/…'=根锚定；否则相对源文件目录；null=外链/纯锚点） */
+function mdTargetRel(srcRel, rawTarget) {
+  const t = rawTarget.split('#')[0].trim()
+  if (t === '' || t.startsWith('#') || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(t)) return null
+  if (t.startsWith('/')) return t.slice(1)
+  const srcDir = path.posix.dirname(srcRel)
+  return path.posix.normalize(srcDir === '.' ? t : `${srcDir}/${t}`)
+}
+
+/**
+ * 改名/移动（同操作：to 可跨目录=移动）——多文件事务（OW-US-5 / OW-INV-4）。
+ * @param options {{overwrite?: boolean, journalMaxBytes?: number, _onStage?: (stage: string) => (void|Promise<void>)}}
+ * @returns {Promise<
+ *   | {ok: true, from, to, moved: true, selfChanges: number, changed: string[],
+ *      rewritten: [{path, changes}], skipped: [{file, line, target, reason}], rolledBack: false, warnings: string[]}
+ *   | {ok: false, from, to, reason, message, changed: string[], rewritten: [],
+ *      skipped: [{file, line, target, reason}], rolledBack: boolean, warnings: string[]}
+ * >}
+ *   reason ∈ 'same-path'|'not-found'|'not-a-file'|'target-exists'|'journal-limit'
+ *            |'concurrent-modification'|'transaction-failed'
+ *   域结果一律对象返回（不抛错）；仅形参/围栏非法 throw bad_request。
+ */
+export async function renameNote(root, from, to, options = {}) {
+  const opts = options ?? {}
+  if (typeof from !== 'string' || from === '') throw fail('bad_request', 'from 参数缺失')
+  if (typeof to !== 'string' || to === '') throw fail('bad_request', 'to 参数缺失')
+  const fromAbs = resolveInRoot(root, from) // 词法围栏（throw bad_request）
+  const toAbs = resolveInRoot(root, to)
+  const warnings = []
+  const skipped = []
+  const result = (over) => ({
+    ok: false, from, to, reason: '', message: '', changed: [], rewritten: [], skipped, rolledBack: false, warnings, ...over,
+  })
+
+  if (from === to || fromAbs === toAbs) return result({ reason: 'same-path', message: `from 与 to 相同：${from}` })
+  // 源 lstat 门（修复轮教训）：源节点必须普通文件（不解引用——symlink 源/目录/其他 → not-a-file）
+  const srcNode = await fs.promises.lstat(fromAbs).catch(() => null)
+  if (srcNode === null) return result({ reason: 'not-found', message: `不存在：${from}` })
+  if (!srcNode.isFile()) return result({ reason: 'not-a-file', message: `仅普通文件支持改名/移动（拒 symlink/目录/其他）：${from}` })
+  // 六坑④：rename 前查目标存在——缺省拒（防静默覆盖同名）；apply 段锁内重检=TOCTOU 同锁
+  const toNode = await fs.promises.lstat(toAbs).catch(() => null)
+  if (toNode !== null) {
+    if (opts.overwrite !== true) return result({ reason: 'target-exists', message: `目标已存在（显式 overwrite:true 才替换）：${to}` })
+    if (toNode.isDirectory()) return result({ reason: 'target-exists', message: `目标为目录，不覆盖：${to}` })
+  }
+  const parentStat = await fs.promises.stat(path.dirname(toAbs)).catch(() => null)
+  if (parentStat === null) return result({ reason: 'not-found', message: `目标父目录不存在（不自动建目录）：${path.posix.dirname(to)}` })
+  if (!parentStat.isDirectory()) return result({ reason: 'not-found', message: `目标父路径不是目录：${path.posix.dirname(to)}` })
+
+  // ── 计划：stem 歧义判据（全文件清单）+ .md 扫描面改写计划 + md 形链接留痕 ──
+  const allFiles = collectFiles(root)
+  const mdFiles = collectMarkdownFiles(root)
+  const oldKey = keyOf(from)
+  const newKey = keyOf(to)
+  const oldStem = stemOf(from)
+  const newStem = stemOf(to)
+  const oldStemUnique = allFiles.every((rel) => rel === from || rel === to || stemOf(rel) !== oldStem)
+  const newStemUnique = allFiles.every((rel) => rel === from || rel === to || stemOf(rel) !== newStem)
+  const ctxPlan = { oldKey, oldStem, oldStemUnique, newKey, newStem, newStemUnique }
+
+  const srcIsMd = from.endsWith('.md')
+  const fromBuf = await fs.promises.readFile(fromAbs)
+  const selfPlan = srcIsMd
+    ? planRewrite(fromBuf.toString('utf8'), ctxPlan)
+    : { text: null, changes: 0, skipped: [], notes: [] }
+
+  const rewrites = []
+  const noteMdRef = (rel, content) => {
+    for (const ref of scanMdLinkTargets(content)) {
+      const resolved = mdTargetRel(rel, ref.target)
+      const isSrcRel = rel === from
+      if (!isSrcRel && resolved !== null && (resolved === from || keyOf(resolved) === oldKey)) {
+        // 零断链承诺范围=wikilink/INDEX：md 形引用指向被改名文件 → 留痕不改写
+        warnings.push(`md 形链接指向被改名文件（零断链承诺范围=wikilink/INDEX，本卡不改写）：${rel} 第 ${ref.line} 行 ${ref.target}`)
+      } else if (isSrcRel && resolved !== null && !ref.target.trim().startsWith('/')) {
+        // 移动文件内相对 md 引用：相对基准随移动变化（本卡不重基）→ 留痕
+        warnings.push(`移动致相对 md 链接基准变化（本卡不重基）：${rel} 第 ${ref.line} 行 ${ref.target}`)
+      }
+    }
+  }
+  for (const rel of mdFiles) {
+    const isSrc = rel === from
+    if (rel === to) continue
+    const content = isSrc ? fromBuf.toString('utf8') : fs.readFileSync(path.resolve(root, rel), 'utf8')
+    noteMdRef(rel, content)
+    if (isSrc) continue
+    const plan = planRewrite(content, ctxPlan)
+    skipped.push(...plan.skipped.map((s) => ({ file: rel, ...s })))
+    for (const n of plan.notes) warnings.push(`${rel}：${n}`)
+    if (plan.changes > 0) rewrites.push({ rel, abs: path.resolve(root, rel), before: content, after: plan.text, changes: plan.changes })
+  }
+  skipped.push(...selfPlan.skipped.map((s) => ({ file: from, ...s })))
+  for (const n of selfPlan.notes) warnings.push(`${from}：${n}`)
+  for (const s of skipped) {
+    warnings.push(`歧义不动：${s.file} 第 ${s.line} 行 [[${s.target}]]（stem 多命中，返回不动+留痕）`)
+  }
+
+  // ── journal 快照（改前全量；stat 先行 + 预算——超限拒事务留痕，零写盘）──────────
+  const journalMaxBytes = Number.isFinite(opts.journalMaxBytes) && opts.journalMaxBytes > 0
+    ? opts.journalMaxBytes
+    : DEFAULT_JOURNAL_MAX_BYTES
+  const participants = [fromAbs, toAbs, ...rewrites.map((x) => x.abs)]
+  let budget = journalMaxBytes
+  for (const p of participants) {
+    let size = 0
+    try {
+      size = (await fs.promises.stat(p)).size
+    } catch (err) {
+      if (err?.code !== 'ENOENT') {
+        return result({ reason: 'transaction-failed', message: `快照前 stat 失败（未写盘、无逆放发生）：${err?.code ?? err}` })
+      }
+    }
+    budget -= size
+    if (budget < 0) {
+      warnings.push(`journal-limit：事务快照总量超上限 ${journalMaxBytes} 字节（大文件事务显式策略）`)
+      return result({ reason: 'journal-limit', message: `journal 快照总量超上限 ${journalMaxBytes} 字节：事务拒（未写盘、无逆放发生）` })
+    }
+  }
+  const snapOf = new Map()
+  for (const p of participants) {
+    try {
+      snapOf.set(p, await journalSave(p))
+    } catch (err) {
+      return result({ reason: 'transaction-failed', message: `改前快照失败（未写盘、无逆放发生）：${err?.code ?? err}` })
+    }
+  }
+
+  // ── 动手（事务）：①目标副本 → ②逐文件锁内 RMW 改写（INDEX 同事务）→ ③最后删源 ──
+  const entries = []
+  const entryFor = (abs, rel, snap) => {
+    const e = entryOf(snap ?? snapOf.get(abs), rel)
+    entries.push(e)
+    return e
+  }
+  const failTx = async (err) => {
+    const mutated = entries.some((e) => e.deleted || e.written !== null)
+    const { problems, unrestored } = await rollbackAll(entries, warnings)
+    const prefix = String(err?.message ?? err)
+    const reason = err?.reason ?? 'transaction-failed'
+    warnings.push(`事务中止（${reason}）：${prefix}`) // 冲突/故障必留痕（INV-15 风格）
+    if (!mutated) {
+      return result({ reason, message: `${prefix}；未写盘、无逆放发生`, rolledBack: false })
+    }
+    const rolledBack = problems.length === 0
+    return result({
+      reason,
+      message: rolledBack
+        ? `${prefix}；已整体逆放还原`
+        : `${prefix}；逆放未完全（${problems.join('；')}），文件可能处于中间态需人工核对`,
+      rolledBack,
+      changed: rolledBack ? [] : [...new Set(unrestored)].sort(),
+    })
+  }
+  try {
+    await opts._onStage?.('after-snapshot') // 测试缝：快照后、动手前（TOCTOU/并发注入点）
+    // ① 目标副本（六坑⑥：改写前新名已在场=零断链窗口）；写入进锁，锁内重检覆盖门（TOCTOU 同锁）
+    //    + 锁内 fresh 快照=回滚基（并发者内容不被逆放成「不存在」）
+    const destContent = srcIsMd ? Buffer.from(selfPlan.text, 'utf8') : fromBuf
+    await withFileLock(toAbs, async () => {
+      const existsNow = await fs.promises.lstat(toAbs).then(() => true, () => false)
+      if (existsNow && opts.overwrite !== true) {
+        const err = new Error(`目标已存在（显式 overwrite:true 才替换）：${to}`)
+        err.reason = 'target-exists'
+        throw err
+      }
+      const e = entryFor(toAbs, to, await journalSave(toAbs)) // 写入面才进 entries（拒绝面零回滚项）
+      await writeAtomicFsync(toAbs, destContent, srcNode.mode & 0o777)
+      e.written = destContent
+    }, { waitMs: TX_LOCK_WAIT_MS })
+    await opts._onStage?.('after-dest')
+
+    // ② 逐文件锁内 RMW（六坑③：锁内 fresh-read 比对，快照后被改=中止，绝不吞并发写）
+    for (const rw of rewrites) {
+      await opts._onStage?.(`before-rewrite:${rw.rel}`)
+      const e = entryFor(rw.abs, rw.rel)
+      const afterBuf = Buffer.from(rw.after, 'utf8')
+      await withFileLock(rw.abs, async () => {
+        const fresh = await readFresh(rw.abs)
+        if (!fresh.equals(Buffer.from(rw.before, 'utf8'))) {
+          const err = new Error(`并发修改检测：${rw.rel} 快照后被改写，中止事务`)
+          err.reason = 'concurrent-modification'
+          throw err
+        }
+        await writeAtomicFsync(rw.abs, afterBuf)
+        e.written = afterBuf
+      }, { waitMs: TX_LOCK_WAIT_MS })
+      await opts._onStage?.(`after-rewrite:${rw.rel}`)
+    }
+
+    // ③ 删源（六坑⑥：改写后删源；删前核对源未被并发改）
+    await opts._onStage?.('before-delete')
+    const srcEntry = entryFor(fromAbs, from)
+    await withFileLock(fromAbs, async () => {
+      const fresh = await readFresh(fromAbs)
+      if (!fresh.equals(fromBuf)) {
+        const err = new Error(`并发修改检测：${from} 快照后被改写，中止事务`)
+        err.reason = 'concurrent-modification'
+        throw err
+      }
+      await fs.promises.rm(fromAbs)
+      fsyncPath(path.dirname(fromAbs), { dir: true })
+    }, { waitMs: TX_LOCK_WAIT_MS })
+    srcEntry.deleted = true
+    await opts._onStage?.('after-delete')
+  } catch (err) {
+    return failTx(err)
+  }
+
+  return {
+    ok: true,
+    from,
+    to,
+    moved: true,
+    selfChanges: selfPlan.changes,
+    changed: [...new Set([to, ...rewrites.map((x) => x.rel), from])].sort(),
+    rewritten: rewrites.map((x) => ({ path: x.rel, changes: x.changes })),
+    skipped,
+    rolledBack: false,
+    warnings,
+  }
 }

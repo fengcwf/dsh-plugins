@@ -71,13 +71,14 @@ async function withServer(fn, opts = {}) {
 }
 
 // ── 注册面（API 形锁定到接线层）───────────────────────────────────────────────
-test('注册面锁定：apply 恰注册 6 条 exact API（含 T4 保存/渲染面）+ /ob 重定向 + prefix /ob 静态面', () => {
+test('注册面锁定：apply 恰注册 7 条 exact API（含 T4 保存/渲染面 + T5 改名面）+ /ob 重定向 + prefix /ob 静态面', () => {
   const { routes, ctx } = makeCtx()
   apply(ctx, { vaultRoot: VAULT })
   assert.deepEqual([...routes.keys()].sort(), [
     'exact:/ob',
     'exact:/ob/api/backlinks',
     'exact:/ob/api/file',
+    'exact:/ob/api/rename',
     'exact:/ob/api/render',
     'exact:/ob/api/save',
     'exact:/ob/api/search',
@@ -89,7 +90,7 @@ test('注册面锁定：apply 恰注册 6 条 exact API（含 T4 保存/渲染�
 test('dispose 全量注销；无宿主缝（独立测试上下文）不炸不注册', () => {
   const { routes, ctx } = makeCtx()
   const dispose = registerWebRoutes(ctx, () => ({ vaultRoot: VAULT, ui: { pageSize: 50 } }), { distDir: DIST })
-  assert.equal(routes.size, 8)
+  assert.equal(routes.size, 9)
   dispose()
   assert.equal(routes.size, 0)
   assert.doesNotThrow(() => apply({}, { vaultRoot: VAULT }), '缺 webServer/connection 缝时跳过注册（非宿主上下文）')
