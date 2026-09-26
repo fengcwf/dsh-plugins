@@ -1,6 +1,6 @@
 {
   "name": "kb-context",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DeepSeek Harness 的 Obsidian vault 上下文插件：触发词/实体命中后把 wiki 片段以 pre-step recall 注入会话，并提供 wiki_search / wiki_read 检索工具（FTS5 + grep 兜底，fail-open）",
   "type": "module",
   "main": "lib/index.js",

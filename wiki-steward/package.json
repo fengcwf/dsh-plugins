@@ -1,6 +1,6 @@
 {
   "name": "wiki-steward",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DeepSeek Harness 的 Obsidian vault 写侧插件：会话捕获双轨落盘、kb_validate 机械校验、kb_mark sha256 原子回写、wiki CRUD 围栏、失败幂等队列与告警（默认只读，写侧记账主动、动手被动）",
   "type": "module",
   "main": "lib/index.js",
