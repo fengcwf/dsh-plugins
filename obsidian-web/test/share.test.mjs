@@ -386,3 +386,50 @@ test('管理面：share.enabled=false → 创建拒 share_disabled（默认不�
 test('限流常量口径字面锁定：120/min（显式常量非幻数）', () => {
   assert.equal(RATE_LIMIT_PER_MINUTE, 120)
 })
+
+// ── T8 fix r2：C-1 同类残余（CIFS/SMB 别名归一缺口）──────────────────────────
+test('C-1 fix r2 别名 target 全拒：.ob-share./.trash./根 的 CIFS 别名形（尾随 [. ]/前导空格）经 createShare 面零建出', async (t) => {
+  const root = tmpVault(t)
+  // 别名体以真目录字面复现（Linux 合法字面名；CIFS/Windows/SMB 归一剥尾随 [. ]/前导空格后
+  // ≡.ob-share/.trash/vault 根——share.js M-5 注释自证该 FS 模型）：存在≠可分享，守卫必须词法先拒
+  fs.mkdirSync(path.join(root, '.ob-share.'), { recursive: true })
+  fs.writeFileSync(path.join(root, '.ob-share.', `${'A'.repeat(43)}.json`), '{}')
+  for (const alias of [' .TRASH.', '.trash.', '.TRASH. ']) {
+    fs.mkdirSync(path.join(root, alias), { recursive: true })
+    fs.writeFileSync(path.join(root, alias, 'x.md'), 'recovery\n')
+  }
+  for (const alias of ['. ', ' .', '.  ', ' . ']) fs.mkdirSync(path.join(root, alias), { recursive: true })
+  for (const target of ['.ob-share.', '.ob-share. ', ' .ob-share.', ' .TRASH.', '.trash.', '.TRASH. ']) {
+    await assert.rejects(
+      () => createShare(root, { target, role: 'read' }),
+      (err) => err.code === 'bad_request' && /内部目录/.test(err.message),
+      `内部段别名必须拒（内部目录可解释）：${JSON.stringify(target)}`,
+    )
+  }
+  for (const target of ['. ', ' .', '.  ', ' . ', '.']) {
+    await assert.rejects(
+      () => createShare(root, { target, role: 'read' }),
+      (err) => err.code === 'bad_request' && /具体/.test(err.message),
+      `根别名必须拒（须具体文件/目录）：${JSON.stringify(target)}`,
+    )
+  }
+  for (const target of ['.. ', ' ..', ' .. ', 'notes/.. ']) {
+    await assert.rejects(
+      () => createShare(root, { target, role: 'read' }),
+      (err) => err.code === 'bad_request',
+      `穿越别名必须拒：${JSON.stringify(target)}`,
+    )
+  }
+  const { total } = await listShares(root)
+  assert.equal(total, 0, '别名负例零落盘')
+})
+
+test('C-1 fix r2 正例不回退：中文名/点文件 target 照常可分享（别名归一只多拒，不误杀合法名）', async (t) => {
+  const root = tmpVault(t)
+  fs.writeFileSync(path.join(root, '中文笔记.md'), '# 中文\n')
+  fs.writeFileSync(path.join(root, '.hidden-note.md'), '# dot\n')
+  const zh = await createShare(root, { target: '中文笔记.md', role: 'read' })
+  assert.equal(zh.share.target, '中文笔记.md', '中文 target 正常建出')
+  const dot = await createShare(root, { target: '.hidden-note.md', role: 'read' })
+  assert.equal(dot.share.target, '.hidden-note.md', '点文件 target 正常建出（非根族/非内部段）')
+})

@@ -14,8 +14,11 @@
 //     失败路径付 dummy 代价（burnScrypt），不给「存在/不存在」时序侧信道
 //   - 持久化 <vaultRoot>/.ob-share/<token>.json（0600/0700；原子写+双 fsync=ARC-4 崩溃持久化；
 //     dot 目录不出树）；一次性消耗/计数与校验同一锁内落盘（withFileLock，10 并发恰 1 成功）
-//   - 自指围栏（C-1，T8 fix r1）：vault 根不可分享；guest subPath 与 target 逐段过 INTERNAL_SEGMENTS+
-//     isSensitiveName——.ob-share（分享存储自身）/.trash（恢复材料）/敏感名经分享面永不可达（fail-closed）
+//   - 自指围栏（C-1，T8 fix r1；fix r2 别名归一补强）：vault 根不可分享；guest subPath 与 target 逐段过
+//     INTERNAL_SEGMENTS+isSensitiveName——.ob-share（分享存储自身）/.trash（恢复材料）/敏感名经分享面
+//     永不可达（fail-closed）。不变量声明（fix r2 修正）：判定含 CIFS/SMB 别名归一（剥前导空格+尾随 [. ]、
+//     大小写不敏感）——'.ob-share.'/' .TRASH.'/' . ' 等别名形与本体同拒，「永不可经分享面触达」在别名
+//     FS 模型（Windows/SMB 剥尾随点/空格）下同样成立；根族/穿越段（'.'/'..'+尾随 [. ]/前导空格别名）同判。
 //   - guest 面 fail-closed：内部异常与不存在同形（不泄露存在性）；可解释错误只走管理面
 import crypto from 'node:crypto'
 import fs from 'node:fs'
@@ -42,9 +45,14 @@ const SENSITIVE_RE = SENSITIVE_GLOBS.map((glob) => new RegExp(
   `^${glob.split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 'i'))
 const TOKEN_RE = /^[A-Za-z0-9_-]{22,64}$/ // base64url 形（32B→43 字符）；零 '.'/'/'/'\' = 文件名/围栏安全
 const INTERNAL_SEGMENTS = new Set(['.trash', SHARE_DIR]) // 恢复材料/自身存储永不可分享
+/** CIFS/SMB 别名归一（M-5 同款，单一来源）：剥前导空格+尾随 [. ]；前导 '.' 绝不剥（.env 保形） */
+function normalizeSegAlias(seg) {
+  return String(seg).replace(/^[ ]+/, '').replace(/[. ]+$/, '')
+}
 function isInternalSegment(seg) {
-  // C-1：内部段判定大小写不敏感（CIFS 大小写不敏感面 .TRASH 与 .trash 同物——fail-closed 不给绕行）
-  return INTERNAL_SEGMENTS.has(String(seg).toLowerCase())
+  // C-1：内部段判定大小写不敏感（CIFS 大小写不敏感面 .TRASH 与 .trash 同物——fail-closed 不给绕行）；
+  // C-1 fix r2：同过别名归一（trim）——'.ob-share.'/' .TRASH.'/' .trash. ' 等尾随 [. ]/前导空格形与本体同拒
+  return INTERNAL_SEGMENTS.has(normalizeSegAlias(seg).toLowerCase())
 }
 const LOCK_WAIT_MS = 10_000
 const DAY_MS = 86_400_000
@@ -111,8 +119,9 @@ function burnScrypt() {
 export function isSensitiveName(name) {
   if (typeof name !== 'string' || name === '') return false
   // M-5（v1.1，T8 fix r1）：匹配前归一——前导空格剥除（' id_rsa' 形）+ 尾随 [. ] 剥除
-  // （CIFS/SMB 剥尾随点/空格：secrets.pem./'x.pem ' 与 secrets.pem 同一文件）；前导 '.' 绝不剥（.env 保形）
-  const normalized = name.replace(/^[ ]+/, '').replace(/[. ]+$/, '')
+  // （CIFS/SMB 剥尾随点/空格：secrets.pem./'x.pem ' 与 secrets.pem 同一文件）；前导 '.' 绝不剥（.env 保形）。
+  // fix r2：归一收敛 normalizeSegAlias 单一来源（isInternalSegment 同判）
+  const normalized = normalizeSegAlias(name)
   if (normalized === '') return false
   return SENSITIVE_RE.some((rx) => rx.test(normalized))
 }
@@ -250,8 +259,10 @@ function normalizeSub(subPath) {
   if (subPath.includes('\0') || subPath.includes('\\')) return null
   if (path.posix.isAbsolute(subPath) || /^[a-zA-Z]:/.test(subPath)) return null
   const segs = subPath.split('/')
-  if (segs.some((s) => s === '..')) return null
-  const kept = segs.filter((s) => s !== '' && s !== '.')
+  // fix r2：穿越判定过别名归一（trim 后再判 '..'）——'.. '/' ..'≡'..'（CIFS 剥尾随点/空格）同拒
+  if (segs.some((s) => s.trim() === '..')) return null
+  // 根族 filter（fix r2：trim 后再剔 '.'）——'.'/' '/' . '/' . .' 等别名段与 '.' 同族同剔（归 ''=目标本体）
+  const kept = segs.filter((s) => normalizeSegAlias(s) !== '')
   // C-1 自指围栏（T8 fix r1）：subPath 逐段过 INTERNAL_SEGMENTS+isSensitiveName——
   // .ob-share（分享存储自身）/.trash（恢复材料）/敏感名永不可经 guest subPath 触达（fail-closed）
   if (kept.some((s) => isInternalSegment(s) || isSensitiveName(s))) return null
@@ -268,8 +279,11 @@ export function resolveSharePath(share, subPath) {
   if (!share || typeof share !== 'object' || typeof share.target !== 'string' || share.target === '') return { ok: false }
   const target = share.target
   // C-1 纵深（T8 fix r1）：target 本体同样过围栏——vault 根（'.' 族）/内部段/敏感名/穿越/绝对/非法字符的
-  // 条目（含盘上被篡改/遗留条目）一律 {ok:false}，绝不自指暴露 .ob-share/.trash/敏感文件
-  const targetSegs = target.split('/').filter((s) => s !== '' && s !== '.')
+  // 条目（含盘上被篡改/遗留条目）一律 {ok:false}，绝不自指暴露 .ob-share/.trash/敏感文件。
+  // fix r2：穿越/根族判定同过 CIFS/SMB 别名归一（trim 后再判 '..'、再剔 '.' 族）——别名形与本体同判
+  const segList = target.split('/')
+  if (segList.some((s) => s.trim() === '..')) return { ok: false }
+  const targetSegs = segList.filter((s) => normalizeSegAlias(s) !== '')
   if (targetSegs.length === 0) return { ok: false }
   if (target.includes('\0') || target.includes('\\') || path.posix.isAbsolute(target) || /^[a-zA-Z]:/.test(target)) return { ok: false }
   if (targetSegs.some((s) => s === '..' || isInternalSegment(s) || isSensitiveName(s))) return { ok: false }
@@ -325,10 +339,11 @@ export async function createShare(root, params, options = {}) {
   if (typeof target !== 'string' || target === '') throw fail('bad_request', 'target 参数缺失')
   if (target.includes('\0') || target.includes('\\')) throw fail('bad_request', 'target 含非法字符')
   if (path.isAbsolute(target) || /^[a-zA-Z]:/.test(target)) throw fail('bad_request', 'target 必须是 vault 内相对路径')
-  if (target.split('/').some((seg) => seg === '..')) throw fail('bad_request', 'target 拒绝穿越')
+  if (target.split('/').some((seg) => seg.trim() === '..')) throw fail('bad_request', 'target 拒绝穿越')
   // C-1（T8 fix r1）：vault 根不可作分享目标——分享必须是具体的文件/目录；根分享会让 guest
-  // 触达 .ob-share（分享存储自身）/.trash（恢复材料）= 自指围栏缺口
-  const targetSegs = target.split('/').filter((seg) => seg !== '' && seg !== '.')
+  // 触达 .ob-share（分享存储自身）/.trash（恢复材料）= 自指围栏缺口。
+  // fix r2：穿越/根族判定同过 CIFS/SMB 别名归一（trim 后再剔 '.'）——'. '/' . '/' . .'≡根、别名形同拒
+  const targetSegs = target.split('/').filter((seg) => normalizeSegAlias(seg) !== '')
   if (targetSegs.length === 0) throw fail('bad_request', 'target 拒绝 vault 根（分享必须是具体的文件或目录）')
   const abs = resolveInRoot(root, target) // 围栏单一来源
   if (targetSegs.some((seg) => isInternalSegment(seg))) {

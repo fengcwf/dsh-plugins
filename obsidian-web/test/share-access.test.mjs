@@ -351,3 +351,61 @@ test('I-2 限流 fail-closed 信封：limiter.check 抛异常→同形 404（绝
   const noIp = await checkAccess(root, { token: share.token }, { limiter: throwing })
   assert.equal(noIp.status, 429, '缺 ip 先判 fail-closed 限流（429 统一形，口径不变）')
 })
+
+// ── T8 fix r2：C-1 同类残余（CIFS/SMB 别名归一缺口——guest 面/篡改面）──────────
+test('C-1 fix r2 篡改矩阵（别名形）：.ob-share./.trash./根 target × <token>.json subPath 全拒', async (t) => {
+  const tok = 'A'.repeat(43)
+  const entrySub = `${tok}.json`
+  const tampered = [
+    { target: '.ob-share.', targetType: 'dir', role: 'write', subs: [entrySub] },
+    { target: ' .trash.', targetType: 'dir', role: 'write', subs: [entrySub] },
+    { target: '. ', targetType: 'dir', role: 'write', subs: [`.ob-share./${entrySub}`, entrySub] },
+    { target: ' .', targetType: 'dir', role: 'write', subs: [`.ob-share./${entrySub}`, entrySub] },
+    { target: '.trash.', targetType: 'dir', role: 'write', subs: [entrySub] },
+  ]
+  for (const s of tampered) {
+    const share = { token: tok, ...s, oneShot: false, revoked: false }
+    for (const sub of s.subs) {
+      assert.equal(resolveSharePath(share, sub).ok, false, `篡改条目 ${JSON.stringify(s.target)} × ${JSON.stringify(sub)} resolve 必须拒`)
+      for (const op of OPERATIONS) {
+        assert.equal(shareAllowsOperation(share, op, sub), false, `篡改条目 ${JSON.stringify(s.target)} ${op} × ${JSON.stringify(sub)} 必须拒`)
+      }
+    }
+  }
+})
+
+test('C-1 fix r2 guest subPath 别名残余：.ob-share./.trash. 尾随 [. ]/前导空格形经 subPath 全拒（合法分享同判）', async (t) => {
+  const root = tmpVault(t)
+  const tok = 'A'.repeat(43)
+  const entrySub = `${tok}.json`
+  const shares = [
+    await shareOf(root, 'notes/a.md', 'read'),
+    await shareOf(root, 'notes/a.md', 'write', { password: 'pw' }),
+    await shareOf(root, 'notes', 'read'),
+    await shareOf(root, 'notes', 'write', { password: 'pw' }),
+    await shareOf(root, 'sub', 'write', { password: 'pw' }),
+  ]
+  const forbidden = [
+    `.ob-share./${entrySub}`, ` .ob-share./${entrySub}`, '.ob-share. ', '.OB-SHARE./x.json',
+    `.trash./${entrySub}`, ' .trash./x.md', 'sub/.ob-share./y.json', '.trash. ',
+    '. /.. ', '.. /x.md', ' .. /x.md', 'x.md/.. /y.md',
+  ]
+  for (const s of shares) {
+    for (const sub of forbidden) {
+      assert.equal(resolveSharePath(s, sub).ok, false, `${s.target}[${s.role}] resolve ${JSON.stringify(sub)} 必须拒`)
+      for (const op of OPERATIONS) {
+        assert.equal(shareAllowsOperation(s, op, sub), false, `${s.target}[${s.role}] ${op} ${JSON.stringify(sub)} 必须拒`)
+      }
+    }
+  }
+})
+
+test('C-1 fix r2 正例不回退：subPath 中文/点文件显式正例仍可达（别名归一不误杀）', async (t) => {
+  const root = tmpVault(t)
+  const dirShare = await shareOf(root, 'notes', 'read')
+  assert.deepEqual(resolveSharePath(dirShare, '中文/今日.md'), { ok: true, path: 'notes/中文/今日.md' }, '中文 subPath 正例')
+  assert.deepEqual(resolveSharePath(dirShare, '.hidden-note.md'), { ok: true, path: 'notes/.hidden-note.md' }, '点文件 subPath 正例')
+  assert.equal(shareAllowsOperation(dirShare, 'read', '中文/今日.md'), true, '中文 subPath read 放行')
+  assert.equal(shareAllowsOperation(dirShare, 'read', '.hidden-note.md'), true, '点文件 subPath read 放行')
+  assert.deepEqual(resolveSharePath(dirShare, '. /x.md'), { ok: true, path: 'notes/x.md' }, '根族别名段（. ）归一≡./ 同义，不误拒')
+})
