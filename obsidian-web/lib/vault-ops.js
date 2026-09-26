@@ -294,8 +294,9 @@ async function journalRollback(snap) {
   fsyncPath(path.dirname(snap.file), { dir: true })
 }
 
-/** 事务写：原子写 + ARC-4 fsync（文件+目录）；onBeforeFsync=「写后 fsync 前」测试缝断面 */
-async function writeAtomicFsync(abs, data, mode, onBeforeFsync) {
+/** 事务写：原子写 + ARC-4 fsync（文件+目录）；onBeforeFsync=「写后 fsync 前」测试缝断面。
+ *  export（T8）：share.js 持久化复用同一 fs-safe 写原语（ARC-4 崩溃持久化单一来源）。 */
+export async function writeAtomicFsync(abs, data, mode, onBeforeFsync) {
   await writeFileAtomic(abs, data, mode == null ? {} : { mode })
   await onBeforeFsync?.()
   fsyncPath(abs)
