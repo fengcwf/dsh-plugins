@@ -3,7 +3,8 @@
 //   local header 先行、crc/size 事后落数据描述符，逐条目内存有界（不整包缓冲、不整文件缓冲）；
 //   目录条目 method=0 显式条目（空目录不丢）；非 ASCII 名 flag 0x0800；version needed 20、
 //   version made by 0x031E（Unix，外部属性带 unix mode）。
-// zip64 豁免依据：导出限额 5000 文件/500MB（OW-INV-9）恒在 16 位条目计数/32 位尺寸字段内。
+// zip64 豁免依据=双上限保证（fix r1 修正 R3 措辞）：MAX_ENTRIES=65535（条目总数含目录）恒在 EOCD
+//   16 位条目计数内、MAX_BYTES=500MB 恒在 32 位尺寸字段内（MAX_FILES=5000 为文件面产品限额）。
 // 数据完整性：CRC32（IEEE 802.3 多项式查表）；测试侧以 unzip -t / zipinfo / python3 zipfile 三工具
 //   外部互验（test/zip.test.mjs），不自证。
 // 背压：写侧全走 out.write 返回值 + 'drain' 等待；文件数据经 stream/promises pipeline 注入 out（end:false）。
@@ -25,6 +26,7 @@ const VERSION_MADE_BY = 0x031e // Unix(3) + 3.0
 const MODE_FILE = 0o100644
 const MODE_DIR = 0o40755
 const DESC_LEN = 16
+const ZIP_MAX_ENTRIES = 0xffff // zip 格式（非 zip64）EOCD 条目计数 16 位上限
 
 /** CRC32（标准查表实现；测试以 python3 zlib.crc32 神谕交叉核） */
 const CRC_TABLE = (() => {
@@ -139,17 +141,28 @@ async function writeAsync(out, buf) {
  * @param entries [{name: '<zip 内 posix 路径>', type: 'dir'|'file', abs: string, mtime?: number}]
  *   - dir：写显式目录条目（name 自动补尾 '/'）
  *   - file：deflate 流式 + 数据描述符；pack 期 lstat 门——abs 非普通文件（symlink 换入/被删）跳过 + onSkip 留痕
- * @param options {{onSkip?: (entry) => void, maxFiles?: number, maxBytes?: number}}
- *   maxFiles/maxBytes=打包期限额复核（OW-INV-9 TOCTOU 防御：预扫后文件增长不再静默超限，超限即抛=断流不谎报）
+ * @param options {{onSkip?: (entry) => void, maxFiles?: number, maxBytes?: number, maxEntries?: number}}
+ *   maxFiles/maxBytes=打包期限额复核（OW-INV-9 TOCTOU 防御：预扫后文件增长不再静默超限，超限即抛=断流不谎报）；
+ *   maxEntries=条目数限额复核（含目录，fix r1/I1）——条目数组调用时定长，进循环前判即可"拒=零字节"（不产截断包）
  * @returns {Promise<{files, dirs, uncompressedBytes, compressedBytes}>}
  */
 export async function writeZipTo(out, entries, options = {}) {
+  // fix r1/I1 条目数复核（写第一字节前——绝不写完全部 local header 才抛=截断包+不透明错误）：
+  //   ① zip 格式上限 ZIP_MAX_ENTRIES=0xFFFF：无 zip64 表达不了 EOCD 计数（writer 后备守卫，说真话）；
+  //   ② options.maxEntries（含目录）：OW-INV-9 打包期复核（TOCTOU 双复核之流内一复；预扫在 export.js）。
+  if (entries.length > ZIP_MAX_ENTRIES) {
+    throw new Error(`zip 条目数超 ${ZIP_MAX_ENTRIES}（zip 格式 EOCD 条目计数 16 位上限，本包无 zip64）：${entries.length} —— 导出面由 MAX_ENTRIES 限额（含目录）预扫先行拒绝，此处为 writer 后备守卫`)
+  }
+  if (Number.isFinite(options.maxEntries) && entries.length > options.maxEntries) {
+    throw new Error(`zip 限额超限（打包期复核）：条目数 ${entries.length}（含目录）> 上限 ${options.maxEntries}`)
+  }
   const central = []
   const totals = { files: 0, dirs: 0, uncompressedBytes: 0, compressedBytes: 0 }
   let offset = 0
   for (const entry of entries) {
     const isDir = entry.type === 'dir'
-    const name = isDir && !entry.name.endsWith('/') ? `${entry.name}/` : entry.name
+    // fix r1/I2 条目名消毒（writer 后备，与 export.js 组名处同款幂等）：'\' → '_'（Windows zip-slip 向量）
+    const name = (isDir && !entry.name.endsWith('/') ? `${entry.name}/` : entry.name).replace(/\\/g, '_')
     const nameBuf = Buffer.from(name, 'utf8')
     const flags = (isDir ? 0 : FLAG_DESC) | (/[^\x00-\x7f]/.test(name) ? FLAG_UTF8 : 0)
     const { time, date } = dosDateTime(entry.mtime)
@@ -202,8 +215,9 @@ export async function writeZipTo(out, entries, options = {}) {
       throw new Error(`zip 限额超限（打包期复核）：已写 ${totals.files} 个文件 > 上限 ${options.maxFiles}`)
     }
   }
-  if (central.length > 0xffff) {
-    throw new Error(`zip 条目数超 65535（本包导出限额应已挡下）：${central.length}`)
+  if (central.length > ZIP_MAX_ENTRIES) {
+    // 后备守卫（正常路径不可达：入口已按 ZIP_MAX_ENTRIES 预拒）——说真话：这是 zip 格式计数上限，非"导出限额已挡"
+    throw new Error(`zip 条目数超 ${ZIP_MAX_ENTRIES}（zip 格式 EOCD 条目计数 16 位上限，本包无 zip64）：${central.length} —— 此为 writer 后备守卫，导出面由 MAX_ENTRIES 限额（含目录）先行拒绝`)
   }
   const cdStart = offset
   for (const e of central) {

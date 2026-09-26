@@ -28,7 +28,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { deletePath, listTree, readNote, renameNote, scanBacklinks, saveNote } from './vault-ops.js'
-import { planExport, MAX_FILES, MAX_BYTES } from './export.js'
+import { planExport, MAX_FILES, MAX_BYTES, MAX_ENTRIES } from './export.js'
 import { writeZipTo } from './zip.js'
 import { renderMarkdown } from './render.js'
 import { createSearchService } from './search.js'
@@ -261,7 +261,8 @@ function deleteHandler(getConfig) {
 // 信封（T5/T6 惯例二选一定稿）：域结果（限额超限/回收站拒/门拒/缺文件）一律 200 {data:{ok:false, reason,
 //   message}}——UI 按 reason 决策；仅形参/围栏非法 400 {error:{code,message}}；成功=二进制流（非信封）：
 //   单文件=文本流（text/markdown 等 MIME），目录=zip 流（lib/zip.js）。
-// 限额（OW-INV-9）：预扫在产流之前（lib/export.js planExport）——超限拒 + 可解释提示，绝不截断导出。
+// 限额（OW-INV-9）：预扫在产流之前（lib/export.js planExport）——超限拒 + 可解释提示，绝不截断导出；
+//   条目数（含目录，MAX_ENTRIES）与文件数/字节同限额（fix r1/I1：目录条目原不计限额→截断流缺口已闭）。
 // 安全面：resolved abs 围栏 + lstat 门（symlink 不跟随）+ .trash 拒导出；Content-Disposition 文件名
 //   消毒（contentDisposition：控制字符剥除+引号/反斜杠换 '_' + filename* RFC 5987，防头注入）。
 // 留痕：symlink 跳过逐条 ctx.logger.warn + 计数头 x-ob-export-skipped（INV-15 风格）；
@@ -332,6 +333,7 @@ function downloadHandler(ctx, getConfig) {
         onSkip: (entry) => logWarn(ctx, `[obsidian-web] 下载跳过（打包期 lstat 复核）：${entry.name}`),
         maxFiles: MAX_FILES, // 打包期限额复核（OW-INV-9 TOCTOU 防御）：预扫后增长即断流，绝不静默超限出包
         maxBytes: MAX_BYTES,
+        maxEntries: MAX_ENTRIES, // fix r1/I1 条目数（含目录）流内复核：双上限之一（zip64 豁免依据）
       })
       res.end()
     } catch (err) {

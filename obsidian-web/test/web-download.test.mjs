@@ -242,3 +242,53 @@ test('web/src/api.js fetchDownload：成功→blob+回读文件名；域拒→ok
     assert.ok(missing.message.length > 0, '域拒必须带可解释 message')
   })
 })
+
+// ── fix r1/I1：条目数超限 API 面（含目录）——拒形=200 JSON 信封，绝不截断传输 ─────────────
+test('条目数超限 API 面（含目录）：65536 条目 → 200 JSON limit-exceeded 信封（拒=不产流、不截断传输）', async (t) => {
+  await withServer(t, async (base, vault) => {
+    const dir = path.join(vault, 'many')
+    fs.mkdirSync(dir, { recursive: true })
+    for (let i = 0; i < 65536; i += 1) fs.mkdirSync(path.join(dir, `d${String(i).padStart(5, '0')}`))
+    const res = await fetch(`${base}/ob/api/download?path=${encodeURIComponent('many')}`)
+    assert.equal(res.status, 200)
+    assert.match(res.headers.get('content-type'), /application\/json/,
+      '拒=JSON 信封——绝不半截 zip 流（原形态：流出 2.4MB 后断流+不透明网络错误）')
+    const body = await res.json()
+    assert.equal(body.data.ok, false)
+    assert.equal(body.data.reason, 'limit-exceeded')
+    assert.equal(body.data.actual.entries, 65536, '目录条目必须计入限额（原缺口：目录不计）')
+    assert.equal(body.data.limit.entries, 65535)
+    assert.ok(body.data.message.includes('65536') && body.data.message.includes('65535'),
+      `提示可解释（实际值与上限都要在文案里）：${body.data.message}`)
+  }, { fresh: true })
+})
+
+// ── fix r1/I2：条目名消毒 API 面（zip-slip）——真 vault 文件名反斜杠 → _ 钉死 ─────────────
+test('条目名消毒 API 面（zip-slip）：vault 真反斜杠文件名 → 包内零反斜杠（Windows 解压器向量钉死）', async (t) => {
+  await withServer(t, async (base, vault) => {
+    fs.mkdirSync(path.join(vault, 'notes'), { recursive: true })
+    fs.writeFileSync(path.join(vault, 'notes', 'a\\b.md'), 'AB\n')
+    fs.writeFileSync(path.join(vault, 'notes', 'x\\..\\..\\evil.md'), 'EVIL\n')
+    fs.mkdirSync(path.join(vault, 'notes', 'p\\q'), { recursive: true })
+    fs.writeFileSync(path.join(vault, 'notes', 'p\\q', 'f.md'), 'F\n')
+    fs.writeFileSync(path.join(vault, 'notes', '..\\..\\x'), 'DOT\n') // '.' 前缀=dots 条目不出（R7），与反斜杠消毒双保险
+
+    const res = await fetch(`${base}/ob/api/download?path=${encodeURIComponent('notes')}`)
+    assert.equal(res.status, 200)
+    const zipPath = path.join(TMP_ROOT, 'slip.zip')
+    fs.writeFileSync(zipPath, Buffer.from(await res.arrayBuffer()))
+    assert.match(execFileSync('unzip', ['-t', zipPath], { encoding: 'utf8' }), /No errors detected/i)
+    const names = execFileSync('zipinfo', ['-1', zipPath], { encoding: 'utf8' }).trim().split('\n')
+    assert.ok(!names.some((n) => n.includes('\\')), `包内条目名零反斜杠（Windows zip-slip 向量钉死）：${JSON.stringify(names)}`)
+    assert.deepEqual(names, ['a_b.md', 'p_q/', 'p_q/f.md', 'x_.._.._evil.md'], '反斜杠全形态换 _（含目录名）')
+    assert.ok(!names.some((n) => n.includes('DOT') || n.startsWith('.._.._x')), 'dot 条目不出（R7）：..\\..\\x 不入包')
+
+    const extractDir = path.join(TMP_ROOT, 'slip-extract')
+    execFileSync('unzip', ['-q', '-o', '-d', extractDir, zipPath])
+    assert.equal(fs.readFileSync(path.join(extractDir, 'a_b.md'), 'utf8'), 'AB\n')
+    assert.equal(fs.readFileSync(path.join(extractDir, 'x_.._.._evil.md'), 'utf8'), 'EVIL\n')
+    assert.equal(fs.readFileSync(path.join(extractDir, 'p_q', 'f.md'), 'utf8'), 'F\n')
+    const top = fs.readdirSync(extractDir)
+    assert.ok(!top.some((n) => n.includes('\\')), `提取目录零反斜杠文件名：${JSON.stringify(top)}`)
+  }, { fresh: true })
+})

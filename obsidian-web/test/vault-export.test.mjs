@@ -1,6 +1,7 @@
 // 导出预扫契约测试（T7）：lib/export.js——OW-US-7 / OW-INV-9 限额预扫 + lstat 门 + .trash 口径。
 // 限额语义（定稿并测试锁定）：预扫计数/体量**超限拒绝 + 可解释提示**（不是截断导出——INV 字面"超限拒绝"）；
-//   限额常量显式 MAX_FILES=5000、MAX_BYTES=500MB；"≤5000 文件/500MB"=上限含（恰界通过，超 1 即拒）。
+//   限额常量显式 MAX_FILES=5000、MAX_BYTES=500MB、MAX_ENTRIES=65535（条目总数含目录，fix r1/I1）；
+//   "≤5000 文件/500MB/65535 条目"=上限含（恰界通过，超 1 即拒）。
 // 双限额恰界（任务必含）：4999/5000/5001 文件、499.9/500/500.1MB 六形态全走真文件真 stat（稀疏文件=零磁盘成本）。
 // 安全面（任务约束）：导出路径过 resolved abs 围栏 + lstat 门（symlink 不跟随——只导出真实文件，
 //   symlink 条目跳过+留痕）；.trash 恢复材料非工作面——拒（reason='in-trash'，含 './' 词法形态，沿 T6 修复轮口径）。
@@ -9,7 +10,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { planExport, MAX_FILES, MAX_BYTES } from '../lib/export.js'
+import { planExport, MAX_FILES, MAX_BYTES, MAX_ENTRIES } from '../lib/export.js'
 
 const TMP_ROOT = fileURLToPath(new URL('./.tmp-export', import.meta.url))
 
@@ -86,9 +87,10 @@ test('字节恰界：499.9MB/500MB 恰界通过（上限含）、500.1MB 拒 + �
     `超限提示必须可解释：${o.message}`)
 })
 
-test('限额口径字面锁定：MAX_FILES=5000、MAX_BYTES=500MB（500*1024*1024）——常量显式、非幻数', () => {
+test('限额口径字面锁定：MAX_FILES=5000、MAX_BYTES=500MB（500*1024*1024）、MAX_ENTRIES=65535（条目含目录，界内 zip 格式 16 位计数）——常量显式、非幻数', () => {
   assert.equal(MAX_FILES, 5000)
   assert.equal(MAX_BYTES, 500 * 1024 * 1024)
+  assert.equal(MAX_ENTRIES, 65535)
 })
 
 // ── symlink 不跟随：跳过 + 留痕（含指向 vault 外的链接零逃逸）────────────────────
@@ -190,4 +192,60 @@ test('围栏：形参缺失/绝对路径/穿越/越界 throw bad_request（沿 d
   for (const rel of ['', '../x', 'notes/../../x', '/etc/passwd', 'a\u0000b']) {
     assert.throws(() => planExport(vault, rel), (err) => err.code === 'bad_request', `必须拒：${JSON.stringify(rel)}`)
   }
+})
+
+// ── fix r1/I1：条目数恰界（含目录）——目录条目计入限额（原边界失守：目录不计→截断流）──────
+test('条目数恰界（含目录）：65536 条目拒 + 可解释提示（actual/limit.entries）、挪走 1 个→65535 恰界通过（上限含）', async (t) => {
+  const vault = makeVault(t)
+  const dir = path.join(vault, 'many')
+  fs.mkdirSync(dir, { recursive: true })
+  for (let i = 0; i < MAX_ENTRIES + 1; i += 1) fs.mkdirSync(path.join(dir, `d${String(i).padStart(5, '0')}`))
+  fs.mkdirSync(path.join(vault, 'stash'), { recursive: true })
+
+  const over = planExport(vault, 'many')
+  assert.equal(over.ok, false)
+  assert.equal(over.reason, 'limit-exceeded')
+  assert.equal(over.actual.entries, MAX_ENTRIES + 1, '目录条目必须计入（原缺口：目录不计限额）')
+  assert.equal(over.limit.entries, MAX_ENTRIES)
+  assert.ok(over.message.includes(String(MAX_ENTRIES + 1)) && over.message.includes(String(MAX_ENTRIES)),
+    `超限提示必须可解释（实际 ${MAX_ENTRIES + 1} 与上限 ${MAX_ENTRIES} 都要在文案里）：${over.message}`)
+
+  // 恰界 65535（=上限含）：挪走 1 个即过
+  fs.renameSync(path.join(dir, 'd00000'), path.join(vault, 'stash', 'd00000'))
+  const exact = planExport(vault, 'many')
+  assert.equal(exact.ok, true, '65535 条目=上限含，应通过')
+  assert.equal(exact.totalEntries, MAX_ENTRIES)
+})
+
+// ── fix r1/I2：条目名消毒（组名处）——反斜杠 → _（Windows zip-slip 向量钉死）────────────
+test('条目名消毒：反斜杠 → _（..\\..\\x 单段名/含反斜杠目录名全形态）；plan 条目名零反斜杠', async (t) => {
+  const vault = makeVault(t)
+  touch(path.join(vault, 'dir', 'a\\b.md'), 'AB\n')
+  touch(path.join(vault, 'dir', 'x\\..\\..\\evil.md'), 'EVIL\n')
+  fs.mkdirSync(path.join(vault, 'dir', 'p\\q'), { recursive: true })
+  touch(path.join(vault, 'dir', 'p\\q', 'f.md'), 'F\n')
+
+  const plan = planExport(vault, 'dir')
+  assert.equal(plan.ok, true)
+  assert.deepEqual(plan.entries.map((x) => x.name), ['a_b.md', 'p_q/', 'p_q/f.md', 'x_.._.._evil.md'])
+  for (const e of plan.entries) {
+    assert.ok(!e.name.includes('\\'), `条目名零反斜杠（Windows zip-slip 向量钉死）：${JSON.stringify(e.name)}`)
+  }
+})
+
+// ── fix r1/M4：stat 健壮化——目录内条目 stat 失败（消失/名不可寻址）→ 跳过+留痕，非 500 ────
+test('stat 健壮化：非法 UTF-8 文件名（stat 必失败）→ 跳过 + 留痕（symlink 同款语义），预扫不抛 500', async (t) => {
+  const vault = makeVault(t)
+  const dir = path.join(vault, 'dir')
+  touch(path.join(dir, 'ok.md'), 'ok\n')
+  // 真非法 UTF-8 文件名（0xFF 字节）：readdir 只见 U+FFFD 替换名，stat 该名必 ENOENT（原无 catch→500）
+  const badAbs = Buffer.concat([Buffer.from(`${dir}/`), Buffer.from([0x62, 0xff]), Buffer.from('.md')])
+  fs.writeFileSync(badAbs, 'bad\n')
+
+  const plan = planExport(vault, 'dir')
+  assert.equal(plan.ok, true, 'stat 失败不许抛（原 500 路径）')
+  assert.deepEqual(plan.entries.filter((x) => x.type === 'file').map((x) => x.name), ['ok.md'], '真实文件照常入列')
+  assert.equal(plan.skipped.length, 1, `stat 失败必须留痕：${JSON.stringify(plan.skipped)}`)
+  assert.ok(plan.skipped[0].includes('跳过'), `留痕语义与 symlink 同款：${plan.skipped[0]}`)
+  assert.ok(plan.skipped[0].includes('\uFFFD'), `留痕带条目名（U+FFFD 替换形态）：${JSON.stringify(plan.skipped[0])}`)
 })
