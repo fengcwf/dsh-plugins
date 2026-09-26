@@ -59,6 +59,25 @@ body {
   white-space: nowrap;
 }
 
+/* 删除入口（T6）：悬停/键盘聚焦显露，点击不触发选中（@click.stop） */
+.ob-tree-del {
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.ob-tree-node:hover .ob-tree-del,
+.ob-tree-del:focus-visible {
+  opacity: 1;
+}
+
 .ob-center {
   min-width: 0;
   overflow: auto;
@@ -269,6 +288,20 @@ body {
 
 /* ── 冲突三选弹层（T4/OW-INV-3）与 diff 对比面（盘上 vs 我方）── */
 .ob-conflict-lead { margin: 0 0 12px; }
+
+.ob-delete-lead {
+  margin: 0 0 8px;
+}
+
+.ob-delete-path {
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.ob-delete-error {
+  margin: 8px 0 0;
+  color: var(--dsw-alias-text-danger, #c45656);
+}
 
 .ob-conflict-actions {
   display: flex;

@@ -6,6 +6,7 @@
 //   exact /ob/api/search    GET  → {data:{backend,degraded,query,results}, total}  全文+标题搜索（T3/OW-US-2）
 //   exact /ob/api/save      POST → {data:保存结果}      安全保存（T4/OW-INV-3：乐观锁+diff undo）
 //   exact /ob/api/rename    POST → {data:rename 结果}   改名/移动多文件事务（T5/OW-US-5/OW-INV-4）
+//   exact /ob/api/delete    POST → {data:删除结果}      删除可逆（T6/OW-US-6/OW-INV-5：双确认+.trash）
 //   exact /ob/api/render    POST → {data:{html,toc}}   live 渲染（T4 分屏预览；ARC-1 前端零 markdown 解析）
 //   exact /ob               GET  → 302 /ob/                            尾斜杠规整
 //   prefix /ob              GET  → web/dist 静态构建物（index.html + assets）
@@ -24,7 +25,7 @@
 // 宿主 match 语义（dsh-host-webserver 源码实测）：exact 优先 → 最长前缀，prefix 匹配 p 与 p/<anything>。
 import fs from 'node:fs'
 import path from 'node:path'
-import { listTree, readNote, renameNote, scanBacklinks, saveNote } from './vault-ops.js'
+import { deletePath, listTree, readNote, renameNote, scanBacklinks, saveNote } from './vault-ops.js'
 import { renderMarkdown } from './render.js'
 import { createSearchService } from './search.js'
 
@@ -235,6 +236,22 @@ function renameHandler(getConfig) {
   }
 }
 
+// ── /ob/api/delete（T6 删除可逆：OW-US-6 / OW-INV-5）────────────────────────
+// 结果形（lib/vault-ops.deletePath 同形，kb_mark ok 键惯例）：删除域结果（成功/双确认拒/门拒/落点失败）
+//   一律 200 {data:{ok, trashPath, warnings}}——UI 按 ok/reason 决策；仅形参/围栏非法 400 {error}。
+//   双确认：confirm=目标相对路径全等复述（服务端确认检查先于一切副作用，缺省拒——见 deletePath）。
+function deleteHandler(getConfig) {
+  return async (req, res) => {
+    try {
+      const body = await readJsonBody(req)
+      const result = await deletePath(getConfig().vaultRoot, body?.path, { confirm: body?.confirm })
+      sendJson(res, 200, { data: result })
+    } catch (err) {
+      failRequest(res, err)
+    }
+  }
+}
+
 // ── /ob/api/render（T4 预览面：唯一渲染源 ARC-1——分屏预览/分享页同管线）─────────
 function renderHandler() {
   return async (req, res) => {
@@ -316,6 +333,7 @@ export function registerWebRoutes(ctx, getConfig, { distDir, search }) {
   add('exact', '/ob/api/search', wrap(searchHandler(getConfig, searchService)))
   add('exact', '/ob/api/save', wrap(saveHandler(getConfig), ['POST']))
   add('exact', '/ob/api/rename', wrap(renameHandler(getConfig), ['POST']))
+  add('exact', '/ob/api/delete', wrap(deleteHandler(getConfig), ['POST']))
   add('exact', '/ob/api/render', wrap(renderHandler(), ['POST']))
   add('exact', '/ob', wrap(redirectHandler))
   add('prefix', '/ob', wrap(staticHandler(distDir)))

@@ -622,3 +622,145 @@ export async function renameNote(root, from, to, options = {}) {
     warnings,
   }
 }
+
+// ── 删除（T6）：.trash 可逆删除 + 双确认（OW-US-6 / OW-INV-5）────────────────────────
+const TRASH = '.trash'
+const TRASH_CANDIDATE_LIMIT = 10_000
+
+/** 冲突改名序号位：x.md→x.1.md；无扩展名 x→x.1（stem 保持、扩展名回填，绝不覆盖既有名） */
+function numberedName(name, n) {
+  if (n === 0) return name
+  const ext = path.posix.extname(name)
+  const stem = ext === '' ? name : name.slice(0, name.length - ext.length)
+  return `${stem}.${n}${ext}`
+}
+
+/**
+ * trash 落点认领（wiki-steward 修复轮教训同款语义，独立实现、不 import）：
+ *  - 冲突改名防覆盖：落点被占 → x.md→x.1.md（序号递增；祖先段被非目录占用同样改名该段）
+ *  - O_EXCL 占位防覆盖窄窗：『taken 检查→rename』之间的并发抢建窗口由独占占位闭死——
+ *    文件占位 'wx' / 目录占位 mkdir 独占，rename 顶替自家占位=唯一落点；
+ *    并发者同名抢建一律 EEXIST → 自己按冲突改名走下一位（双方内容都活）。
+ *  - 失败清残只清本调用占位（外来/既有内容零误伤）——见 deletePath catch 段。
+ */
+async function claimTrashSlot(rootAbs, rel, isDir) {
+  const parts = rel.split('/')
+  let dirAbs = path.join(rootAbs, TRASH)
+  await fs.promises.mkdir(dirAbs, { recursive: true })
+  const dirParts = [TRASH]
+  let bumped = false
+  for (let i = 0; i < parts.length - 1; i++) {
+    let placed = false
+    for (let n = 0; n < TRASH_CANDIDATE_LIMIT && !placed; n++) {
+      const name = numberedName(parts[i], n)
+      if (n > 0) bumped = true
+      const abs = path.join(dirAbs, name)
+      try {
+        await fs.promises.mkdir(abs) // 祖先目录独占认领
+        dirAbs = abs
+        dirParts.push(name)
+        placed = true
+      } catch (err) {
+        if (err?.code !== 'EEXIST') throw err
+        const st = await fs.promises.lstat(abs).catch(() => null)
+        if (st?.isDirectory()) { // 既有目录=共享祖先（其他删除的落点父目录），复用
+          dirAbs = abs
+          dirParts.push(name)
+          placed = true
+        }
+        // 被非目录占用 → 该段冲突改名下一位
+      }
+    }
+    if (!placed) throw fail('io_error', `trash 落点祖先候选耗尽：${parts.slice(0, i + 1).join('/')}`)
+  }
+  for (let n = 0; n < TRASH_CANDIDATE_LIMIT; n++) {
+    const name = numberedName(parts[parts.length - 1], n)
+    if (n > 0) bumped = true
+    const abs = path.join(dirAbs, name)
+    try {
+      if (isDir) await fs.promises.mkdir(abs) // 目录占位（mkdir 独占）
+      else await fs.promises.writeFile(abs, '', { flag: 'wx' }) // 文件占位（O_EXCL 独占）
+      return { abs, trashRel: [...dirParts, name].join('/'), placeholder: abs, bumped }
+    } catch (err) {
+      if (err?.code !== 'EEXIST') throw err
+      // 冲突改名防覆盖：x.md→x.1.md（占位独占=EEXIST 即试下一位）
+    }
+  }
+  throw fail('io_error', `trash 落点候选耗尽：${rel}`)
+}
+
+/**
+ * 删除（OW-US-6 / OW-INV-5：可逆删除）——移动到 .trash/<rel>（绝不真删；取回=从 trashPath 逆向
+ * rename 即还原，内容逐字节同）。双确认（wiki-steward T12 实测语义）：confirm === 目标相对路径
+ * 全等复述；**确认检查先于一切副作用**（围栏/trash 落点/任何写之前）；缺省/不符一律拒（缺省拒），
+ * 副作用零发生。源 lstat 门（修复轮教训同款精化）：symlink/其他节点拒 not-a-file（不解引用）；
+ * 真实目录删除保留。落点由 claimTrashSlot 认领（冲突改名 + O_EXCL 占位防覆盖）。
+ * @param options {{confirm?: string, _onStage?: (stage: string) => (void|Promise<void>)}}
+ * @returns {Promise<
+ *   | {ok: true, path, trashPath, warnings: string[]}
+ *   | {ok: false, reason, message, trashPath: null, warnings: string[]}
+ * >}
+ *   reason ∈ 'confirm-missing'|'confirm-mismatch'|'in-trash'|'not-found'|'not-a-file'|'move-failed'
+ *   域结果一律对象返回（不抛错）；仅形参/词法围栏非法 throw bad_request。
+ * 测试缝（仅一个，沿 renameNote._onStage 惯例）：'claimed:<trashRel>'=占位已立、rename 前
+ *   （并发抢建注入点/占位后故障注入点）；'after-rename:<trashRel>'=rename 落盘后、fsync 前。
+ * 边界声明：删除不改写引用面（wikilink 悬空扫描归后续卡）；rename 永不静默覆盖同名=T5 已锁
+ *   （renameNote 缺省拒 + TOCTOU 锁内重检 + /ob/api/rename 负例）。
+ */
+export async function deletePath(root, relPath, options = {}) {
+  const opts = options ?? {}
+  if (typeof relPath !== 'string' || relPath === '') throw fail('bad_request', 'path 参数缺失')
+  const warnings = []
+  const reject = (reason, message) => ({ ok: false, reason, message, trashPath: null, warnings })
+  // 双确认先行（先于围栏/trash 落点/任何写——「副作用零发生」的结构保证）
+  const confirm = opts.confirm
+  if (typeof confirm !== 'string' || confirm === '') {
+    return reject('confirm-missing', '缺双确认（confirm=目标相对路径全等复述）——缺省拒')
+  }
+  if (confirm !== relPath) return reject('confirm-mismatch', '双确认复述不符（confirm 必须全等于目标相对路径）')
+  const abs = resolveInRoot(root, relPath) // 词法围栏（throw bad_request）
+  // 回收站本体/内部条目拒删（恢复材料受保护；.trash 卷入自身=不可逆坑）
+  if (relPath === TRASH || relPath.startsWith(`${TRASH}/`)) {
+    return reject('in-trash', `回收站条目不可再删（恢复材料受保护）：${relPath}`)
+  }
+  // 源 lstat 门：不解引用——symlink/其他拒 not-a-file；真实文件/真实目录删除保留
+  const node = await fs.promises.lstat(abs).catch(() => null)
+  if (node === null) return reject('not-found', `不存在：${relPath}`)
+  if (!node.isFile() && !node.isDirectory()) {
+    return reject('not-a-file', `仅普通文件/真实目录支持删除（拒 symlink/其他）：${relPath}`)
+  }
+  const isDir = node.isDirectory()
+  let claimed = null
+  let renamed = false
+  try {
+    claimed = await claimTrashSlot(path.resolve(root), relPath, isDir)
+    if (claimed.bumped) {
+      warnings.push(`trash 落点冲突改名（防覆盖）：${TRASH}/${relPath} 已被占用 → ${claimed.trashRel}`)
+    }
+    await opts._onStage?.(`claimed:${claimed.trashRel}`)
+    // rename 顶替自家独占占位=唯一落点（并发抢建同名者已在占位处 EEXIST 改道，零覆盖）
+    await fs.promises.rename(abs, claimed.abs)
+    renamed = true
+    await opts._onStage?.(`after-rename:${claimed.trashRel}`)
+    // ARC-4：目录 fsync（源父目录 + trash 父目录）——收尾故障不谎报失败（删除已落盘、可逆）
+    try {
+      fsyncPath(path.dirname(abs), { dir: true })
+      fsyncPath(path.dirname(claimed.abs), { dir: true })
+    } catch (err) {
+      warnings.push(`收尾故障（删除已落盘、可逆回收不受影响）：${err?.message ?? err}`)
+    }
+    return { ok: true, path: relPath, trashPath: claimed.trashRel, warnings }
+  } catch (err) {
+    if (renamed) {
+      // rename 已落盘=删除已发生：绝不谎报失败、绝不误清已回收内容（占位已被 rename 顶替，非本调用占位）
+      warnings.push(`收尾故障（删除已落盘、可逆回收不受影响）：${err?.message ?? err}`)
+      return { ok: true, path: relPath, trashPath: claimed.trashRel, warnings }
+    }
+    // 失败清残只清本调用占位（外来/既有内容零误伤）；rename 未发生=源未动
+    if (claimed !== null) {
+      if (isDir) await fs.promises.rmdir(claimed.placeholder).catch(() => {})
+      else await fs.promises.rm(claimed.placeholder, { force: true }).catch(() => {})
+    }
+    return reject('move-failed', `移入回收站失败（已清本调用占位、源未动）：${err?.message ?? err}`)
+  }
+}

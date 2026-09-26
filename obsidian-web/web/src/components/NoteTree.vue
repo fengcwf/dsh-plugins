@@ -7,7 +7,7 @@ const props = defineProps({
   selected: { type: String, default: '' },
   expanded: { type: Array, default: () => [] },
 })
-const emit = defineEmits(['select'])
+const emit = defineEmits(['select', 'delete'])
 
 const treeRef = ref(null)
 const wrapRef = ref(null)
@@ -36,6 +36,11 @@ onBeforeUnmount(() => observer?.disconnect())
 function onNodeClick(data) {
   emit('select', { key: data.key, type: data.type })
 }
+
+// 删除入口（T6）：只上抛（业务=App 编排 + 双确认弹层）；@click.stop 不触发节点选中
+function onDeleteClick(data) {
+  emit('delete', { key: data.key, type: data.type })
+}
 </script>
 
 <template>
@@ -51,7 +56,16 @@ function onNodeClick(data) {
       @node-click="onNodeClick"
     >
       <template #default="{ data }">
-        <span class="ob-tree-node" :data-type="data.type">{{ data.label }}</span>
+        <span class="ob-tree-node" :data-type="data.type">
+          {{ data.label }}
+          <button
+            type="button"
+            class="ob-tree-del"
+            :aria-label="`删除 ${data.key}`"
+            title="删除（可逆：移入回收站）"
+            @click.stop="onDeleteClick(data)"
+          >删除</button>
+        </span>
       </template>
     </el-tree-v2>
   </aside>

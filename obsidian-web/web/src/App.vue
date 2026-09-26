@@ -3,7 +3,7 @@
 // T4：分屏编辑（OW-US-3）+ 安全保存（OW-US-4/OW-INV-3）——保存状态机/防抖/对比全在
 //     web/src/lib/save-client.js 纯函数（单测锁形），本文件只编排 I/O 与面板。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { fetchTree, fetchFile, fetchBacklinks, fetchRender, saveFile } from './api.js'
+import { fetchTree, fetchFile, fetchBacklinks, fetchRender, saveFile, deleteFile } from './api.js'
 import { buildTreeModel, selectNode, resolveNotePath } from './lib/tree.js'
 import { extractToc } from './lib/toc.js'
 import {
@@ -15,6 +15,7 @@ import NoteTree from './components/NoteTree.vue'
 import ReadingPane from './components/ReadingPane.vue'
 import NoteEditor from './components/NoteEditor.vue'
 import ConflictDialog from './components/ConflictDialog.vue'
+import DeleteConfirmDialog from './components/DeleteConfirmDialog.vue'
 import SearchPanel from './components/SearchPanel.vue'
 import BacklinksPanel from './components/BacklinksPanel.vue'
 import TocPanel from './components/TocPanel.vue'
@@ -143,6 +144,63 @@ function onJump(id) {
   requestAnimationFrame(() => centerRef.value?.scrollToHeading?.(id))
 }
 
+// ── 删除（T6）：双确认弹层（复述全等→载荷复核）→ /ob/api/delete；成功刷新树并收拢打开态 ──
+const deleteTarget = ref(null) // {path} | null
+const deleteBusy = ref(false)
+const deleteError = ref('')
+
+function onDeleteNode(node) {
+  deleteError.value = ''
+  deleteTarget.value = { path: node.key }
+}
+
+function onDeleteCancel() {
+  deleteTarget.value = null
+  deleteError.value = ''
+}
+
+async function onDeleteConfirm(payload) {
+  if (!payload || !deleteTarget.value) return // 双保险：无载荷不发请求（弹层复核 + 服务端缺省拒）
+  deleteBusy.value = true
+  deleteError.value = ''
+  try {
+    const { data } = await deleteFile(payload.path, payload.confirm)
+    if (!data.ok) {
+      deleteError.value = `删除未完成（${data.reason}）：${data.message}`
+      return
+    }
+    deleteTarget.value = null
+    await afterDeleted(data.path, data.warnings)
+  } catch (e) {
+    deleteError.value = e.message
+  } finally {
+    deleteBusy.value = false
+  }
+}
+
+async function afterDeleted(deletedPath, warnings) {
+  const prefix = `${deletedPath}/`
+  const openNow = file.value?.path ?? ''
+  if (openNow === deletedPath || openNow.startsWith(prefix)) {
+    file.value = null
+    backlinks.value = []
+    session.value = null
+    previewHtml.value = ''
+  }
+  const sel = state.value.selected ?? ''
+  state.value = {
+    selected: sel === deletedPath || sel.startsWith(prefix) ? null : sel,
+    expanded: state.value.expanded.filter((k) => k !== deletedPath && !k.startsWith(prefix)),
+  }
+  if (warnings?.length) error.value = warnings.join('；') // 落点改名/收尾故障留痕（INV-15 风格）
+  try {
+    const tree = await fetchTree()
+    nodes.value = tree.data.nodes
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
 // 阅读视图状态独立持久化（delta-spec §3：与分屏编辑互不覆盖，key=ob:read-state）
 watch(activePanel, (panel) => {
   if (panel === 'edit') ensureSession()
@@ -174,6 +232,7 @@ onBeforeUnmount(() => {
       :selected="state.selected"
       :expanded="state.expanded"
       @select="onSelect"
+      @delete="onDeleteNode"
     />
     <main class="ob-center">
       <p v-if="error" class="ob-empty" role="alert">{{ error }}</p>
@@ -206,6 +265,14 @@ onBeforeUnmount(() => {
       :conflict="session?.conflict ?? null"
       :comparing="Boolean(session?.comparing)"
       @choose="onChoose"
+    />
+    <DeleteConfirmDialog
+      :visible="deleteTarget !== null"
+      :path="deleteTarget?.path ?? ''"
+      :busy="deleteBusy"
+      :error="deleteError"
+      @confirm="onDeleteConfirm"
+      @cancel="onDeleteCancel"
     />
   </div>
 </template>

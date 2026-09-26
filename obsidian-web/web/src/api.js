@@ -48,3 +48,9 @@ export function saveFile(path, content, lock) {
 export function fetchRender(content) {
   return postJson('/ob/api/render', { content })
 }
+
+// 删除（T6/OW-US-6、OW-INV-5）：confirm=目标相对路径全等复述（服务端缺省拒，确认先于副作用）；
+// 返回 {data:{ok, path, trashPath, warnings}}（ok:false 时 reason/message 给 UI 决策）
+export function deleteFile(path, confirm) {
+  return postJson('/ob/api/delete', { path, confirm })
+}
