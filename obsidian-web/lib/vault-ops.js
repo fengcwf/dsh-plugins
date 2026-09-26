@@ -248,8 +248,13 @@ export function scanBacklinks(root, relPath) {
 //   结果对象（UI 按 reason 决策）；仅形参/围栏非法 throw bad_request（沿 saveNote 惯例）。
 //   changed=调用结束后盘上与调用前不同的路径（回滚完成=空数组；回滚未完全=残留项）。
 // 测试缝（仅一个）：opts._onStage(stage)——事务阶段点回调（'after-snapshot' | 'after-dest' |
-//   'before-rewrite:<rel>' | 'after-rewrite:<rel>' | 'before-delete' | 'after-delete'）：
+//   'before-rewrite:<rel>' | 'after-rewrite:<rel>' | 'before-fsync:<rel>' | 'after-rm:<rel>' |
+//   'before-delete' | 'after-delete' | 'rollback-compare:<rel>'）：
 //   回调内真写盘=并发注入、抛错=中途故障注入（检测逻辑全程真验真文件，非 mock）。
+//   步骤内断面（fix r1 补）：'before-fsync:<rel>'=写入落盘后、fsync 前（抛错=「写后 fsync 抛」）；
+//   'after-rm:<rel>'=③ rm 落盘后、目录 fsync 前（抛错=「rm 后 fsync 抛」；回调内把 <源>.lock
+//   换成目录=真实 finally 清锁故障 ERR_FS_EISDIR=「锁释放抛」）；'rollback-compare:<rel>'=
+//   回滚『比对后、逆放前』断面（锁内；回调内真写盘=回滚窗口并发注入）。
 // 边界声明：改写扫描面=全 vault .md 页面（wikilink/INDEX 零断链承诺面）；md 形链接 [x](y.md)
 //   不改写只留痕（承诺范围外）；目录改名拒（not-a-file）；realpath/symlink 围栏归 T12（词法围栏同前）。
 const TX_LOCK_WAIT_MS = 10_000
@@ -288,9 +293,10 @@ async function journalRollback(snap) {
   fsyncPath(path.dirname(snap.file), { dir: true })
 }
 
-/** 事务写：原子写 + ARC-4 fsync（文件+目录） */
-async function writeAtomicFsync(abs, data, mode) {
+/** 事务写：原子写 + ARC-4 fsync（文件+目录）；onBeforeFsync=「写后 fsync 前」测试缝断面 */
+async function writeAtomicFsync(abs, data, mode, onBeforeFsync) {
   await writeFileAtomic(abs, data, mode == null ? {} : { mode })
+  await onBeforeFsync?.()
   fsyncPath(abs)
   fsyncPath(path.dirname(abs), { dir: true })
 }
@@ -298,49 +304,72 @@ async function writeAtomicFsync(abs, data, mode) {
 /** 事务条目：{snap, rel, written: Buffer|null（本事务写入内容）, deleted: bool} */
 const entryOf = (snap, rel) => ({ snap, rel, written: null, deleted: false })
 
+/** 事务锁（withFileLock + 自家锁残渣自清，fix r1/C1）：锁释放路径故障（finally 清锁抛错）会留下
+ *  锁残渣挡死后续取锁——锁体完成后失败即判为释放故障，自清自家残渣后照抛（回滚必须能取到锁）。 */
+async function withTxLock(abs, body) {
+  let bodyDone = false
+  try {
+    await withFileLock(abs, async () => {
+      await body()
+      bodyDone = true
+    }, { waitMs: TX_LOCK_WAIT_MS })
+  } catch (err) {
+    if (bodyDone) await fs.promises.rm(`${abs}.lock`, { force: true, recursive: true }).catch(() => {})
+    throw err
+  }
+}
+
 /**
  * 事务逆放（逆序逐条）：只逆放「我们确实改过且现状仍是我们写的样子」的条目——写后被并发改/删的
  * 项跳过逆放+留痕（六坑③：绝不吞并发写）；删除项被并发重建同样跳过。返回 {problems, unrestored}。
+ * fix r1（C1 记账前置配套 + I2）：标记=已变更的条目**一律尝试逆放**（幂等容忍——变更未落盘或
+ * 已被还原原状的项静默跳过，绝不误报残留）；「比对+逆放」全程持 per-file withFileLock（比对与
+ * 回写之间落盘的协作并发写不再被吞）。onEntry=回滚『比对后、逆放前』测试缝断面（锁内）。
  */
-async function rollbackAll(entries, warnings) {
+async function rollbackAll(entries, warnings, onEntry) {
   const problems = []
   const unrestored = []
   for (const e of [...entries].reverse()) {
     try {
-      let cur = null
-      try {
-        cur = await fs.promises.readFile(e.snap.file)
-      } catch (err) {
-        if (err?.code !== 'ENOENT') throw err
-      }
-      if (e.deleted) {
-        if (cur !== null) {
-          if (e.snap.existed && cur.equals(e.snap.content)) continue // 已被并发还原为原状
-          problems.push(`${e.rel} 删除后被并发重建，未逆放`)
-          warnings.push(`回滚跳过：${e.rel} 删除后被并发重建（保留并发内容）`)
-          unrestored.push(e.rel)
-          continue
+      await withTxLock(e.snap.file, async () => {
+        let cur = null
+        try {
+          cur = await fs.promises.readFile(e.snap.file)
+        } catch (err) {
+          if (err?.code !== 'ENOENT') throw err
         }
-        await journalRollback(e.snap) // 逆放复活源文件
-        continue
-      }
-      if (e.written !== null) {
-        if (cur === null) {
-          problems.push(`${e.rel} 本事务写入后被并发删除，未逆放`)
-          warnings.push(`回滚跳过：${e.rel} 写后被并发删除`)
-          unrestored.push(e.rel)
-          continue
+        await onEntry?.(e.rel)
+        if (e.deleted) {
+          if (cur !== null) {
+            if (e.snap.existed && cur.equals(e.snap.content)) return // 幂等容忍：rm 未落盘/已被还原=已是原状
+            problems.push(`${e.rel} 删除后被并发重建，未逆放`)
+            warnings.push(`回滚跳过：${e.rel} 删除后被并发重建（保留并发内容）`)
+            unrestored.push(e.rel)
+            return
+          }
+          await journalRollback(e.snap) // 逆放复活源文件
+          return
         }
-        if (!cur.equals(e.written)) {
+        if (e.written !== null) {
+          if (cur === null) {
+            if (!e.snap.existed) return // 幂等容忍：我方新建（原不存在）未落盘/已清=现状即原状
+            problems.push(`${e.rel} 本事务写入后被并发删除，未逆放`)
+            warnings.push(`回滚跳过：${e.rel} 写后被并发删除`)
+            unrestored.push(e.rel)
+            return
+          }
+          if (cur.equals(e.written)) {
+            await journalRollback(e.snap)
+            return
+          }
+          if (e.snap.existed && cur.equals(e.snap.content)) return // 幂等容忍：写未落盘/已被还原原状
           problems.push(`${e.rel} 写后被并发修改，未逆放（保留并发内容）`)
           warnings.push(`回滚跳过：${e.rel} 写后被并发修改（保留并发内容）`)
           unrestored.push(e.rel)
-          continue
+          return
         }
-        await journalRollback(e.snap)
-        continue
-      }
-      // 未动条目：零逆放项（并发内容保留）
+        // 未动条目：零逆放项（并发内容保留）
+      })
     } catch (err) {
       problems.push(`${e.rel} 逆放失败（${err?.code ?? err?.message ?? err}）`)
       unrestored.push(e.rel)
@@ -505,7 +534,7 @@ export async function renameNote(root, from, to, options = {}) {
   }
   const failTx = async (err) => {
     const mutated = entries.some((e) => e.deleted || e.written !== null)
-    const { problems, unrestored } = await rollbackAll(entries, warnings)
+    const { problems, unrestored } = await rollbackAll(entries, warnings, (rel) => opts._onStage?.(`rollback-compare:${rel}`))
     const prefix = String(err?.message ?? err)
     const reason = err?.reason ?? 'transaction-failed'
     warnings.push(`事务中止（${reason}）：${prefix}`) // 冲突/故障必留痕（INV-15 风格）
@@ -526,8 +555,10 @@ export async function renameNote(root, from, to, options = {}) {
     await opts._onStage?.('after-snapshot') // 测试缝：快照后、动手前（TOCTOU/并发注入点）
     // ① 目标副本（六坑⑥：改写前新名已在场=零断链窗口）；写入进锁，锁内重检覆盖门（TOCTOU 同锁）
     //    + 锁内 fresh 快照=回滚基（并发者内容不被逆放成「不存在」）
+    //    fix r1（C1 记账前置）：written 标记先于可抛 I/O（写/fsync/锁释放任一抛→条目仍视作已变更，
+    //    rollbackAll 一律尝试逆放（幂等容忍），绝不落进「变更后、标记前」丢记账窗口）
     const destContent = srcIsMd ? Buffer.from(selfPlan.text, 'utf8') : fromBuf
-    await withFileLock(toAbs, async () => {
+    await withTxLock(toAbs, async () => {
       const existsNow = await fs.promises.lstat(toAbs).then(() => true, () => false)
       if (existsNow && opts.overwrite !== true) {
         const err = new Error(`目标已存在（显式 overwrite:true 才替换）：${to}`)
@@ -535,9 +566,9 @@ export async function renameNote(root, from, to, options = {}) {
         throw err
       }
       const e = entryFor(toAbs, to, await journalSave(toAbs)) // 写入面才进 entries（拒绝面零回滚项）
-      await writeAtomicFsync(toAbs, destContent, srcNode.mode & 0o777)
-      e.written = destContent
-    }, { waitMs: TX_LOCK_WAIT_MS })
+      e.written = destContent // 记账前置：标记先于可抛写
+      await writeAtomicFsync(toAbs, destContent, srcNode.mode & 0o777, () => opts._onStage?.(`before-fsync:${to}`))
+    })
     await opts._onStage?.('after-dest')
 
     // ② 逐文件锁内 RMW（六坑③：锁内 fresh-read 比对，快照后被改=中止，绝不吞并发写）
@@ -545,33 +576,34 @@ export async function renameNote(root, from, to, options = {}) {
       await opts._onStage?.(`before-rewrite:${rw.rel}`)
       const e = entryFor(rw.abs, rw.rel)
       const afterBuf = Buffer.from(rw.after, 'utf8')
-      await withFileLock(rw.abs, async () => {
+      await withTxLock(rw.abs, async () => {
         const fresh = await readFresh(rw.abs)
         if (!fresh.equals(Buffer.from(rw.before, 'utf8'))) {
           const err = new Error(`并发修改检测：${rw.rel} 快照后被改写，中止事务`)
           err.reason = 'concurrent-modification'
           throw err
         }
-        await writeAtomicFsync(rw.abs, afterBuf)
-        e.written = afterBuf
-      }, { waitMs: TX_LOCK_WAIT_MS })
+        e.written = afterBuf // 记账前置：标记先于可抛写（比对未过不落标记=零误伤）
+        await writeAtomicFsync(rw.abs, afterBuf, null, () => opts._onStage?.(`before-fsync:${rw.rel}`))
+      })
       await opts._onStage?.(`after-rewrite:${rw.rel}`)
     }
 
     // ③ 删源（六坑⑥：改写后删源；删前核对源未被并发改）
     await opts._onStage?.('before-delete')
     const srcEntry = entryFor(fromAbs, from)
-    await withFileLock(fromAbs, async () => {
+    await withTxLock(fromAbs, async () => {
       const fresh = await readFresh(fromAbs)
       if (!fresh.equals(fromBuf)) {
         const err = new Error(`并发修改检测：${from} 快照后被改写，中止事务`)
         err.reason = 'concurrent-modification'
         throw err
       }
+      srcEntry.deleted = true // 记账前置：删除标记先于 rm/可抛 fsync/锁释放
       await fs.promises.rm(fromAbs)
+      await opts._onStage?.(`after-rm:${from}`) // 步骤内断面：rm 落盘后、目录 fsync 前（抛错=「rm 后 fsync 抛」）
       fsyncPath(path.dirname(fromAbs), { dir: true })
-    }, { waitMs: TX_LOCK_WAIT_MS })
-    srcEntry.deleted = true
+    })
     await opts._onStage?.('after-delete')
   } catch (err) {
     return failTx(err)

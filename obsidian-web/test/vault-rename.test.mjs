@@ -4,14 +4,19 @@
 // 真验零 mock：真 fs 事务（tmp vault 真写盘）、真故障注入（_onStage 测试缝真抛错）、
 // 真并发注入（_onStage 里真写盘——检测逻辑全程真验真文件，非 mock）。
 // 测试缝（仅一个）：opts._onStage(stage)——事务阶段点回调；stage ∈
-//   'after-snapshot' | 'after-dest' | 'before-rewrite:<rel>' | 'after-rewrite:<rel>' | 'before-delete' | 'after-delete'；
+//   'after-snapshot' | 'after-dest' | 'before-rewrite:<rel>' | 'after-rewrite:<rel>' | 'before-fsync:<rel>' |
+//   'after-rm:<rel>' | 'before-delete' | 'after-delete' | 'rollback-compare:<rel>'；
 //   回调内真写盘=并发注入；回调抛错=中途故障注入（抛错点之前全是真操作）。
+//   步骤内断面（fix r1）：'before-fsync:<rel>'=写后 fsync 前；'after-rm:<rel>'=③ rm 后目录 fsync 前
+//   （回调内把 <源>.lock 换成目录=真实 finally 清锁故障 ERR_FS_EISDIR=「锁释放抛」）；
+//   'rollback-compare:<rel>'=回滚『比对后、逆放前』（锁内）。
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+import { withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import { renameNote, readNote } from '../lib/vault-ops.js'
 
 const TMP_ROOT = fileURLToPath(new URL('./.tmp-rename', import.meta.url))
@@ -440,4 +445,123 @@ test('非 md 资产改名：![[img.png]] embed 与 [[assets/img.png]] 路径形�
   assert.equal(result.ok, true)
   assert.equal(readNote(root, 'notes/t.md').content, '![x]([[pic.png]]) and [[assets/pic.png]]\n')
   assert.equal(readNote(root, 'assets/pic.png').content, 'PNGBYTES', '字节原样搬移')
+})
+
+// ── fix r1：C1 记账前置（步骤内 I/O 故障三形态）+ I2 回滚「比对+逆放」锁包 + I1 根级 to 留痕 ──
+
+/** 诚实性不变量：rolledBack:true 只许在真·全树逐字节还原时给出（绝不谎报）；返回是否已还原 */
+function assertHonestRollback(result, root, before) {
+  const restored = JSON.stringify(treeDigest(root)) === JSON.stringify(before)
+  assert.equal(result.rolledBack, restored, 'rolledBack 必须与真实还原态一致（绝不谎报）')
+  return restored
+}
+
+test('C1-a 步骤内 I/O 故障（rm 后 fsync 抛）：源必须复活、目标必须清、绝不 rolledBack:true 谎报', async (t) => {
+  const root = tmpVault(t, SCENE)
+  const before = treeDigest(root)
+  const result = await renameNote(root, 'notes/a.md', 'notes/z.md', {
+    _onStage: (stage) => {
+      if (stage === 'after-rm:notes/a.md') throw new Error('rm 后 fsync 故障注入')
+    },
+  })
+  assert.equal(result.ok, false)
+  assert.ok(assertHonestRollback(result, root, before), '源文件必须复活、目标必须清（全树逐字节还原）')
+  assert.deepEqual(result.changed, [], '还原完成 changed 必为空')
+  assert.ok(readNote(root, 'notes/a.md').content.includes('# A'), '源文件复活')
+  assert.equal(fs.existsSync(path.join(root, 'notes/z.md')), false, '目标已清')
+})
+
+test('C1-b 步骤内 I/O 故障（写后 fsync 抛）：目标必须清、其余全量逆放、绝不 rolledBack:true 谎报', async (t) => {
+  const root = tmpVault(t, SCENE)
+  const before = treeDigest(root)
+  const result = await renameNote(root, 'notes/a.md', 'notes/z.md', {
+    _onStage: (stage) => {
+      if (stage === 'before-fsync:notes/z.md') throw new Error('写后 fsync 故障注入')
+    },
+  })
+  assert.equal(result.ok, false)
+  assert.ok(assertHonestRollback(result, root, before), '写后 fsync 抛也必须全量还原（目标必须清）')
+  assert.deepEqual(result.changed, [], '还原完成 changed 必为空')
+  assert.equal(fs.existsSync(path.join(root, 'notes/z.md')), false, '目标必须清（写入落盘但事务失败≠留新名）')
+  assert.ok(readNote(root, 'notes/a.md').content.includes('# A'), '源文件原样')
+})
+
+test('C1-c 步骤内 I/O 故障（锁释放抛=真实 finally 清锁失败）：源必须复活、锁残渣自清、绝不谎报', async (t) => {
+  const root = tmpVault(t, SCENE)
+  const before = treeDigest(root)
+  const lockPath = path.join(root, 'notes/a.md.lock')
+  const result = await renameNote(root, 'notes/a.md', 'notes/z.md', {
+    _onStage: (stage) => {
+      if (stage !== 'after-rm:notes/a.md') return
+      // 真实锁释放故障：锁文件换成目录 → withFileLock finally rm(lockPath) 真抛 ERR_FS_EISDIR
+      fs.rmSync(lockPath, { force: true })
+      fs.mkdirSync(lockPath)
+    },
+  })
+  assert.equal(result.ok, false)
+  assert.ok(assertHonestRollback(result, root, before), '锁释放抛也必须全量还原（源复活、目标清）')
+  assert.deepEqual(result.changed, [], '还原完成 changed 必为空')
+  assert.ok(readNote(root, 'notes/a.md').content.includes('# A'), '源文件复活')
+  assert.equal(fs.existsSync(path.join(root, 'notes/z.md')), false, '目标已清')
+  assert.equal(fs.existsSync(lockPath), false, '自家锁残渣必须自清（否则回滚取锁被残渣挡死）')
+})
+
+test('I2 回滚「比对+逆放」全程持文件锁：锁探针不得并入，协作写者串行落盘不被吞', async (t) => {
+  const root = tmpVault(t, SCENE)
+  const idxAbs = path.join(root, 'INDEX.md')
+  let probeAcquired = null
+  let writerPromise = null
+  const result = await renameNote(root, 'notes/a.md', 'notes/z.md', {
+    _onStage: async (stage) => {
+      if (stage === 'before-delete') throw new Error('触发回滚（I2 观察面在回滚窗口）')
+      if (stage !== 'rollback-compare:INDEX.md') return
+      // 锁探针（真 withFileLock，断面内 await）：此刻 INDEX.md 的文件锁必须被回滚「比对+逆放」持有
+      probeAcquired = await withFileLock(idxAbs, async () => true, { waitMs: 200 }).then(() => true, () => false)
+      // 协作写者（saveNote 同款 withFileLock，后台）：必须等回滚放锁后串行落盘，绝不被逆放吞掉
+      writerPromise = withFileLock(idxAbs, async () => {
+        fs.writeFileSync(idxAbs, '协作写者落盘\n', 'utf8')
+      }, { waitMs: 5_000 }).catch(() => {})
+    },
+  })
+  assert.equal(result.ok, false)
+  await writerPromise
+  assert.equal(await probeAcquired, false, '回滚「比对+逆放」必须持文件锁（探针不得并入）')
+  assert.equal(fs.readFileSync(idxAbs, 'utf8'), '协作写者落盘\n', '协作写者串行落盘、绝不被回滚吞掉')
+})
+
+test('I1 根级 to 全分支留痕（stem 被占）：stem/路径形改写都留痕，措辞不虚称「降级为路径形」', async (t) => {
+  const root = tmpVault(t, {
+    'notes/a.md': '# A\n',
+    'notes/c.md': '# C（占 newStem）\n',
+    'notes/t.md': 'stem [[a]]\npath [[notes/a]]\n',
+  })
+  const result = await renameNote(root, 'notes/a.md', 'c.md')
+  assert.equal(result.ok, true)
+  assert.equal(readNote(root, 'notes/t.md').content, 'stem [[c]]\npath [[c]]\n', '根级 to=歧义 [[c]]（唯一可能形）+留痕')
+  const rootNotes = result.warnings.filter((w) => w.includes('根级'))
+  assert.equal(rootNotes.length, 2, `根级 to 全分支留痕（stem 形+路径形各一）：${JSON.stringify(result.warnings)}`)
+  assert.ok(
+    result.warnings.some((w) => w.includes('路径形') && w.includes('[[notes/a]]') && w.includes('[[c]]')),
+    '路径形→stem 形（精确路径变歧义）必须留痕',
+  )
+  assert.ok(
+    !result.warnings.some((w) => w.includes('降级为路径形')),
+    '根级无路径形可降级，留痕措辞不得虚称「降级为路径形」',
+  )
+})
+
+test('I1 根级 to（stem 全库唯一）：路径形→stem 形降级留痕 + .md 后缀风格保持', async (t) => {
+  const root = tmpVault(t, {
+    'notes/a.md': '# A\n',
+    'notes/t.md': 'path [[notes/a]]\nmd [[notes/a.md]]\n',
+  })
+  const result = await renameNote(root, 'notes/a.md', 'c.md')
+  assert.equal(result.ok, true)
+  assert.equal(readNote(root, 'notes/t.md').content, 'path [[c]]\nmd [[c.md]]\n', '风格保持（.md 后缀形保留）')
+  const rootNotes = result.warnings.filter((w) => w.includes('根级'))
+  assert.equal(rootNotes.length, 2, `根级 to 全分支留痕（含 path 形降级分支）：${JSON.stringify(result.warnings)}`)
+  assert.ok(
+    rootNotes.some((w) => w.includes('[[c]]')) && rootNotes.some((w) => w.includes('[[c.md]]')),
+    '留痕须指明实际产出形 [[c]]/[[c.md]]',
+  )
 })

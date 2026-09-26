@@ -4,6 +4,9 @@
 //   ② `#锚|别名` 捕获组回填：target 之外的前导/尾随空白、#锚、|别名整段原样回填
 //   ③ 裸名/全路径风格保持：stem 形→stem 形、路径形→路径形、.md 后缀形保留
 //   ④ toBase 不制造新歧义：新 stem 被占 → stem 形降级为路径形 + 留痕（notes）
+//   ④ 根级失效面（fix r1/I1 边界声明）：to 在 vault 根级（keyOf 不含 '/'）时无路径形可降级——
+//     全分支（stem 形保持/路径形降级/stem 被占降级）一律改写+留痕，产出=stem 形 [[c]]（歧义不可避免时
+//     保零断链主承诺），措辞不得虚称「降级为路径形」。
 // 六坑⑤：frontmatter 内链接**在扫描面**（不豁免——title 内链接同改写）；围栏代码块（```/~~~）内豁免=代码不是链接。
 // md 形链接（[text](target)）本引擎**不改写**（零断链承诺范围=wikilink/INDEX）；
 //   scanMdLinkTargets 只做留痕扫描（vault-ops 据此发 warnings），外部链/纯锚点豁免。
@@ -109,20 +112,34 @@ export function planRewrite(text, ctx) {
       else skipped.push({ line: link.line, target, reason: 'ambiguous-stem' })
     }
     if (!match) continue
+    const rootTo = !ctx.newKey.includes('/') // fix r1（I1）：to 在 vault 根级=无路径形可用
     let newTarget
+    let note = null
     if (shape.form === 'path' || ctx.newStemUnique) {
       // 设计③风格保持：裸名→裸名、路径→路径（.md 后缀形保留）
       newTarget = shape.form === 'path'
         ? `${ctx.newKey}${shape.hadMd ? '.md' : ''}`
         : `${ctx.newStem}${shape.hadMd ? '.md' : ''}`
+      if (rootTo) {
+        // 根级 to 全分支留痕：路径形→stem 形（精确路径降级）/stem 形保持均显性留痕
+        note = shape.form === 'path'
+          ? `根级 to：[[${target}]]（第 ${link.line} 行）路径形改写为 stem 形 [[${newTarget}]]（根级无路径形可用${ctx.newStemUnique ? '；stem 全库唯一' : `；${ctx.newStem} 已被占用→潜在歧义`}；留痕）`
+          : `根级 to：[[${target}]]（第 ${link.line} 行）stem 形改写为 [[${newTarget}]]（根级无路径形可用；stem 全库唯一；留痕）`
+      }
+    } else if (rootTo) {
+      // 设计④根级失效面（fix r1/I1 措辞修正）：根级无路径形可降级，产出仍是 stem 形 [[c]]
+      //（歧义不可避免时以「改写+留痕」保零断链主承诺——绝不虚称「降级为路径形」）
+      newTarget = `${ctx.newKey}${shape.hadMd ? '.md' : ''}`
+      note = `根级 to 无路径形可降级：[[${target}]]（第 ${link.line} 行）改写为 stem 形 [[${newTarget}]]（${ctx.newStem} 已被占用→潜在歧义；留痕）`
     } else {
       // 设计④toBase 不制造新歧义：新 stem 已被占 → 降级路径形 + 留痕
       newTarget = `${ctx.newKey}${shape.hadMd ? '.md' : ''}`
-      notes.push(`toBase 新歧义：[[${target}]]（第 ${link.line} 行）降级为路径形 [[${newTarget}]]（${ctx.newStem} 已被占用）`)
+      note = `toBase 新歧义：[[${target}]]（第 ${link.line} 行）降级为路径形 [[${newTarget}]]（${ctx.newStem} 已被占用）`
     }
     const replacement = lead + newTarget + trail + suffix
     if (replacement === link.inner) continue // 同形改写（纯移动的裸名链接）：no-op 不入编辑面
     edits.push({ start: link.start, end: link.end, text: replacement })
+    if (note !== null) notes.push(note)
   }
   let out = text
   for (const e of edits.reverse()) {
