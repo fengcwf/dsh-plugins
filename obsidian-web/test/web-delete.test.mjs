@@ -149,6 +149,19 @@ test('POST /ob/api/delete 方法守卫 GET→405 + 鉴权缝（OW-INV-8）401/40
   }, { rejection: 401 })
 })
 
+test('POST /ob/api/delete in-trash 门（修复轮 Issue 1）：./.trash/… 词法形态不绕过 → reason:in-trash + 恢复材料不动', async (t) => {
+  await withServer(t, async (base, vault) => {
+    fs.mkdirSync(path.join(vault, '.trash'), { recursive: true })
+    fs.writeFileSync(path.join(vault, '.trash/keep.md'), 'RECOVERABLE\n', 'utf8')
+    const res = await postDelete(base, { path: './.trash/keep.md', confirm: './.trash/keep.md' })
+    assert.equal(res.status, 200, '域结果走 {data} 信封')
+    const body = await res.json()
+    assert.equal(body.data.ok, false)
+    assert.equal(body.data.reason, 'in-trash', 'API 面同门（deletePath 规范化判定）')
+    assert.equal(fs.readFileSync(path.join(vault, '.trash/keep.md'), 'utf8'), 'RECOVERABLE\n', '恢复材料逐字节不动')
+  })
+})
+
 // ── 前端双确认纯逻辑（web/src/lib/delete-confirm.js；组件零业务逻辑）───────────────
 test('前端双确认：confirmMatches 严格全等（错字/空白/大小写全拒），缺省拒', () => {
   assert.equal(confirmMatches('notes/a.md', 'notes/a.md'), true)

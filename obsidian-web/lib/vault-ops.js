@@ -644,7 +644,8 @@ function numberedName(name, n) {
  *  - 失败清残只清本调用占位（外来/既有内容零误伤）——见 deletePath catch 段。
  */
 async function claimTrashSlot(rootAbs, rel, isDir) {
-  const parts = rel.split('/')
+  // 输入先规范化（'.' 段折叠/多余分隔归一）：trashPath 输出无 '.' 段（修复轮 Issue 2）
+  const parts = path.posix.normalize(rel).split('/')
   let dirAbs = path.join(rootAbs, TRASH)
   await fs.promises.mkdir(dirAbs, { recursive: true })
   const dirParts = [TRASH]
@@ -719,8 +720,12 @@ export async function deletePath(root, relPath, options = {}) {
   }
   if (confirm !== relPath) return reject('confirm-mismatch', '双确认复述不符（confirm 必须全等于目标相对路径）')
   const abs = resolveInRoot(root, relPath) // 词法围栏（throw bad_request）
-  // 回收站本体/内部条目拒删（恢复材料受保护；.trash 卷入自身=不可逆坑）
-  if (relPath === TRASH || relPath.startsWith(`${TRASH}/`)) {
+  // 回收站本体/内部条目拒删（恢复材料受保护；.trash 卷入自身=不可逆坑）。
+  // 判定口径=规范化落点（resolved abs 对 <root>/.trash 的前缀判定），不是原始字符串前缀：
+  // './.trash/x'、'.trash/./x' 等任何含 '.' 段的词法形态都解析进 .trash，一律拒（修复轮 Issue 1——
+  // 字符串前缀判定曾被 './' 形态绕过，恢复材料被静默移出受保护区）。
+  const trashAbs = path.resolve(path.resolve(root), TRASH)
+  if (abs === trashAbs || abs.startsWith(trashAbs + path.sep)) {
     return reject('in-trash', `回收站条目不可再删（恢复材料受保护）：${relPath}`)
   }
   // 源 lstat 门：不解引用——symlink/其他拒 not-a-file；真实文件/真实目录删除保留

@@ -233,6 +233,46 @@ test('④ in-trash 门：.trash 本体/内部条目拒删（回收站恢复材�
   assert.equal(r2.reason, 'in-trash')
 })
 
+// ── 修复轮 Issue 1：in-trash 门判定必须按规范化口径（'.' 段词法形态不得绕过）────────
+test('④ in-trash 门（修复轮 Issue 1）：./ 前缀等词法形态不得绕过（恢复材料保护不因路径写法失效）', async (t) => {
+  const root = tmpVault(t, { ...SCENE, '.trash/keep.md': 'RECOVERABLE\n' })
+  const before = treeDigest(root)
+  for (const relPath of ['./.trash/keep.md', '.trash/./keep.md', './.trash', '.trash/./.', './.trash/./notes/a.md']) {
+    const r = await deletePath(root, relPath, { confirm: relPath })
+    assert.equal(r.ok, false, `${relPath} 不得过（in-trash 门）`)
+    assert.equal(r.reason, 'in-trash', `${relPath} 解析进 .trash = 恢复材料，必须拒`)
+    assert.deepEqual(r.warnings, [], '拒删必须零副作用、零留痕噪声')
+    assert.deepEqual(treeDigest(root), before, `${relPath} 全树逐字节不变（恢复材料不得被静默移出受保护区）`)
+  }
+})
+
+// ── 修复轮 Issue 2：trashPath 输出规范化（无 '.' 段）────────────────────────────
+test('② trashPath 输出规范化（修复轮 Issue 2）：notes/./a.md → trashPath 无 "." 段，逆向 rename 取回逐字节同', async (t) => {
+  const root = tmpVault(t, SCENE)
+  const before = treeDigest(root)
+  const r = await deletePath(root, 'notes/./a.md', { confirm: 'notes/./a.md' })
+  assert.equal(r.ok, true)
+  assert.equal(r.trashPath, '.trash/notes/a.md', 'trashPath 必须规范化（无 "." 段）')
+  assert.equal(r.trashPath.split('/').some((seg) => seg === '.' || seg === ''), false, 'trashPath 逐段规范')
+  assert.equal(fs.readFileSync(path.join(root, r.trashPath), 'utf8'), SCENE['notes/a.md'], '内容落规范化落点')
+  fs.renameSync(path.join(root, r.trashPath), path.join(root, 'notes/a.md')) // 取回=逆向 rename（以 trashPath 为权威）
+  assert.deepEqual(treeDigest(root), before, '取回后全树逐字节同')
+})
+
+// ── 修复轮 Issue 3：祖先段被非目录占用 → 段冲突改名（Ruling 3 补负例闭证据链）────────
+test('② 祖先段被非目录占用（修复轮 Issue 3）：该段冲突改名 .trash/notes.1/sub + 留痕，外来文件零误伤', async (t) => {
+  const root = tmpVault(t, { 'notes/sub/deep.md': '深层\n' })
+  fs.mkdirSync(path.join(root, '.trash'), { recursive: true })
+  fs.writeFileSync(path.join(root, '.trash/notes'), 'FOREIGN\n', 'utf8') // 祖先段被非目录占用
+  const r = await deletePath(root, 'notes/sub', { confirm: 'notes/sub' })
+  assert.equal(r.ok, true)
+  assert.equal(r.trashPath, '.trash/notes.1/sub', '祖先段冲突改名（x→x.1）落点')
+  assert.ok(r.warnings.some((w) => w.includes('冲突改名')), '祖先段冲突改名必须留痕（INV-15 风格）')
+  assert.equal(fs.readFileSync(path.join(root, '.trash/notes'), 'utf8'), 'FOREIGN\n', '外来文件逐字节零误伤')
+  assert.equal(fs.readFileSync(path.join(root, '.trash/notes.1/sub/deep.md'), 'utf8'), '深层\n', '目录整体入改名位')
+  assert.equal(fs.existsSync(path.join(root, 'notes/sub')), false, '源已移入回收站')
+})
+
 // ── ⑤ 可逆往返（trash 取回=内容逐字节同）──────────────────────────────────────
 test('⑤ 可逆往返（文件）：delete→trash 取回（rename 回原位）→ 全树逐字节同（sha256 相等）', async (t) => {
   const root = tmpVault(t, SCENE)
