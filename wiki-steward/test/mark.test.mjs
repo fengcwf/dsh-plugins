@@ -472,3 +472,38 @@ test('模拟写坏必拒（终审③）：写坏恰在 sha256 行值段（同长
   assert.equal(r.rolledBack, true, '已逆放')
   assert.equal(fs.readFileSync(f, 'utf8'), content, '逆放后与原字节全等（journal 回滚）')
 })
+
+// ── 回归（遗留清障⑧ 行形核）：sha256 行 prefix/suffix（strip 区）字节不变——封「行内空白被写坏」盲区 ──
+
+test('模拟写坏必拒（清障⑧-a）：写坏恰在 sha256 行前缀（冒号后多一空格）→ write-corrupt + 逆放还原（strip 区核）', async () => {
+  const content = sample()
+  const { f } = put(content)
+  const r = await kbMark(f, {
+    _write: async (target, data) => {
+      // 只坏「前缀」字节（sha256: 后多插一空格）：值段不动、去掉 sha256 行整行的未动段 hash
+      // 照样相等——恰打在「strip 区（行内空白）无核」盲区上，必须靠行形核拒。
+      const bad = Buffer.from(data).toString('utf8').replace('sha256: ', 'sha256:  ')
+      fs.writeFileSync(target, bad)
+    },
+  })
+  assert.equal(r.ok, false, '前缀被写坏必须拒（旧盲区：未动段 hash 去掉整行=行内形损不可见）')
+  assert.equal(r.reason, 'write-corrupt')
+  assert.equal(r.rolledBack, true, '已逆放')
+  assert.equal(fs.readFileSync(f, 'utf8'), content, '逆放后与原字节全等')
+})
+
+test('模拟写坏必拒（清障⑧-b）：写坏恰在 sha256 行后缀（行尾 CR 被写掉，CRLF 形损）→ write-corrupt + 逆放还原', async () => {
+  const content = sample({ crlf: true })
+  const { f } = put(content)
+  const r = await kbMark(f, {
+    _write: async (target, data) => {
+      // 只坏「后缀」字节（sha256 行行尾 \r 被吃掉，其余行 CRLF 保持）：值段不动、未动段 hash 相等
+      const bad = Buffer.from(data).toString('utf8').replace(/(sha256: [0-9a-f]{64})\r/, '$1')
+      fs.writeFileSync(target, bad)
+    },
+  })
+  assert.equal(r.ok, false, '后缀（行尾 CR）被写坏必须拒（strip 区字节不变核）')
+  assert.equal(r.reason, 'write-corrupt')
+  assert.equal(r.rolledBack, true, '已逆放')
+  assert.equal(fs.readFileSync(f, 'utf8'), content, '逆放后与原字节全等')
+})

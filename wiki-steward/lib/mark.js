@@ -31,14 +31,17 @@
 //   失败清残——冲突扫描裁定：T8 已修全链，此处消费勿重造）；mode 沿用原文件权限位。
 //   改前快照 journalSave 亦纳 try/catch（读入与快照间文件被删/不可读的竞态 → 结构化 io-error，绝不抛裸异常）。
 //   写后未动段 hash 校验：写前记「去掉 sha256 行整行」的内容 hash，写后重读磁盘核对——
-//   不一致 = write-corrupt + journalSave/journalRollback 逆放还原（不静默留坏文件）。
+//   不一致 = write-corrupt + journalSave/journalRollback 逆放还原（不静默留坏文件）；
+//   另核 sha256 行值字节（fix-wave ③）与行形 prefix/suffix strip 区字节（遗留清障⑧，
+//   封「行内空白/行尾 CR 被写坏」盲区）。
 //   三处逆放统一按回滚实际成败取值 rolledBack（诚实留痕，绝不无条件报 true）；逆放失败错误进 message。
 //
 // 已知边界（如实申报，task-11 报告）：
 //   - vaultRoot 缺省不围栏（契约 `kbMark(file, {expectedRevision?})` 无 root 面）——传 vaultRoot 时
 //     走 fs-safe.realpathGuard 四步围栏（symlink 逃逸/越界拒）；T12/T14 消费方应传；
 //   - 孤 \r 内嵌行按 raw 行切分（与 Python universal-newlines 行切分有分歧，vault 实况 LF 不涉及）；
-//   - mode 经 umask 截损属 T8 挂账 deferred minor（journal 同面），本模块沿用 writeAtomic 语义。
+//   - mode 经 umask 截损属 T8 挂账 deferred minor（kbMark 写入面：writeAtomic 的 open mode 过 umask），
+//     本模块沿用 writeAtomic 语义；journal 逆放面已由遗留清障①收口（journalRollback 写后 fchmod 精确还原）。
 import fs from 'node:fs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
@@ -195,6 +198,8 @@ export async function kbMark(file, opts = {}) {
   // ── 两态字节手术（除 sha256 行值字节外零改动） ──
   let newBuf
   let newLine // 写后核对用：新 sha256 行在 newBuf 中的定位锚（内容起点）
+  let expPrefix // 写后核对用：sha256 行前缀字节（strip 区，遗留清障⑧ 行形核）
+  let expSuffix // 写后核对用：sha256 行后缀字节（strip 区：行内尾空白/行尾 CR 全在内）
   if (shaIdx.length === 1) {
     // ①更新态：只换值字节（行内前缀/空白/行尾 CR 全保留；空值且冒号后无空格 → 补一空格保 YAML 形）
     const l = lines[shaIdx[0]]
@@ -203,11 +208,15 @@ export async function kbMark(file, opts = {}) {
     const insert = (needSpace ? ' ' : '') + current
     newBuf = Buffer.concat([buf.subarray(0, vStart), Buffer.from(insert, 'utf8'), buf.subarray(vEnd)])
     newLine = l.start
+    expPrefix = Buffer.concat([buf.subarray(l.start, vStart), needSpace ? Buffer.from(' ') : Buffer.alloc(0)])
+    expSuffix = buf.subarray(vEnd, l.end)
   } else {
-    // ②补插态：新行恰插在闭合 --- 行之前（migrate 同款）
+    // ②补插态：新行恰插在闭合 --- 行之前（migrate 同款）；行形=规范 `sha256: <hash>`（无尾随空白/CR）
     const at = lines[closeIdx].start
     newBuf = Buffer.concat([buf.subarray(0, at), Buffer.from(`sha256: ${current}\n`, 'utf8'), buf.subarray(at)])
     newLine = at
+    expPrefix = Buffer.from('sha256: ')
+    expSuffix = Buffer.alloc(0)
   }
 
   // 幂等：构造内容与原文全等 → changed:false 零写盘（同值重写无变化）
@@ -243,7 +252,7 @@ export async function kbMark(file, opts = {}) {
     const rb = await rollback(snap)
     return fail(abs, 'io-error', `写后回读失败（${e?.code ?? e?.message ?? e}）；${rb.note}`, { code: e?.code, rolledBack: rb.rolledBack })
   }
-  const verify = verifyUnchanged(disk, preDigest, newLine, shaIdx.length === 1, current)
+  const verify = verifyUnchanged(disk, preDigest, newLine, shaIdx.length === 1, current, expPrefix, expSuffix)
   if (!verify.ok) {
     const rb = await rollback(snap)
     return fail(abs, 'write-corrupt', `写后未动段 hash 校验失败（${verify.reason}）；${rb.note}`, { rolledBack: rb.rolledBack })
@@ -268,9 +277,11 @@ async function rollback(snap) {
  * 写后核对：磁盘内容须可解析（frontmatter + 恰一条 sha256 行），且「去掉 sha256 行整行」的
  * 内容 hash 与写前记录一致（=除 sha256 行外逐字节未动，INV-1 hash 级对账 + INV-6 校验面），
  * **且 sha256 行值字节 == 回写值 current**（终审 fix-wave ③：写坏恰在值段时未动段 hash 照样相等
- * ——只核未动段是盲区，值段必须另核字节全等）。
+ * ——只核未动段是盲区，值段必须另核字节全等），
+ * **且 sha256 行 prefix/suffix（strip 区）字节 == 手术预期 expPrefix/expSuffix**（遗留清障⑧ 行形核：
+ * 行内空白/行尾 CR 被写坏同样在未动段 hash 盲区里——strip 区逐字节核封死）。
  */
-function verifyUnchanged(disk, preDigest, newLine, isUpdate, current) {
+function verifyUnchanged(disk, preDigest, newLine, isUpdate, current, expPrefix, expSuffix) {
   const lines = splitLines(disk)
   if (lines.length === 0 || !isFence(disk, lines[0])) return { ok: false, reason: '结构不可解析' }
   let closeIdx = -1
@@ -286,10 +297,20 @@ function verifyUnchanged(disk, preDigest, newLine, isUpdate, current) {
   // 插补态核对锚点：新行应在原闭合锚点处（防写坏挪位）；更新态行位可随值长度变化，只核 hash
   if (!isUpdate && lines[shaIdx[0]].start !== newLine) return { ok: false, reason: 'sha256 行位置漂移' }
   // 值段字节核（③盲区封口）：值字节逐字节 == 回写值（值段被写坏 = write-corrupt 拒）
-  const { vStart, vEnd } = valueSpan(disk, lines[shaIdx[0]])
+  const l = lines[shaIdx[0]]
+  const { vStart, vEnd } = valueSpan(disk, l)
   const val = disk.subarray(vStart, vEnd)
   const want = Buffer.from(current, 'utf8')
   if (val.length !== want.length || !val.equals(want)) return { ok: false, reason: 'sha256 行值字节 ≠ 回写值（值段被写坏）' }
+  // 行形核（⑧ strip 区封口）：prefix/suffix 字节 == 手术预期（行内空白/行尾 CR 形损 = write-corrupt 拒）
+  const pre = disk.subarray(l.start, vStart)
+  if (pre.length !== expPrefix.length || !pre.equals(expPrefix)) {
+    return { ok: false, reason: 'sha256 行前缀字节 ≠ 手术预期（strip 区被写坏）' }
+  }
+  const suf = disk.subarray(vEnd, l.end)
+  if (suf.length !== expSuffix.length || !suf.equals(expSuffix)) {
+    return { ok: false, reason: 'sha256 行后缀字节 ≠ 手术预期（strip 区被写坏）' }
+  }
   const postDigest = DIGEST(stripShaLine(disk, lines[shaIdx[0]]))
   if (postDigest !== preDigest) return { ok: false, reason: '未动段 hash 不一致' }
   return { ok: true }

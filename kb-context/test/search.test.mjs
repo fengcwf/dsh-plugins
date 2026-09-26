@@ -85,6 +85,21 @@ test('compileQuery：空查询 match=null（MATCH \'\' 是语法错误），整�
   }
 })
 
+test('compileQuery 单遍分区（遗留清障⑩）：每词恰探测一次（trigramTerms 每词双调→一次调用分区）', () => {
+  const seen = []
+  const r = compileQuery('alpha bb gamma', { _probe: (w) => { seen.push(w); return w.length >= 3 } })
+  assert.deepEqual(seen, ['alpha', 'bb', 'gamma'], '每词恰探测一次（单遍分区，绝不每词双调）')
+  assert.deepEqual(r.ftsWords, ['alpha', 'gamma'], '探测为真 → FTS 面')
+  assert.deepEqual(r.likeWords, ['bb'], '探测为假 → LIKE 兜底面')
+})
+
+test('文档契约（遗留清障⑪-a）：timeoutMs 语义 JSDoc——0/负/NaN 归零=立即超时而非不限时', () => {
+  const src = fs.readFileSync(new URL('../lib/search.js', import.meta.url), 'utf8')
+  assert.match(src, /timeoutMs[\s\S]{0,600}?立即超时/,
+    'search JSDoc 必须写明 timeoutMs 语义（0=立即超时，与 T5 inject 注记同语义）')
+  assert.match(src, /timeoutMs[\s\S]{0,600}?不限时/, '并写明非不限时（语义反差防误读）')
+})
+
 // ── S2：行为反例（真检索） ──
 
 test('① FTS 语法注入词被中和：NEAR/*/引号按字面命中，无语法错、无通配逃逸', async (t) => {

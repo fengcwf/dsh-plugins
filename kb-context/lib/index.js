@@ -17,7 +17,8 @@ import { collectEmptyState, isIndexHealthError } from './diagnose.js'
 
 export const name = 'kb-context'
 
-// vault 根路径出厂默认（R2 裁定 2026-09-24）：Config schema 默认值与 tools.js salvage 回退共用此单一来源
+// vault 根路径出厂默认（Controller 裁定② 2026-09-24；遗留清障⑪-d：原「R2」与 R-教训序列撞号已改）：
+// Config schema 默认值与 tools.js salvage 回退共用此单一来源
 export const DEFAULT_VAULT_ROOT = '/mnt/unraid_data/Obsidian'
 
 // 宿主服务缝：ctx.tools（T6 工具注册）——工具定义只走公开缝 defineTool（@deepseek-ai/dsh-tools，dsh-rtk-kit 同款姿势）
@@ -43,7 +44,7 @@ export const Config = z.object({
   }).prefault({}),
   // 检索总超时（毫秒）：超时 fail-open 降级，不阻塞会话
   timeoutMs: z.number().default(1500),
-  // vault 根路径（R2 裁定）：wiki_read fs 直读根——路径解析=vaultRoot 下相对路径 + realpath 防 symlink 逃逸
+  // vault 根路径（Controller 裁定②）：wiki_read fs 直读根——路径解析=vaultRoot 下相对路径 + realpath 防 symlink 逃逸
   vaultRoot: z.string().default(DEFAULT_VAULT_ROOT),
   // 作用域（相对 vault 根）：indexAll = FTS5 索引目录；grepOnDemand = 按需 grep 目录
   scope: z.object({

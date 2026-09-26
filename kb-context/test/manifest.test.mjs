@@ -21,3 +21,9 @@ test('zod peer 与 wiki-steward 对齐（双包同界）', () => {
   assert.equal(mine.peerDependencies?.zod, steward.peerDependencies?.zod,
     `两包 zod peer 同界（kb-context=${mine.peerDependencies?.zod} vs wiki-steward=${steward.peerDependencies?.zod}）`)
 })
+
+test('文档契约（遗留清障⑪-d）：R2 注释撞号改（vaultRoot=Controller 裁定②，R-教训序列号不再复用）', () => {
+  const src = fs.readFileSync(fileURLToPath(new URL('../lib/index.js', import.meta.url)), 'utf8')
+  assert.ok(!src.includes('R2 裁定'), 'R2 撞号引用不得残留（与 R-教训序列 R11/R12/R13… 撞号）')
+  assert.match(src, /Controller 裁定②/, 'vaultRoot 出厂默认注记=Controller 裁定②')
+})

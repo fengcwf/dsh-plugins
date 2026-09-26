@@ -839,3 +839,98 @@ test('⑦ T15 修复后形态：crud 拍平+补字段+INDEX 登记 → error 清
   assert.ok(afterLoop.findings.some((f) => f.rule === 'naming' && f.severity === 'warn'), '纯英文命名形态欠账留 warn（不改名，降档非清零）')
   assert.ok(afterLoop.findings.some((f) => f.rule === 'structure' && f.severity === 'warn'), '缺四段结构欠账留 warn（最小干预不动正文）')
 })
+
+// ── 遗留清障波（④⑤⑥⑦⑨ 逐条恰红回归先行）────────────────────────────────────
+
+/** readdir 故障注入缝（_readdir，mark.js _write 同款纪律：真 errno 注入非 mock——root 下 chmod 拒读无效） */
+const denyReaddir = (blocked) => (d, o) => {
+  if (path.resolve(d).includes(blocked)) {
+    const e = new Error(`EACCES: permission denied, scandir '${d}'`)
+    e.code = 'EACCES'
+    throw e
+  }
+  return fs.readdirSync(d, o)
+}
+
+test('③ naming 正例（遗留清障④）：纯扩展 B+ CJK 命名（代理对区段）不误报裸非豁免', async () => {
+  const root = mkVault()
+  const f = put(root, 'wiki/concepts/𠀋𠀌.md', page()) // U+2000B/U+2000C：BMP 外扩展 B 纯 CJK 名
+  const r = await kbValidate(f, { rules: ['naming'], vaultRoot: root })
+  assert.deepEqual(r.findings, [], '纯扩展 B CJK 命名=类型化形态接受，绝不误报裸非豁免 warn')
+})
+
+test('目录模式 readdir 失败留痕（遗留清障⑤）：不可读目录 → findings io（校验漏报面收口）', async () => {
+  const root = mkVault()
+  put(root, 'wiki/concepts/ok.md', page())
+  put(root, 'wiki/locked/深页.md', page())
+  const r = await kbValidate(path.join(root, 'wiki'), { vaultRoot: root, _readdir: denyReaddir('locked') })
+  assert.ok(r.findings.some((f) => f.rule === 'io' && f.severity === 'error' && /locked/.test(f.message) && /EACCES/.test(f.message)),
+    '不可读目录必须 findings io 留痕（静默吞=校验漏报面）')
+  assert.equal(r.verdict, 'fail', '扫描不完整=结果不可信（io error → fail）')
+})
+
+test('② INDEX 后向解析 readdir 失败留痕（遗留清障⑤）：stem 命中面漏扫 → findings io 留痕', async () => {
+  const root = mkVault()
+  put(root, 'wiki/INDEX.md', INDEX_SEED + '- [[deep-page|深页]]\n')
+  put(root, 'wiki/locked/deep-page.md', page()) // 唯一命中在不可读目录内 → 扫描漏报面
+  const r = await kbValidate(path.join(root, 'wiki/INDEX.md'), { rules: ['index'], vaultRoot: root, _readdir: denyReaddir('locked') })
+  assert.ok(r.findings.some((f) => f.rule === 'io' && /locked/.test(f.message)),
+    'INDEX 核对的漏扫面必须 io 留痕（死链/漏登判定可能因漏扫失真）')
+})
+
+test('⑥ evidence 域收窄（遗留清障⑥）：raw/ 捕获产物与无 vault 域文件不触发 evidence 规则（wikiRel!==null 一门）', async () => {
+  const root = mkVault()
+  // (a) raw/ 捕获产物（vault 内但非 wiki/ 域）：调研名文件零证据清单 → 不触发
+  const raw = put(root, 'raw/2026-09-24-01-00-捕获调研.md', '# 捕获产物\n正文无证据清单\n')
+  const r1 = await kbValidate(raw, { rules: ['evidence'], vaultRoot: root })
+  assert.deepEqual(r1.findings, [], 'raw/ 捕获产物不套 wiki 证据规则（wikiRel!==null 一门）')
+  assert.equal(r1.verdict, 'pass')
+  // (b) 无 vault 上下文（无 wiki/INDEX.md 祖先）：域不可定 → 同样不触发
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-validate-bare-'))
+  const b = put(bare, '2026-09-24-独立调研.md', '# 独立调研\n正文\n')
+  const r2 = await kbValidate(b, { rules: ['evidence'] })
+  assert.deepEqual(r2.findings, [], '无 vault 域上下文不套 wiki 证据规则')
+  // 正例对照（既有语义不动）：wiki/ 调研页缺证据清单仍必 FAIL
+  const w = put(root, 'wiki/syntheses/2026-09-24-调研摘要.md', page())
+  const r3 = await kbValidate(w, { rules: ['evidence'], vaultRoot: root })
+  assert.ok(r3.findings.some((f) => f.rule === 'evidence' && f.severity === 'error'), 'wiki/ 域调研页证据规则照常生效')
+})
+
+test('⑥ 引用行判据收紧（遗留清障⑦）：fence/代码块内行不算引用行（引用行须正文）', async () => {
+  const root = mkVault()
+  const body = `## 概述
+调研覆盖 wiki 治理。
+
+## 关键点
+- **要点** 说明。
+
+## 关联
+- [[concepts/梯度计费|梯度计费]] 说明。
+
+## 来源
+\`\`\`markdown
+行动前已读 [[reference/ERRORS|ERRORS]] 与 [[reference/LEARNINGS|LEARNINGS]]。
+\`\`\`
+
+| 本地文档 | 用途 |
+| --- | --- |
+| raw/projects/kb-plugins/changes/2026-09-23-x/tasks.md | 任务清单 |
+`
+  const f = put(root, 'wiki/syntheses/2026-09-24-02-00-fence引用-调研摘要.md', page(GOOD_FIELDS, body))
+  const r = await kbValidate(f, { rules: ['evidence'], vaultRoot: root })
+  assert.equal(r.findings.length, 2, 'fence 内的 ERRORS/LEARNINGS 不算引用行 → 两条缺引用 error')
+  assert.ok(r.findings.every((x) => x.rule === 'evidence' && x.severity === 'error'))
+  assert.ok(r.findings.some((x) => /ERRORS/.test(x.message)))
+  assert.ok(r.findings.some((x) => /LEARNINGS/.test(x.message)))
+  assert.equal(r.verdict, 'fail')
+})
+
+test('② index 反例（遗留清障⑨）：key=\'\' 畸形登记 → 歧义拒 error（不再静默 continue）', async () => {
+  const root = mkVault()
+  put(root, 'wiki/concepts/梯度计费.md', page()) // INDEX_SEED 登记目标实存
+  put(root, 'wiki/INDEX.md', INDEX_SEED + '- [[|只别名条目]] — 畸形登记\n')
+  const r = await kbValidate(path.join(root, 'wiki/INDEX.md'), { rules: ['index'], vaultRoot: root })
+  assert.ok(r.findings.some((f) => f.rule === 'index' && f.severity === 'error' && /畸形登记/.test(f.message) && f.line === 13),
+    `key='' 畸形登记必须歧义拒 error 带行号（findings=${JSON.stringify(r.findings)}）`)
+  assert.equal(r.verdict, 'fail')
+})

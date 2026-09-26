@@ -9,7 +9,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-const { apply, DEFAULT_VAULT_ROOT } = await import('../lib/index.js')
+const { apply, DEFAULT_VAULT_ROOT, buildTools } = await import('../lib/index.js')
 const { resetStats, getStats } = await import('../lib/buffer.js')
 const { createQueue, dedupKeyFor } = await import('../lib/queue.js')
 
@@ -496,4 +496,13 @@ test('T14 写入拦截接线：默认 readOnly 全 deny（INV-7）；vaultRoot �
     { name: 'write', arguments: { file_path: path.join(root, 'wiki', '越权根放页.md'), content: BAD_NEW } }, next)
   assert.equal(r2, 'NEXT', 'vaultRoot 缺省 → 不拦')
   assert.ok(ctx2.warnings.some((l) => /vaultRoot/.test(l)), '缺省留痕（INV-15 禁静默）')
+})
+
+test('文案批（遗留清障⑪-b）：kb_mark 失败原因枚举死项清理（read-only 不在枚举——kbMark 无此失败面）', () => {
+  const defs = buildTools({ defineTool: (d) => d })
+  const mark = defs.find((d) => d.name === 'kb_mark')
+  assert.ok(mark, 'kb_mark 工具面在场')
+  const desc = mark.output.schema.properties.reason.description
+  assert.ok(!desc.includes('read-only'), `kb_mark reason 枚举不得含死项 read-only：${desc}`)
+  assert.match(desc, /write-corrupt/, '存活枚举面保留（write-corrupt 等）')
 })

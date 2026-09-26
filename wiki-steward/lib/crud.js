@@ -6,7 +6,8 @@
 //  * vaultRoot **必传**（T11 裁定：缺省=拒+留痕，绝不裸操作）；写面=wiki/ 域 + .trash（raw/ 与业务域拒）。
 //  * 默认只读（readOnly 缺省 true）：写/删/改名需显式 readOnly:false 才动手（INV-7）。
 //  * 统一覆盖语义（六坑④）：目标已存在缺省拒（target-exists），显式 overwrite:true 才替换——防 rename/写入静默覆盖。
-//  * 删除 → `.trash/<rel>`（冲突改名 `.N` 防覆盖）+ 双确认（confirm=目标路径复述，缺省/不符即拒）；
+//  * 删除 → `.trash/<rel>`（冲突改名 `.N` 防覆盖；落点 O_EXCL 占位——wx 文件/mkdir 目录独占后
+//    rename 覆盖占位=唯一落点，窄窗内被抢建绝不覆盖，遗留清障③）+ 双确认（confirm=目标路径复述，缺省/不符即拒）；
 //    .trash 无法就位 → 拒（INV-7 反例：无 .trash 直接删必须拒——本文件零直接 rm 用户内容）。
 //  * 改名/移动=多文件事务（六坑①）：改前 journal 快照 → 逐文件原子写+锁 → wikilink 重写 → INDEX 同事务 →
 //    失败整体回滚（journal 逆放）；批量失败即中止回滚（六坑②）；锁内 RMW 不吞并发（六坑③：锁内读新鲜内容，
@@ -204,14 +205,17 @@ function planRewrite(text, ctx) {
 
 // ── wiki 文件清单（walk 不跟 symlink 目录，与 validate.js collectMd 同款；供歧义判据与改写扫描） ──
 
-function listWikiMd(root) {
+/** 遗留清障⑤：readdir 失败不静默吞——ioSink 留痕 {dir, code}（改写漏扫面收口）；
+ *  _readdir 为故障注入缝（mark.js _write 同款纪律，真 errno 注入非 mock） */
+function listWikiMd(root, ioSink = null, _readdir = fs.readdirSync) {
   const out = []
   const base = path.join(root, 'wiki')
   const walk = (d) => {
     let entries
     try {
-      entries = fs.readdirSync(d, { withFileTypes: true })
-    } catch {
+      entries = _readdir(d, { withFileTypes: true })
+    } catch (e) {
+      ioSink?.push({ dir: d, code: e?.code ?? e?.message ?? String(e) })
       return
     }
     for (const e of entries) {
@@ -364,14 +368,40 @@ export async function wikiWrite(target, content, opts = {}) {
 
 // ── wikiDelete（.trash 可逆 + 双确认；INV-7 / OW-US-6）────────────────────────
 
-/** trash 落点：`.trash/<rel>`；冲突 → 扩展名前插 `.N`（x.md → x.1.md；无扩展 → proj.1）防覆盖 */
-function trashRelFor(rel, taken) {
+/**
+ * trash 落点占位（遗留清障③：taken 检查→rename 窄窗防覆盖）：候选序 = `.trash/<rel>` →
+ * 扩展名前插 `.N`（x.md → x.1.md；无扩展 → proj.1）。每候选以**独占创建占位**落点——
+ * 文件 `'wx'` 空文件（O_EXCL）/ 目录独占 `mkdir`——已存在（EEXIST）即下一候选；
+ * 占位成功 = 该落点唯一归我（随后 rename 覆盖占位=唯一落点，绝不覆盖他人文件）。
+ * @returns {Promise<{rel: string, conflict: boolean}>} conflict=首选点被占（冲突改名留痕用）
+ */
+async function reserveTrashRel(root, rel, kind) {
   const ext = path.posix.extname(rel)
   const base = ext === '' ? rel : rel.slice(0, -ext.length)
   for (let n = 0; ; n++) {
     const cand = n === 0 ? `.trash/${rel}` : `.trash/${base}.${n}${ext}`
-    if (!taken(cand)) return cand
+    const abs = path.join(root, cand)
+    try {
+      if (kind === 'directory') {
+        await fs.promises.mkdir(abs) // 独占 mkdir：已存在即 EEXIST
+      } else {
+        const fh = await fs.promises.open(abs, 'wx') // O_EXCL 独占占位：已存在即 EEXIST
+        await fh.close()
+      }
+      return { rel: cand, conflict: n > 0 }
+    } catch (e) {
+      if (e?.code === 'EEXIST') continue // 窄窗内被抢建 → 下一候选（绝不夺他人落点）
+      throw e
+    }
   }
+}
+
+/** 占位清残（rename 失败后）：只清本调用创建的占位，绝不触碰他人落点 */
+async function releaseTrashPlaceholder(abs, kind) {
+  try {
+    if (kind === 'directory') await fs.promises.rmdir(abs)
+    else await fs.promises.rm(abs, { force: true })
+  } catch { /* 清残尽力而为，保留原始错误 */ }
 }
 
 /**
@@ -422,22 +452,28 @@ export async function wikiDelete(target, opts = {}) {
   } catch (e) {
     return fail('io-error', `无法就位 .trash（拒绝直接删）：${e?.code ?? e?.message ?? e}`, warnings)
   }
-  const taken = (cand) => fs.existsSync(path.join(v.root, cand))
-  const trashRel = trashRelFor(r.rel, taken)
-  if (trashRel !== `.trash/${r.rel}`) {
-    warnings.push(`trash 冲突改名防覆盖：${r.rel} → ${trashRel}`)
-  }
   const result = await withLeaseLock(f.real, async (meta) => {
     if (meta.tookOver) {
       warnings.push(`stale-lock-takeover：${r.rel}（陈旧 ${Math.round(meta.staleAgeMs)}ms，已接管）`)
     }
-    await fs.promises.rename(f.real, path.join(v.root, trashRel))
-    return true
+    // 落点占位（遗留清障③）：锁内独占占位定唯一落点——taken 检查→rename 窄窗内被抢建的点
+    // 绝不被 rename 静默覆盖（rename 只覆盖本调用自己的占位）；EEXIST → 下一候选（冲突改名留痕）
+    const spot = await reserveTrashRel(v.root, r.rel, kind)
+    if (spot.conflict) {
+      warnings.push(`trash 冲突改名防覆盖：${r.rel} → ${spot.rel}`)
+    }
+    try {
+      await fs.promises.rename(f.real, path.join(v.root, spot.rel))
+    } catch (e) {
+      await releaseTrashPlaceholder(path.join(v.root, spot.rel), kind) // 失败清残：只清本调用占位
+      throw e
+    }
+    return spot.rel
   }).catch((e) => e)
   if (result instanceof Error) {
     return fail('io-error', `移入 .trash 失败：${result?.code ?? result?.message ?? result}`, warnings)
   }
-  return { ok: true, file: r.rel, trashPath: trashRel, kind, warnings }
+  return { ok: true, file: r.rel, trashPath: result, kind, warnings }
 }
 
 // ── wikiRename（改名/移动 = journal 多文件事务；OW-US-5 / OW-INV-4）────────────
@@ -519,7 +555,11 @@ export async function wikiRename(from, to, opts = {}) {
   const oldStem = path.posix.basename(oldKey)
   const newKey = rt.rel.slice('wiki/'.length, -'.md'.length)
   const newStem = path.posix.basename(newKey)
-  const allMd = listWikiMd(v.root)
+  const scanIssues = [] // 遗留清障⑤：readdir 失败留痕（链接改写漏扫面 → warnings，绝不静默）
+  const allMd = listWikiMd(v.root, scanIssues, opts._readdir)
+  for (const io of scanIssues) {
+    warnings.push(`io：目录不可读（链接改写漏扫面，其下页面引用未改写）：${io.dir}（${io.code}）`)
+  }
   const oldStemUnique = allMd.filter((rel) => path.posix.basename(rel) === `${oldStem}.md` && rel !== rf.rel).length === 0
   const newStemUnique = allMd.filter((rel) => path.posix.basename(rel) === `${newStem}.md` && rel !== rt.rel && rel !== rf.rel).length === 0
   const ctxPlan = { oldKey, oldStem, oldStemUnique, newKey, newStem, newStemUnique }

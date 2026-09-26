@@ -13,7 +13,8 @@
 //                    （R17/INV-7：网络盘 symlink 逃逸必须拒；链式多跳同样拒——fallback 对每跳归一目标
 //                    自身再 lstat 解到底，T8 fix round1 Important #1）。返回软结果 {ok,…}，永不抛。
 //   journalSave/Rollback — 改前快照/逆放最小原语（R19 dry-run 快照可逆、T12 journal 多文件事务由调用方
-//                    逐文件组合）：快照记 content+sha256+mode（hr98w 对账面），逆放经 writeAtomic 原子还原、
+//                    逐文件组合）：快照记 content+sha256+mode（hr98w 对账面），逆放经 writeAtomic 原子还原
+//                    + 写后 fchmod 精确还原 mode（不受 umask 截损，遗留清障①），
 //                    快照时不存在 → 逆放即删除（幂等）。
 import fs from 'node:fs'
 import path from 'node:path'
@@ -120,10 +121,14 @@ let LOCK_SEQ = 0
  *   onTakeover 回调留痕（绝不静默拆锁）。
  *   保守面：无 lease.json / 坏 JSON 的锁目录（他原语产物、写入中途）**不判 stale 不接管**，等待超时；
  *   等待 waitMs 超时 → ELOCKTIMEOUT 上抛，临界区绝不执行。
- *   释放守卫：finally 只在 lease.owner 仍是自己时拆锁——锁被接管后旧持有者的迟到 finally
- *   **绝不拆掉新持有者的锁**（owner token 比对）。
- * 已知限（显式，测试锁定）：lease 取自获取时刻、临界区内不续期——临界区必须短于 leaseMs
- * （crud 事务均秒级；超长临界区由调用方分段或调大 leaseMs）。
+ *   释放（遗留清障② 释放原子化）：**成功 `unlink(lease.json)` 作为原子放弃**（替代 check-then-act
+ *   read→rm：摘牌是单文件原子操作，绝不 read-比对-rm 递归强拆锁目录树）；随后清目录 = **非递归 rmdir
+ *   且仅当锁目录仍是本临界区 mkdir 出的实例**（dev+inode 同源实例门）——被接管后锁目录是新实例
+ *   （实例门跳过）或目录非空（rmdir ENOTEMPTY 安全失败），「绝不拆新持有者的锁」由结构保证而非
+ *   check-then-act 断言。残局自清：lease 缺失（ENOENT）不挡实例门清目录（绝不留残锁）。
+ *   已知限（显式，测试锁定）：lease 取自获取时刻、临界区内不续期——临界区必须短于 leaseMs
+ *   （crud 事务均秒级；超长临界区由调用方分段或调大 leaseMs）；接管竞态窗内旧持有者的摘牌
+ *   可能摘掉新持有者的 lease 条目（其锁目录与临界区不受影响，其自行释放仍经实例门清理）。
  * @param {string} target 锁命名对象（本体不被触碰）
  * @param {(meta: {tookOver: boolean, staleAgeMs: number|null}) => Promise<T>|T} fn 临界区
  * @param {{waitMs?: number, pollMs?: number, leaseMs?: number, onTakeover?: (meta) => void}} [opts]
@@ -141,6 +146,8 @@ export async function withLeaseLock(target, fn, { waitMs = 5000, pollMs = 20, le
   const start = Date.now()
   let tookOver = false
   let staleAgeMs = null
+  let dirDev = null
+  let dirIno = null // 锁目录实例身份（dev+inode）：释放侧「绝不拆新持有者」的结构门
   for (;;) {
     try {
       await fs.promises.mkdir(lockDir) // 非递归 mkdir 原子获取
@@ -170,8 +177,12 @@ export async function withLeaseLock(target, fn, { waitMs = 5000, pollMs = 20, le
       await sleep(pollMs)
       continue
     }
-    // 已获锁：写 lease 凭据（失败清残后上抛——绝不留无主锁）
+    // 已获锁：记锁目录实例身份（此刻的 dev+inode = 我 mkdir 出的那一个实例），再写 lease 凭据
+    // （任一步失败清残后上抛——绝不留无主锁）
     try {
+      const st = await fs.promises.stat(lockDir)
+      dirDev = st.dev
+      dirIno = st.ino
       await fs.promises.writeFile(leaseFile, JSON.stringify({ owner, at: Date.now() }))
     } catch (e) {
       await fs.promises.rm(lockDir, { recursive: true, force: true }).catch(() => {})
@@ -182,15 +193,19 @@ export async function withLeaseLock(target, fn, { waitMs = 5000, pollMs = 20, le
   try {
     return await fn({ tookOver, staleAgeMs })
   } finally {
-    // 释放守卫：owner 匹配才拆锁（锁被接管后旧持有者的迟到 finally 不得拆新持有者的锁）
+    // 释放 = 成功 unlink(lease.json) 作为原子放弃（替代 check-then-act read→rm）：
+    // 摘牌单文件原子（unlink 恰一胜者），绝不再 read-比对后 rm -rf 递归强拆锁目录树
     try {
-      const lease = JSON.parse(await fs.promises.readFile(leaseFile, 'utf8'))
-      if (lease?.owner === owner) {
-        await fs.promises.rm(lockDir, { recursive: true, force: true }).catch(() => {})
+      await fs.promises.unlink(leaseFile)
+    } catch { /* ENOENT=已被接管摘牌/损坏：照样走实例门清目录（残锁自清） */ }
+    // 清目录 = 非递归 rmdir 且仅当锁目录仍是本临界区 mkdir 出的实例（dev+inode 同源）——
+    // 新持有者实例绝不被拆（实例门跳过）；目录非空（他人之物在内）rmdir 安全失败
+    try {
+      const st = await fs.promises.lstat(lockDir)
+      if (st.isDirectory() && dirIno !== null && st.dev === dirDev && st.ino === dirIno) {
+        await fs.promises.rmdir(lockDir)
       }
-    } catch {
-      // lease 读不出（已被接管拆除/损坏）：保守不 rm——绝不误删他人锁
-    }
+    } catch { /* 目录不在/非空/lstat 失败：保守不动 */ }
   }
 }
 
@@ -307,7 +322,9 @@ export async function journalSave(file) {
 }
 
 /**
- * 逆放（journalSave 的回滚半边）：existed → writeAtomic 原子还原字节+权限；!existed → 删除事后创建的文件。
+ * 逆放（journalSave 的回滚半边）：existed → writeAtomic 原子还原字节 + 写后 fchmod 精确还原
+ * 权限位（遗留清障①：writeAtomic 的 open mode 过 umask 截损——0077 下 0o640→0o600；fchmod
+ * 不受 umask 影响，快照记录的 mode 逐位还原，双 umask 口径同判）；!existed → 删除事后创建的文件。
  * 幂等：force 忽略 ENOENT，重复 rollback 无害。T12 多文件事务 = 调用方按快照逆序逐文件调用。
  * @param {{file: string, existed: boolean, content: Buffer|null, sha256: string|null, mode: number|null}} snap
  */
@@ -317,6 +334,16 @@ export async function journalRollback(snap) {
   }
   if (snap.existed) {
     await writeAtomic(snap.file, snap.content, { mode: snap.mode ?? 0o644 })
+    if (snap.mode != null) {
+      // fchmod 精确还原（open 后 fchmod，T8 deferred「journal 权限 umask 截损」收口）：
+      // rename 落盘后的目标 mode 是「snap.mode & ~umask」，这里逐位补回快照记录值
+      const fh = await fs.promises.open(snap.file, 'r')
+      try {
+        await fh.chmod(snap.mode)
+      } finally {
+        await fh.close()
+      }
+    }
     return
   }
   await fs.promises.rm(snap.file, { force: true })

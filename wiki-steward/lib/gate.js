@@ -162,11 +162,11 @@ export function createWriteGate({ quickFindings, getCfg, warn }) {
         reason: `[wiki-steward 写入拦截] 新建页不合维护指引：${brief(findings)}；${GUIDE}修正后再写（六字段 frontmatter/类型化命名/目录归属）`,
       }
     }
-    // ① 存量降格：exists 的一切 quickCheck 问题（含 error 级）一律 ask——deny 会锁死
+    // ① 存量分流：exists 的一切 quickCheck 问题（含 error 级）一律 ask——deny 会锁死
     //   「编辑来修复存量问题」的通道；构造性强制=指路非坐牢。
     return {
       kind: 'ask',
-      reason: `[wiki-steward 写入拦截] 存量页问题不阻塞修复（warn/error 同判一律提示，①存量降格）：${brief(findings)}；${GUIDE}建议顺手修正`,
+      reason: `[wiki-steward 写入拦截] 存量页问题不阻塞修复（warn/error 同判一律提示）：${brief(findings)}；${GUIDE}建议顺手修正`,
     }
   }
 

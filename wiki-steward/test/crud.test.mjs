@@ -14,8 +14,10 @@ import path from 'node:path'
 
 const { wikiRead, wikiWrite, wikiDelete, wikiRename, DEFAULT_JOURNAL_MAX_BYTES } =
   await import('../lib/crud.js')
+const { withLeaseLock } = await import('../lib/fs-safe.js')
 
 const mkdtemp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ws-crud-'))
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 /** 临时 vault：root/wiki/ 就位（写面=wiki 域 + .trash，测试 mkdtemp 临时 root）；dirs=预建子目录 */
 function mkVault(...dirs) {
@@ -231,6 +233,55 @@ test('wikiDelete 防覆盖：.trash/<rel> 已在 → 冲突改名（x.1.md）绝
   assert.equal(fs.readFileSync(path.join(root, '.trash/wiki/a/x.1.md'), 'utf8'), '新垃圾')
 })
 
+// ── 遗留清障③：.trash 落点 O_EXCL 占位（taken 检查→rename 窄窗防覆盖）──────────
+
+test('wikiDelete .trash 落点窄窗防覆盖（文件）：锁内占位 wx——并发者抢建绝不被 rename 静默覆盖', async () => {
+  const root = mkVault()
+  put(root, 'wiki/a/x.md', '新垃圾')
+  const srcReal = fs.realpathSync(path.join(root, 'wiki/a/x.md'))
+  const trashAbs = path.join(root, '.trash/wiki/a/x.md')
+  // 真实锁占位：wikiDelete 的 withLeaseLock(f.real) 被预占 → 其 taken 检查（旧码在锁外）此刻已过
+  let unblock
+  const heldLock = withLeaseLock(srcReal, () => new Promise((r) => { unblock = r }))
+  await sleep(30) // 持锁拿稳
+  const del = wikiDelete('wiki/a/x.md', { vaultRoot: root, readOnly: false, confirm: 'wiki/a/x.md' })
+  await sleep(80) // wikiDelete 已选定 .trash/wiki/a/x.md（taken 检查通过）并阻塞在锁获取
+  // 并发者在窄窗内抢建落点（O_EXCL 语义）——旧码 rename 会把它静默覆盖
+  fs.mkdirSync(path.dirname(trashAbs), { recursive: true })
+  fs.writeFileSync(trashAbs, 'COMPETITOR-MARKER', { flag: 'wx' })
+  unblock()
+  await heldLock
+  const r = await del
+  assert.equal(r.ok, true)
+  assert.equal(fs.readFileSync(trashAbs, 'utf8'), 'COMPETITOR-MARKER', '并发者文件逐字节完好（绝不静默覆盖）')
+  assert.notEqual(r.trashPath, '.trash/wiki/a/x.md', '落点避让（占位=唯一落点，抢建者占的点不被夺）')
+  assert.equal(fs.readFileSync(path.join(root, r.trashPath), 'utf8'), '新垃圾', '删除内容照常进 .trash 可逆')
+  assert.equal(fs.existsSync(path.join(root, 'wiki/a/x.md')), false, '原路径消失')
+})
+
+test('wikiDelete .trash 落点窄窗防覆盖（目录）：锁内占位 mkdir——并发者目录槽绝不被 rename 顶替', async () => {
+  const root = mkVault()
+  put(root, 'wiki/proj/overview.md', '概览')
+  const srcReal = fs.realpathSync(path.join(root, 'wiki/proj'))
+  const trashAbs = path.join(root, '.trash/wiki/proj')
+  let unblock
+  const heldLock = withLeaseLock(srcReal, () => new Promise((r) => { unblock = r }))
+  await sleep(30)
+  const del = wikiDelete('wiki/proj', { vaultRoot: root, readOnly: false, confirm: 'wiki/proj' })
+  await sleep(80)
+  fs.mkdirSync(path.dirname(trashAbs), { recursive: true })
+  fs.mkdirSync(trashAbs) // 并发者抢建目录槽（旧码 rename 顶替空目录=槽被夺）
+  fs.writeFileSync(path.join(trashAbs, 'keep.txt'), '他人物件')
+  unblock()
+  await heldLock
+  const r = await del
+  assert.equal(r.ok, true)
+  assert.equal(fs.readFileSync(path.join(trashAbs, 'keep.txt'), 'utf8'), '他人物件', '并发者目录槽完好')
+  assert.notEqual(r.trashPath, '.trash/wiki/proj', '落点避让')
+  assert.equal(fs.readFileSync(path.join(root, r.trashPath, 'overview.md'), 'utf8'), '概览', '目录整体进新落点可逆')
+  assert.equal(fs.existsSync(path.join(root, 'wiki/proj')), false, '原路径消失')
+})
+
 test('wikiDelete 目录：整体进 .trash/<rel>（可逆）；.trash 无法就位 → 拒且绝不直接删', async () => {
   const root = mkVault()
   put(root, 'wiki/proj/overview.md', '概览')
@@ -259,6 +310,26 @@ test('wikiDelete 默认只读 + not-found：拒 + 零副作用', async () => {
   const r2 = await wikiDelete('wiki/none.md', { vaultRoot: root, readOnly: false, confirm: 'wiki/none.md' })
   assert.equal(r2.reason, 'not-found')
   assert.equal(fs.existsSync(path.join(root, '.trash')), false)
+})
+
+test('wikiRename readdir 失败留痕（遗留清障⑤）：链接改写漏扫面 → warnings io 留痕（绝不静默漏改）', async () => {
+  const root = mkVault()
+  put(root, 'wiki/a.md', '# A\n')
+  put(root, 'wiki/refs.md', '见 [[a]]\n')
+  put(root, 'wiki/locked/深引用页.md', '也见 [[a]]\n') // 不可读目录：其下引用改写漏扫面必须留痕
+  const denyReaddir = (d, o) => {
+    if (path.resolve(d).includes('locked')) {
+      const e = new Error(`EACCES: permission denied, scandir '${d}'`)
+      e.code = 'EACCES'
+      throw e
+    }
+    return fs.readdirSync(d, o)
+  }
+  const r = await wikiRename('wiki/a.md', 'wiki/b.md', { vaultRoot: root, readOnly: false, _readdir: denyReaddir })
+  assert.equal(r.ok, true)
+  assert.ok(r.warnings.some((w) => /io/.test(w) && /locked/.test(w) && /EACCES/.test(w)),
+    `改写漏扫面必须 warnings io 留痕（warnings=${JSON.stringify(r.warnings)}）`)
+  assert.equal(fs.readFileSync(path.join(root, 'wiki/refs.md'), 'utf8'), '见 [[b]]\n', '可扫面照常改写')
 })
 
 // ── fix r1 #2 symlink 源门（源路径自身 lstat，拒 symlink/其他——防残渣+断链）────────

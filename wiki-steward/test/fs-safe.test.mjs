@@ -264,9 +264,9 @@ test('journal 往返：既有文件 save → 改 → rollback 字节还原 + sha
   const back = fs.readFileSync(f, 'utf8')
   assert.equal(back, orig, '字节级还原')
   assert.equal(sha256(Buffer.from(back)), snap.sha256, '还原后 sha256 与快照一致')
-  // 期望按当前 umask 计算（终审 fix-wave ④）：逆放经 writeAtomic=「mode 经 umask 生效」
-  // （T8 挂账 deferred minor，journal 同面，triage 结论不动）——022 下=0o640，0077 下=0o600，全套摆脱 umask 环境依赖
-  assert.equal(fs.statSync(f).mode & 0o777, 0o640 & ~process.umask(), '权限还原（经 umask 生效）')
+  // 逆放权限 = 精确还原快照记录 mode（遗留清障①）：journalRollback 写后 fchmod——fchmod 不受
+  // umask 截损（writeAtomic 的 open mode 过 umask：0077 下 0o640→0o600），故 022/0077 双口径都恰为 0o640
+  assert.equal(fs.statSync(f).mode & 0o777, 0o640, '权限精确还原（fchmod 不受 umask 截损，双 umask 口径同判）')
 })
 
 test('journal 往返：不存在文件 save（existed:false）→ 创建后 rollback 删除；重复 rollback 幂等', async () => {
@@ -408,7 +408,7 @@ test('withLeaseLock stale 接管：lease 超龄 → 接管成功 + meta.tookOver
   assert.equal(fs.existsSync(lockDir), false, '接管后正常释放')
 })
 
-test('withLeaseLock 释放守卫：接管发生后旧持有者 finally 不拆新持有者的锁（owner token）', async () => {
+test('withLeaseLock 释放守卫：接管发生后旧持有者 finally 不拆新持有者的锁（unlink 原子放弃+实例门）', async () => {
   const dir = mkdtemp()
   const target = path.join(dir, 'page.md')
   const lockDir = `${target}.lock`
@@ -434,6 +434,52 @@ test('withLeaseLock 释放守卫：接管发生后旧持有者 finally 不拆新
   assert.equal(fs.existsSync(lockDir), true, 'A 的迟到释放不得移除 B 的锁')
   await pB
   assert.equal(fs.existsSync(lockDir), false, 'B 正常释放后锁移除')
+})
+
+// 遗留清障②三条恰红回归：释放=「成功 unlink(lease.json) 作为原子放弃」（替代 check-then-act read→rm），
+// 清目录=非递归 rmdir + 锁目录实例门（dev+inode 同源）——「绝不拆新持有者」由结构保证
+
+test('withLeaseLock 释放不递归强拆：锁目录内他人文件绝不陪葬（rmdir 非递归，非空安全失败）', async () => {
+  const dir = mkdtemp()
+  const target = path.join(dir, 'page.md')
+  const lockDir = `${target}.lock`
+  await withLeaseLock(target, async () => {
+    // 持锁期间锁目录里出现「他人之物」（marker）：旧码 rm -rf 递归强拆会连它一起删
+    const lease = JSON.parse(fs.readFileSync(path.join(lockDir, 'lease.json'), 'utf8'))
+    fs.writeFileSync(path.join(lockDir, 'lease.json'),
+      JSON.stringify({ owner: lease.owner, at: Date.now() })) // owner 仍是自己（守卫比对必过）
+    fs.writeFileSync(path.join(lockDir, 'hold-notes.txt'), '他人物件，不得陪葬')
+  }, { leaseMs: 60_000 })
+  assert.equal(fs.existsSync(path.join(lockDir, 'hold-notes.txt')), true, '释放绝不递归强拆（他人文件完好）')
+  assert.equal(fs.existsSync(lockDir), true, '目录非空 → rmdir 非递归安全失败（目录在场）')
+  fs.rmSync(lockDir, { recursive: true, force: true })
+})
+
+test('withLeaseLock 释放实例门：锁目录被替换为新实例后，迟到释放绝不拆新持有者的锁目录', async () => {
+  const dir = mkdtemp()
+  const target = path.join(dir, 'page.md')
+  const lockDir = `${target}.lock`
+  await withLeaseLock(target, async () => {
+    const lease = JSON.parse(fs.readFileSync(path.join(lockDir, 'lease.json'), 'utf8'))
+    // 模拟接管进行时的落点：锁目录被 rm 后重建为新实例（新 dev+inode），lease 内容仍是我的 owner——
+    // 旧码 owner 比对通过后 rm -rf 会把「新实例目录」整个拆掉（读→rm 窄窗的确定性替身）
+    fs.rmSync(lockDir, { recursive: true, force: true })
+    fs.mkdirSync(lockDir)
+    fs.writeFileSync(path.join(lockDir, 'lease.json'),
+      JSON.stringify({ owner: lease.owner, at: Date.now() }))
+  }, { leaseMs: 60_000 })
+  assert.equal(fs.existsSync(lockDir), true, '迟到释放绝不拆新持有者的锁目录（实例门：非我 mkdir 的实例不动）')
+  fs.rmSync(lockDir, { recursive: true, force: true })
+})
+
+test('withLeaseLock 释放残锁清理：lease 缺失但目录实例是自己的 → 仍清目录（绝不留残锁）', async () => {
+  const dir = mkdtemp()
+  const target = path.join(dir, 'page.md')
+  const lockDir = `${target}.lock`
+  await withLeaseLock(target, async () => {
+    fs.rmSync(path.join(lockDir, 'lease.json')) // 模拟 lease 被摘牌/丢失，但锁目录实例仍是我建的
+  }, { leaseMs: 60_000 })
+  assert.equal(fs.existsSync(lockDir), false, 'unlink 失败（ENOENT）不挡清目录：实例门认得自己的锁目录')
 })
 
 test('withLeaseLock 保守语义：无 lease.json 的锁目录（他原语产物）不接管，等待超时', async () => {

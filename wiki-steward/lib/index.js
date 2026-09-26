@@ -163,7 +163,7 @@ export function buildTools({ defineTool, configSource = () => ({}) }) {
           changed: { type: 'boolean', description: '是否发生回写（幂等：同值 false 零写盘）' },
           previous: { type: 'string', description: '回写前值（无标记行=null）' },
           current: { type: 'string', description: '回写后的 body sha256' },
-          reason: { type: 'string', description: '失败原因枚举（no-frontmatter/ambiguous-sha256/revision-conflict/fenced/not-found/io-error/write-corrupt/read-only）' },
+          reason: { type: 'string', description: '失败原因枚举（no-frontmatter/ambiguous-sha256/revision-conflict/fenced/not-found/io-error/write-corrupt）' },
           message: { type: 'string', description: '失败详情（含 rolledBack 口径说明）' },
           ...WARN_PROP,
         },

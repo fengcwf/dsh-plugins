@@ -209,6 +209,16 @@ test('存量 error 级问题 = ask（审前裁定①存量降格：含 error 级
   assert.match(r.reason, /related|frontmatter|缺/, 'reason 含问题摘要')
 })
 
+test('文案批（遗留清障⑪-c）：ask reason 去裁定黑话（①存量降格式内部措辞不进用户面文案）', async (t) => {
+  const root = mkVault(t)
+  const f = put(root, 'wiki/concepts/存量缺字段.md', MISSING_RELATED)
+  const { gate } = mkGate({ vaultRoot: root, write: { readOnly: false } })
+  const r = await gate(exec('edit', { file_path: f, old_string: '说明 what/why。', new_string: '说明改了。' }), next)
+  assert.equal(r.kind, 'ask')
+  assert.ok(!/存量降格|审前裁定|裁定[①②③]|①|②/.test(r.reason), `reason 不得带裁定黑话：${r.reason}`)
+  assert.match(r.reason, /存量页问题不阻塞修复/, '润色后措辞保持语义（指路不阻塞）')
+})
+
 test('存量修复性编辑 = allow（补丁外推：按编辑后内容判，不按预存态误判）', async (t) => {
   const root = mkVault(t)
   const f = put(root, 'wiki/concepts/存量缺字段.md', MISSING_RELATED)

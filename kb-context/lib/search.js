@@ -42,14 +42,22 @@ function escapeRegExp(s) {
 /**
  * 查询编译（逐词引号 OR + 短词/空词 LIKE 兜底路由）：
  * - 词项判定复用 index-db.trigramTerms：非空 = FTS5 trigram 可检索（≥3 码点），空 = 短词盲区 → LIKE；
+ *   遗留清障⑩：**单遍分区**——每词恰探测一次（旧码 fts/like 双 filter=每词双调 trigramTerms）；
+ *   `_probe` 为故障/计数注入缝（插桩非 mock，缺省=真 trigramTerms 判定）；
  * - MATCH 表达式逐词 `"term"` 引号化、词内 `"` 加倍，OR 连接——FTS 语法关键字/通配/括号全部中和为字面；
  * - 空查询（零词）match=null + 占位空词走 LIKE（`MATCH ''` 是语法错误，实测）。
+ * @param {string} query 查询串（空白切词）
+ * @param {{_probe?: (w: string) => boolean}} [opts] _probe=词项探测缝（测试插桩；缺省 trigramTerms(w).size > 0）
  * @returns {{words: string[], ftsWords: string[], likeWords: string[], match: string|null, likePatterns: string[]}}
  */
-export function compileQuery(query) {
+export function compileQuery(query, { _probe = (w) => trigramTerms(w).size > 0 } = {}) {
   const words = tokenize(query)
-  const ftsWords = words.filter((w) => trigramTerms(w).size > 0)
-  const likeWords = words.filter((w) => trigramTerms(w).size === 0)
+  const ftsWords = []
+  const likeWords = []
+  for (const w of words) {
+    if (_probe(w)) ftsWords.push(w)
+    else likeWords.push(w)
+  }
   if (words.length === 0) likeWords.push('') // 空查询：整查询走 LIKE（browse 全量）
   const match = ftsWords.length > 0
     ? ftsWords.map((w) => `"${w.replace(/"/g, '""')}"`).join(' OR ')
@@ -158,6 +166,9 @@ function likeSql(patternCount) {
  * @param {import('node:sqlite').DatabaseSync} db openDb() 产物
  * @param {string} query 查询串（空白切词）
  * @param {{maxSnippets?: number, maxTokens?: number, timeoutMs?: number}} [opts]
+ *   timeoutMs 语义（Ruling「timeoutMs<=0=立即超时」，与 T5 inject 注记同语义）：deadline 预算毫秒；
+ *   **0/负/NaN 归零 = 立即超时**（返回 {hits:[], degraded:'timeout'}）而**非不限时**——`Math.max(0, Number||0)`
+ *   把负/非数收敛为 0，deadline 即刻过期。缺省 DEFAULT_TIMEOUT_MS。
  */
 export function search(db, query, opts = {}) {
   const maxSnippets = opts.maxSnippets ?? DEFAULT_MAX_SNIPPETS

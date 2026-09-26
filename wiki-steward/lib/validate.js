@@ -20,7 +20,7 @@
 //      项目文档缺 projects/<project>/ 层 → error
 //   ⑤ structure — 四段（概述→关键点→关联→来源）顺序 + wikilink 语法（代码块内豁免）→ warn
 //   ⑥ evidence — 证据清单（INV-15）：调研摘要类文档（判定面=文件名/标题/type 含「调研|盘点|摘要」）必含
-//      ERRORS/LEARNINGS 引用行 + 本地文档清单表 → error（缺任一必 FAIL）
+//      ERRORS/LEARNINGS 引用行（须正文行：fence/代码块内行不算，遗留清障⑦）+ 本地文档清单表 → error（缺任一必 FAIL）
 //
 // verdict 语义（分级判据）：error→'fail'；仅 warn→'warn'；无 finding→'pass'。
 // 分级原则：违反必填/禁令/INV 反例矩阵（缺证据清单必 FAIL）= error；命名形态/结构完整性等
@@ -32,7 +32,8 @@
 //   - 规则⑤四段只套 SCHEMA 语义页目录（concepts/entities/topics/sources/syntheses/solutions）；
 //     reference/（ERRORS/LEARNINGS/工具清单迁移件）与 projects/（项目文档自有结构）不查四段；
 //   - 规则③形态不查 reference/ 与项目文档约定名（overview/proposal/tasks/completion-summary/conversation/solution）；
-//   - 规则⑥为调研摘要类专项（INV-15），非调研类文档不查证据清单（零误报）；
+//   - 规则⑥为调研摘要类专项（INV-15），非调研类文档不查证据清单（零误报）；且只套 wiki/ 域
+//     （wikiRel !== null 一门，遗留清障⑥：raw/ 捕获产物/域外文件不触发 evidence 规则）；
 //   - 词表对账/全库扫描不在本模块（T2 validateIndex 教训：那是索引层的事）——性能=按 target 范围限定。
 // 零第三方依赖（node:fs/node:path）；零构建纯 ESM。
 import fs from 'node:fs'
@@ -63,7 +64,9 @@ const PROJECT_STATUS_VOCAB = {
 const REUSABILITY = ['cross-project', 'project-specific', 'one-time']
 /** 文件名硬禁止字符（wiki-ingest 禁止行 + NUL） */
 const FORBIDDEN_CHARS = /[\\/:*?"<>|\u0000]/
-const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/
+/** CJK 判据（遗留清障④）：BMP 三段（扩A/基本/兼容）+ 扩展 B+ 代理对区段（U+20000–U+3FFFF，
+ *  u 形码点匹配）——纯扩展 B 命名不再误报裸非豁免 */
+const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u{20000}-\u{3ffff}]/u
 /** 素材/报告时间戳形：YYYY-MM-DD[-HH-MM]-描述 */
 const RE_TIMESTAMP = /^\d{4}-\d{2}-\d{2}(-\d{2}-\d{2})?-.+$/
 /** Session 产物形：标题 - YYYY-MM-DD-HH-MM */
@@ -309,10 +312,27 @@ function checkStructure(body) {
   return out
 }
 
-/** ⑥ 证据清单（INV-15）：ERRORS/LEARNINGS 引用行 + 本地文档清单表 */
+/** fence（``` / ~~~）内行剔除（遗留清障⑦：引用行须正文——代码块/fence 内的示例行不算引用） */
+const stripFenceLines = (lines) => {
+  const out = []
+  let fence = null
+  for (const line of lines) {
+    const fenceM = /^\s{0,3}(```|~~~)/.exec(line)
+    if (fenceM) {
+      if (fence === null) fence = fenceM[1]
+      else if (fence === fenceM[1]) fence = null
+      continue
+    }
+    if (fence !== null) continue
+    out.push(line)
+  }
+  return out
+}
+
+/** ⑥ 证据清单（INV-15）：ERRORS/LEARNINGS 引用行 + 本地文档清单表（fence 内行不算，引用行须正文） */
 function checkEvidence(body) {
   const out = []
-  const lines = body.split('\n')
+  const lines = stripFenceLines(body.split('\n'))
   const hasErrors = lines.some((l) => l.includes('ERRORS'))
   const hasLearnings = lines.some((l) => l.includes('LEARNINGS'))
   if (!hasErrors) out.push(finding('evidence', 'error', '证据清单缺 ERRORS 引用行（INV-15：阶段产物必含 ERRORS/LEARNINGS 引用）'))
@@ -356,24 +376,30 @@ const readUtf8 = (p) => {
   }
 }
 
-/** INDEX 双向上下文：一次校验一份（target 范围限定，不做全库词表对账） */
+/** INDEX 双向上下文：一次校验一份（target 范围限定，不做全库词表对账）；
+ *  malformed = key='' 畸形登记（如 `[[|只别名]]`）——遗留清障⑨：留痕交由 checkIndex 歧义拒，绝不静默 continue */
 function loadIndex(vaultRoot) {
   const idxAbs = path.join(vaultRoot, 'wiki', 'INDEX.md')
   const r = readUtf8(idxAbs)
-  if (!r.ok) return { exists: false, links: [], targets: new Set() }
+  if (!r.ok) return { exists: false, links: [], targets: new Set(), malformed: [] }
   const links = []
   const targets = new Set()
+  const malformed = []
   r.text.replace(/\r\n/g, '\n').split('\n').forEach((line, i) => {
     const re = /\[\[([^\]\[]+?)\]\]/g
     let m
     while ((m = re.exec(line)) !== null) {
-      const target = m[1].split('|')[0].trim()
-      if (target === '') continue
+      const raw = m[1]
+      const target = raw.split('|')[0].trim()
+      if (target === '') {
+        malformed.push({ raw, line: i + 1 })
+        continue
+      }
       links.push({ target, line: i + 1 })
       targets.add(target)
     }
   })
-  return { exists: true, links, targets }
+  return { exists: true, links, targets, malformed }
 }
 
 // ── 主入口 ──────────────────────────────────────────────────────────────────
@@ -411,26 +437,36 @@ export async function kbValidate(target, opts = {}) {
   }
   const vaultRoot = opts.vaultRoot ? path.resolve(opts.vaultRoot) : findVaultRoot(st.isDirectory() ? abs : path.dirname(abs))
   if (st.isDirectory()) {
-    const files = collectMd(abs)
+    const ioIssues = [] // 遗留清障⑤：readdir 失败留痕（findings io，绝不静默漏报）
+    const files = collectMd(abs, ioIssues, opts._readdir)
     const results = []
     const agg = []
     for (const f of files) {
-      const sub = await validateOne(f, vaultRoot, rulesSel)
+      const sub = await validateOne(f, vaultRoot, rulesSel, opts._readdir)
       results.push(sub)
       for (const x of sub.findings) agg.push({ file: sub.file, ...x })
     }
+    for (const io of ioIssues) {
+      agg.push({ file: abs, ...finding('io', 'error', `目录不可读（校验漏报面收口，其下页面未纳入核对）：${io.dir}（${io.code}）`) })
+    }
     return { file: abs, findings: agg, verdict: verdictOf(agg), results }
   }
-  return validateOne(abs, vaultRoot, rulesSel)
+  return validateOne(abs, vaultRoot, rulesSel, opts._readdir)
 }
 
-const collectMd = (dir) => {
+/**
+ * 收集目录树 .md（walk 不跟 symlink 目录）。
+ * 遗留清障⑤：readdir 失败**不再静默吞**——经 ioSink 留痕 {dir, code}（校验漏报面收口，
+ * 消费方转 findings io / warnings）；_readdir 为故障注入缝（mark.js _write 同款纪律，真 errno 注入非 mock）。
+ */
+const collectMd = (dir, ioSink = null, _readdir = fs.readdirSync) => {
   const out = []
   const walk = (d) => {
     let entries
     try {
-      entries = fs.readdirSync(d, { withFileTypes: true })
-    } catch {
+      entries = _readdir(d, { withFileTypes: true })
+    } catch (e) {
+      ioSink?.push({ dir: d, code: e?.code ?? e?.message ?? String(e) })
       return
     }
     for (const e of entries) {
@@ -445,15 +481,13 @@ const collectMd = (dir) => {
 }
 
 /** 单文件校验：realpathGuard 围栏内读 → 按范围判定 → 六规则（顺序稳定） */
-async function validateOne(abs, vaultRoot, rulesSel) {
+async function validateOne(abs, vaultRoot, rulesSel, _readdir = fs.readdirSync) {
   const find = []
   if (vaultRoot === null) {
-    // 无 vault 上下文：仅 ⑥ 证据清单可判定（文件名/正文自含）
+    // 无 vault 上下文：域不可定（wikiRel 无从谈起）——遗留清障⑥「⑥只套 wiki/ 域（wikiRel!==null 一门）」：
+    // raw/ 捕获产物/域外文件一并不套 wiki 维护规则，本分支只报读失败
     const r = readUtf8(abs)
     if (!r.ok) return { file: abs, findings: [finding('io', 'error', `目标不可读：${r.error?.code ?? r.error?.message}`)], verdict: 'fail' }
-    const fm = parseFrontmatter(r.text)
-    const stem = path.basename(abs, '.md')
-    if (rulesSel.includes('evidence') && isEvidenceDoc(stem, fm)) find.push(...checkEvidence(fm?.body ?? r.text))
     return { file: abs, findings: find, verdict: verdictOf(find) }
   }
 
@@ -493,10 +527,11 @@ async function validateOne(abs, vaultRoot, rulesSel) {
     } else if (rule === 'structure') {
       if (wikiRel !== null && !isInfra && STRUCTURE_TOPS.has(top)) find.push(...checkStructure(fm?.body ?? r.text))
     } else if (rule === 'evidence') {
-      if (!isInfra && isEvidenceDoc(stem, fm)) find.push(...checkEvidence(fm?.body ?? r.text))
+      // 遗留清障⑥：wikiRel !== null 一门（raw/ 捕获产物不触发 evidence 规则）
+      if (wikiRel !== null && !isInfra && isEvidenceDoc(stem, fm)) find.push(...checkEvidence(fm?.body ?? r.text))
     } else if (rule === 'index') {
       // INDEX.md 自身走后向死链检查（infra 豁免面不挡它）；其余非 infra 页查漏登
-      if (wikiRel !== null && (wikiRel === 'INDEX.md' || !isInfra)) find.push(...checkIndex(abs, vaultRoot, wikiRel, stem))
+      if (wikiRel !== null && (wikiRel === 'INDEX.md' || !isInfra)) find.push(...checkIndex(abs, vaultRoot, wikiRel, stem, _readdir))
     }
   }
   return { file: abs, findings: find, verdict: verdictOf(find) }
@@ -539,30 +574,39 @@ const pathHits = (vaultRoot, key, rootKey) => {
   return []
 }
 
-/** stem 形后向解析：wiki/ 任意层下查找 <stem>.md（Obsidian 语义，含 wiki 根层），返回 vault 相对 posix 路径 */
-const stemHits = (vaultRoot, stem) =>
-  collectMd(path.join(vaultRoot, 'wiki'))
+/** stem 形后向解析：wiki/ 任意层下查找 <stem>.md（Obsidian 语义，含 wiki 根层），返回 vault 相对 posix 路径；
+ *  ioSink 接 collectMd 留痕（遗留清障⑤：命中面漏扫必须可见，死链/漏登判定可能因漏扫失真） */
+const stemHits = (vaultRoot, stem, ioSink = null, _readdir = fs.readdirSync) =>
+  collectMd(path.join(vaultRoot, 'wiki'), ioSink, _readdir)
     .filter((p) => path.basename(p) === `${stem}.md`)
     .map((p) => path.relative(vaultRoot, p).split(path.sep).join('/'))
 
-/** ② INDEX 双向：非 INDEX 页查漏登；wiki/INDEX.md 查死链/歧义（带行号） */
-function checkIndex(abs, vaultRoot, wikiRel, stem) {
+/** ② INDEX 双向：非 INDEX 页查漏登；wiki/INDEX.md 查死链/歧义/畸形登记（带行号） */
+function checkIndex(abs, vaultRoot, wikiRel, stem, _readdir = fs.readdirSync) {
   const idx = loadIndex(vaultRoot)
   if (!idx.exists) {
     return [finding('index', 'error', 'wiki/INDEX.md 不存在/不可读：无法核对登记（漏登）')]
   }
   if (wikiRel === 'INDEX.md') {
     const out = []
+    // 遗留清障⑨：key='' 畸形登记 → 歧义拒 error（替代静默 continue——畸形条目必须人工可见）
+    for (const { raw, line } of idx.malformed) {
+      out.push(finding('index', 'error', `INDEX 畸形登记：[[${raw}]] key='' 目标为空（歧义拒，人工补正登记后重试）`, line))
+    }
+    const ioIssues = [] // 遗留清障⑤：stem 命中面 readdir 失败留痕
     for (const { target, line } of idx.links) {
       const { kind, key, rootKey } = parseRegTarget(target)
       if (key === '') continue
-      const hits = kind === 'path' ? pathHits(vaultRoot, key, rootKey) : stemHits(vaultRoot, key)
+      const hits = kind === 'path' ? pathHits(vaultRoot, key, rootKey) : stemHits(vaultRoot, key, ioIssues, _readdir)
       if (hits.length === 0) {
         out.push(finding('index', 'error', `INDEX 死链：[[${target}]] 指向的页面不存在`, line))
       } else if (hits.length > 1) {
         // stem 形多命中：Obsidian 可解析（非死链不 FAIL），提示歧义建议改路径形
         out.push(finding('index', 'warn', `INDEX 条目歧义：[[${target}]] 匹配 ${hits.length} 个页面（${hits.join('、')}），建议改路径形登记`, line))
       }
+    }
+    for (const io of ioIssues) {
+      out.push(finding('io', 'error', `INDEX 核对目录不可读（命中面漏扫，死链/漏登判定可能失真）：${io.dir}（${io.code}）`))
     }
     return out
   }
