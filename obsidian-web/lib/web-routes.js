@@ -3,15 +3,23 @@
 //   exact /ob/api/tree      GET → {data:{root,nodes}, total}          树列表（total=递归节点数）
 //   exact /ob/api/file      GET → {data:{path,content,mtime,etag,size,rendered:{html,toc}}}  读+live 渲染
 //   exact /ob/api/backlinks GET → {data:{path,backlinks:[{path,line,text}]}, total}
+//   exact /ob/api/search    GET → {data:{backend,degraded,query,results}, total}  全文+标题搜索（T3/OW-US-2）
 //   exact /ob               GET → 302 /ob/                            尾斜杠规整
 //   prefix /ob              GET → web/dist 静态构建物（index.html + assets）
 // API 形（沿历史 obsidian-workbench 惯例）：成功 {data, total?}；失败 {error:{code,message}}。
+// 搜索结果项形（键集锁定）：{path, line, snippet, score, title}；
+//   snippet=转义 HTML + <mark> 高亮（唯一标签，ARC-1 消毒口径）；
+//   score=排序权重（越大越优，仅用于结果排序，非匹配概率/百分比——detpecca 教训语义进描述/文案）；
+//   degraded=null | {reason:'timeout', message, scanned}（超时 fail-open 部分结果，INV-15 风格留痕）。
+// 检索后端可插拔（T11 索引三保险接管）：registerWebRoutes 第三参 search.backends.fts 注入即用，
+//   短查询（2 字盲区/纯符号）结构性走 scan/LIKE 兜底，后端切换零 API 变化。
 // 鉴权缝（OW-INV-8）：每条 handler 第一行过 ctx.connection.requestRejection({headers}) → 401/403。
 // 宿主 match 语义（dsh-host-webserver 源码实测）：exact 优先 → 最长前缀，prefix 匹配 p 与 p/<anything>。
 import fs from 'node:fs'
 import path from 'node:path'
 import { listTree, readNote, scanBacklinks } from './vault-ops.js'
 import { renderMarkdown } from './render.js'
+import { createSearchService } from './search.js'
 
 const JSON_TYPE = 'application/json; charset=utf-8'
 const MIME = {
@@ -116,6 +124,32 @@ function backlinksHandler(getConfig) {
   }
 }
 
+function searchHandler(getConfig, service) {
+  return async (req, res) => {
+    try {
+      const params = new URL(req.url, 'http://localhost').searchParams
+      const q = params.get('q')
+      if (typeof q !== 'string' || q.trim() === '') {
+        failRequest(res, Object.assign(new Error('q 参数缺失'), { code: 'bad_request' }))
+        return
+      }
+      const limitRaw = params.get('limit')
+      let limit
+      if (limitRaw !== null) {
+        limit = Number(limitRaw)
+        if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+          failRequest(res, Object.assign(new Error('limit 非法（1..200 整数）'), { code: 'bad_request' }))
+          return
+        }
+      }
+      const data = await service.search(getConfig().vaultRoot, q, limit === undefined ? {} : { limit })
+      sendJson(res, 200, { data, total: data.results.length })
+    } catch (err) {
+      failRequest(res, err)
+    }
+  }
+}
+
 function redirectHandler(req, res) {
   res.writeHead(302, { location: '/ob/' })
   res.end()
@@ -170,9 +204,13 @@ function staticHandler(distDir) {
  * 注册 /ob/ 全部路由，返回 dispose 全量注销。
  * @param ctx 宿主上下文（webServer.register + connection.requestRejection 缝）
  * @param getConfig 热改语义：每次请求现读当前配置
+ * @param distDir web/dist 构建物目录
+ * @param search 可选检索面调参/后端缝：{backends:{fts}, concurrency, timeoutMs, limit}
+ *               （T11 索引三保险：注入 backends.fts 即接管 FTS5 检索，HTTP API 形零变化）
  */
-export function registerWebRoutes(ctx, getConfig, { distDir }) {
+export function registerWebRoutes(ctx, getConfig, { distDir, search }) {
   const disposers = []
+  const searchService = createSearchService(search ?? {})
   const add = (kind, routePath, handler) => disposers.push(ctx.webServer.register({ kind, path: routePath, handler }))
   const wrap = (handler) => (req, res) => {
     if (!authGate(ctx, req, res)) return
@@ -182,6 +220,7 @@ export function registerWebRoutes(ctx, getConfig, { distDir }) {
   add('exact', '/ob/api/tree', wrap(treeHandler(getConfig)))
   add('exact', '/ob/api/file', wrap(fileHandler(getConfig)))
   add('exact', '/ob/api/backlinks', wrap(backlinksHandler(getConfig)))
+  add('exact', '/ob/api/search', wrap(searchHandler(getConfig, searchService)))
   add('exact', '/ob', wrap(redirectHandler))
   add('prefix', '/ob', wrap(staticHandler(distDir)))
   return () => {

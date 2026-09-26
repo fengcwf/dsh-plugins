@@ -186,3 +186,21 @@ body {
   text-decoration: line-through;
   color: var(--dsw-alias-state-error-primary, CanvasText);
 }
+
+/* ── 搜索面板（T3）：查询条 + score 语义句描述位 + snippet 高亮承接（服务端 <mark>）── */
+.ob-search-bar {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+
+.ob-hint {
+  margin: 4px 0 8px;
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  color: var(--dsw-alias-label-secondary, GrayText);
+}
+
+.ob-snippet mark {
+  background: var(--dsw-alias-state-warning-bg, Mark);
+  color: var(--dsw-alias-state-warning-text, MarkText);
+}

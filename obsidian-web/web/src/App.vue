@@ -7,10 +7,11 @@ import { extractToc } from './lib/toc.js'
 import SideMenu from './components/SideMenu.vue'
 import NoteTree from './components/NoteTree.vue'
 import ReadingPane from './components/ReadingPane.vue'
+import SearchPanel from './components/SearchPanel.vue'
 import BacklinksPanel from './components/BacklinksPanel.vue'
 import TocPanel from './components/TocPanel.vue'
 
-const PANELS = { read: ReadingPane, backlinks: BacklinksPanel }
+const PANELS = { read: ReadingPane, search: SearchPanel, backlinks: BacklinksPanel }
 
 const nodes = ref([])
 const state = ref({ selected: null, expanded: [] })

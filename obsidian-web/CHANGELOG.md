@@ -9,3 +9,6 @@
 - **测试**：`test/load.test.mjs`（load 冒烟 + R13 回归 + Config 默认值精确断言/坏类型拒/无共享引用 + apply 告警行为）+ `test/manifest.test.mjs`（依赖形态 + 发版纪律契约回归）。
 - **目录树与阅读面（T2）**：`lib/render.js`+`lib/render-inline.js` live 渲染最小版（唯一渲染源，输出零未转义 HTML + URL scheme 白名单 + 事件属性中和，OW-INV-6 雏形）；`lib/vault-ops.js` 读侧（树列表/读文件/反链扫描，路径围栏雏形）；`lib/web-routes.js` `/ob/` JSON 读接口 + 静态 UI（每条路由过 `requestRejection` 鉴权缝，OW-INV-8/10）。
 - **web/ 前端脚手架（T2）**：Vue3 + vite + element-plus——三栏构图（树 300px 虚拟滚动 / 阅读 / TOC 248px）+ 侧栏菜单中央列同页面板切换（OW-US-1/14）；`web/dist` 构建物随包入库（安装期零构建）。
+- **全 vault 全文+标题搜索（T3 / OW-US-2）**：`lib/search.js` 查询编译纯函数（空/1 字/2 字/中英混/纯符号边界，2 字盲区=短词与纯符号词走 LIKE/前缀兜底）+ **可插拔检索后端缝**（`registerWebRoutes` 第三参 `search.backends.fts` 注入即接管，T11 索引三保险接 FTS5 后端零 API 变化；短查询结构性走 scan 兜底）+ scan 后端（全量扫描、并发 8 限流、单查 2s 超时 fail-open 降级留痕 `degraded:{reason:'timeout',message,scanned}`，INV-15 风格）。
+- **搜索 API（T3）**：`GET /ob/api/search?q=&limit=` → `{data:{backend,degraded,query,results}, total}`，结果项 `{path, line, snippet, score, title}` 键集锁定；snippet=转义 HTML + `<mark>` 高亮（唯一标签，ARC-1 消毒口径，HTML 注入 query 负例必测）；**score=排序权重（越大越优，仅用于结果排序，非匹配概率/百分比——detpecca 教训，语义句进描述/文案）**。
+- **前端搜索面板（T3）**：侧栏「搜索」同页面板一格（OW-US-14）——`SearchPanel.vue`（容器：查询态+API）/`SearchResults.vue`（展示：标题·路径:行号·score·消毒 snippet）/`web/src/lib/search-view.js`（SCORE_HINT 语义句+降级提示纯函数）；降级提示进界面留痕。

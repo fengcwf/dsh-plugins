@@ -52,7 +52,8 @@ function dispatch(routes, req, res) {
 
 async function withServer(fn, opts = {}) {
   const { routes, ctx } = makeCtx(opts)
-  registerWebRoutes(ctx, () => ({ vaultRoot: VAULT, ui: { pageSize: 50 } }), { distDir: DIST })
+  const config = opts.config ?? { vaultRoot: VAULT, ui: { pageSize: 50 } }
+  registerWebRoutes(ctx, () => config, { distDir: DIST, search: opts.search })
   const server = http.createServer((req, res) => {
     Promise.resolve(dispatch(routes, req, res)).catch(() => {
       if (!res.headersSent) res.writeHead(500)
@@ -69,13 +70,14 @@ async function withServer(fn, opts = {}) {
 }
 
 // ── 注册面（API 形锁定到接线层）───────────────────────────────────────────────
-test('注册面锁定：apply 恰注册 3 条 exact API + /ob 重定向 + prefix /ob 静态面', () => {
+test('注册面锁定：apply 恰注册 4 条 exact API + /ob 重定向 + prefix /ob 静态面', () => {
   const { routes, ctx } = makeCtx()
   apply(ctx, { vaultRoot: VAULT })
   assert.deepEqual([...routes.keys()].sort(), [
     'exact:/ob',
     'exact:/ob/api/backlinks',
     'exact:/ob/api/file',
+    'exact:/ob/api/search',
     'exact:/ob/api/tree',
     'prefix:/ob',
   ])
@@ -84,7 +86,7 @@ test('注册面锁定：apply 恰注册 3 条 exact API + /ob 重定向 + prefix
 test('dispose 全量注销；无宿主缝（独立测试上下文）不炸不注册', () => {
   const { routes, ctx } = makeCtx()
   const dispose = registerWebRoutes(ctx, () => ({ vaultRoot: VAULT, ui: { pageSize: 50 } }), { distDir: DIST })
-  assert.equal(routes.size, 5)
+  assert.equal(routes.size, 6)
   dispose()
   assert.equal(routes.size, 0)
   assert.doesNotThrow(() => apply({}, { vaultRoot: VAULT }), '缺 webServer/connection 缝时跳过注册（非宿主上下文）')
@@ -158,10 +160,71 @@ test('GET /ob/api/backlinks 形状锁定：{data:{path,backlinks:[{path,line,tex
   })
 })
 
+// ── /ob/api/search（T3 搜索面）───────────────────────────────────────────────
+const SEARCHVAULT = path.join(FIXTURES, 'searchvault')
+
+test('GET /ob/api/search 形状锁定：信封 {data,total}；data={backend,degraded,query,results}；项={path,line,snippet,score,title}', async () => {
+  await withServer(async (base) => {
+    const res = await fetch(`${base}/ob/api/search?q=${encodeURIComponent('needle')}`)
+    assert.equal(res.status, 200)
+    assert.match(res.headers.get('content-type'), /application\/json/)
+    const body = await res.json()
+    assert.deepEqual(Object.keys(body).sort(), ['data', 'total'])
+    assert.deepEqual(Object.keys(body.data).sort(), ['backend', 'degraded', 'query', 'results'])
+    assert.equal(body.data.query, 'needle')
+    assert.equal(body.data.backend, 'scan', 'T11 前默认 scan 后端（fts 缝可插拔）')
+    assert.equal(body.data.degraded, null)
+    assert.equal(body.total, body.data.results.length)
+    assert.ok(body.total >= 2, '全文命中真检索')
+    for (const item of body.data.results) {
+      assert.deepEqual(Object.keys(item).sort(), ['line', 'path', 'score', 'snippet', 'title'], JSON.stringify(item))
+      assert.equal(typeof item.score, 'number', 'score=排序权重（数值）')
+      assert.ok(!/<(?!\/?mark>)/.test(item.snippet), `snippet 唯一标签=<mark>：${item.snippet}`)
+    }
+  }, { config: { vaultRoot: SEARCHVAULT, ui: { pageSize: 50 } } })
+})
+
+test('GET /ob/api/search 负例：缺参/空查询 400，形 {error:{code,message}}；limit 非法 400', async () => {
+  await withServer(async (base) => {
+    for (const url of ['/ob/api/search', `/ob/api/search?q=${encodeURIComponent('  ')}`, '/ob/api/search?q=x&limit=0', '/ob/api/search?q=x&limit=abc']) {
+      const res = await fetch(base + url)
+      assert.equal(res.status, 400, url)
+      const body = await res.json()
+      assert.deepEqual(Object.keys(body).sort(), ['error'])
+      assert.equal(body.error.code, 'bad_request', url)
+    }
+  }, { config: { vaultRoot: SEARCHVAULT, ui: { pageSize: 50 } } })
+})
+
+test('GET /ob/api/search 超时降级留痕（INV-15 风格）：fail-open 200 + degraded 提示，不出 5xx', async () => {
+  await withServer(async (base) => {
+    const res = await fetch(`${base}/ob/api/search?q=${encodeURIComponent('needle')}`)
+    assert.equal(res.status, 200, '超时 fail-open：降级不报错')
+    const body = await res.json()
+    assert.ok(body.data.degraded, '降级标记进返回')
+    assert.equal(body.data.degraded.reason, 'timeout')
+    assert.match(body.data.degraded.message, /超时/)
+    assert.ok(Array.isArray(body.data.results), '返回部分结果')
+  }, {
+    config: { vaultRoot: SEARCHVAULT, ui: { pageSize: 50 } },
+    search: { timeoutMs: 0 },
+  })
+})
+
+test('GET /ob/api/search 2 字盲区与标题命中走同 API 形（LIKE 兜底零差异）', async () => {
+  await withServer(async (base) => {
+    const r = await fetch(`${base}/ob/api/search?q=${encodeURIComponent('链接')}`)
+    assert.equal(r.status, 200)
+    const body = await r.json()
+    assert.deepEqual(body.data.results.map((x) => [x.path, x.line]), [['notes/beta.md', 3]])
+    assert.ok(body.data.results[0].snippet.includes('<mark>链接</mark>'))
+  }, { config: { vaultRoot: SEARCHVAULT, ui: { pageSize: 50 } } })
+})
+
 // ── 方法/鉴权缝 ─────────────────────────────────────────────────────────────
 test('非 GET 一律 405 {error:{code:"method_not_allowed"}}', async () => {
   await withServer(async (base) => {
-    for (const url of ['/ob/api/tree', '/ob/']) {
+    for (const url of ['/ob/api/tree', '/ob/api/search?q=x', '/ob/']) {
       const res = await fetch(base + url, { method: 'POST' })
       assert.equal(res.status, 405, url)
       const body = await res.json()

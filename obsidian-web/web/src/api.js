@@ -19,3 +19,10 @@ export function fetchFile(path) {
 export function fetchBacklinks(path) {
   return requestJson(`/ob/api/backlinks?path=${encodeURIComponent(path)}`)
 }
+
+// 搜索（T3）：{data:{backend,degraded,query,results}, total}；score=排序权重非匹配概率（语义句在面板描述位）
+export function fetchSearch(q, limit) {
+  const params = new URLSearchParams({ q })
+  if (limit != null) params.set('limit', String(limit))
+  return requestJson(`/ob/api/search?${params}`)
+}
