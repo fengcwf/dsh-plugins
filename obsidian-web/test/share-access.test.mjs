@@ -280,3 +280,74 @@ test('范围≠存在：范围内不存在路径仍判在范围（存在性/405 
   const dirShare = await shareOf(root, 'notes', 'read')
   assert.equal(shareAllowsOperation(dirShare, 'read', 'ghost/never.md'), true, 'scope 只判范围不判存在')
 })
+
+// ── T8 fix r1：C-1 自指围栏 / I-1 fail-open 复断言 / I-2 限流信封 ─────────────
+test('C-1 自指围栏负例矩阵：任意分享 × .ob-share/*/.trash/*/敏感名 subPath × 5 操作全拒', async (t) => {
+  const root = tmpVault(t)
+  const shares = [
+    await shareOf(root, 'notes/a.md', 'read'),
+    await shareOf(root, 'notes/a.md', 'write', { password: 'pw' }),
+    await shareOf(root, 'notes', 'read'),
+    await shareOf(root, 'notes', 'write', { password: 'pw' }),
+    await shareOf(root, 'INDEX.md', 'read'),
+    await shareOf(root, 'sub', 'write', { password: 'pw' }),
+  ]
+  const forbidden = [
+    '.ob-share', '.ob-share/anything.json', '.OB-SHARE/x.json', 'sub/.ob-share/y.json',
+    '.trash', '.trash/x.md', '.TRASH/notes/x.md', 'a/.trash/b.md',
+    'x.pem', '.env', 'notes/.env/z.md', 'deep.key.backup', 'secrets.pem.', ' id_rsa',
+  ]
+  for (const s of shares) {
+    for (const sub of forbidden) {
+      assert.equal(resolveSharePath(s, sub).ok, false, `${s.target}[${s.role}] resolve ${JSON.stringify(sub)} 必须拒`)
+      for (const op of OPERATIONS) {
+        assert.equal(shareAllowsOperation(s, op, sub), false, `${s.target}[${s.role}] ${op} ${JSON.stringify(sub)} 必须拒`)
+      }
+    }
+  }
+})
+
+test('C-1 篡改条目纵深：target=. 或 .ob-share 的手写条目→resolveSharePath/shareAllowsOperation 全拒', async (t) => {
+  const root = tmpVault(t)
+  const tampered = [
+    { token: 'x'.repeat(43), target: '.', targetType: 'dir', role: 'write' },
+    { token: 'y'.repeat(43), target: '.ob-share', targetType: 'dir', role: 'write' },
+    { token: 'z'.repeat(43), target: '.trash', targetType: 'dir', role: 'write' },
+    { token: 'w'.repeat(43), target: 'x.pem', targetType: 'file', role: 'write' },
+  ]
+  for (const s of tampered) {
+    for (const sub of ['', '.ob-share/t.json', 'x.md']) {
+      assert.equal(resolveSharePath(s, sub).ok, false, `篡改条目 ${s.target} ${JSON.stringify(sub)} 必须拒`)
+      for (const op of OPERATIONS) {
+        assert.equal(shareAllowsOperation(s, op, sub), false, `篡改条目 ${s.target} ${op} ${JSON.stringify(sub)} 必须拒`)
+      }
+    }
+  }
+  assert.equal(resolveSharePath(42, 'x').ok, false, '坏 share 形仍 fail-closed')
+})
+
+test('I-1 fail-open 复断言：盘上手写 role=write 无 passwordHash→同形 404（绝不免密放行）', async (t) => {
+  const root = tmpVault(t)
+  const { share } = await createShare(root, { target: 'notes/a.md', role: 'read' })
+  const file = path.join(root, '.ob-share', `${share.token}.json`)
+  const entry = JSON.parse(fs.readFileSync(file, 'utf8'))
+  entry.role = 'write'
+  delete entry.passwordHash
+  fs.writeFileSync(file, JSON.stringify(entry))
+  const res = await checkAccess(root, { token: share.token })
+  assert.deepEqual(res, { ok: false, status: 404, code: 'not_found', message: '分享不存在或已失效' }, 'write 无密码=不变量破坏，同形 404')
+  const ref = await checkAccess(root, { token: 'x'.repeat(43) })
+  assert.equal(JSON.stringify(res), JSON.stringify(ref), '与不存在 token 逐字节同形')
+})
+
+test('I-2 限流 fail-closed 信封：limiter.check 抛异常→同形 404（绝不外抛）；缺 ip 仍 429 统一形', async (t) => {
+  const root = tmpVault(t)
+  const { share } = await createShare(root, { target: 'notes/a.md', role: 'read' })
+  const throwing = { check() { throw new Error('limiter boom') } }
+  const res = await checkAccess(root, { token: share.token, ip: '1.2.3.4' }, { limiter: throwing })
+  assert.deepEqual(res, { ok: false, status: 404, code: 'not_found', message: '分享不存在或已失效' }, 'limiter.check 异常落同形 404')
+  const ref = await checkAccess(root, { token: 'x'.repeat(43) })
+  assert.equal(JSON.stringify(res), JSON.stringify(ref), '与不存在 token 逐字节同形')
+  const noIp = await checkAccess(root, { token: share.token }, { limiter: throwing })
+  assert.equal(noIp.status, 429, '缺 ip 先判 fail-closed 限流（429 统一形，口径不变）')
+})

@@ -14,6 +14,8 @@
 //     失败路径付 dummy 代价（burnScrypt），不给「存在/不存在」时序侧信道
 //   - 持久化 <vaultRoot>/.ob-share/<token>.json（0600/0700；原子写+双 fsync=ARC-4 崩溃持久化；
 //     dot 目录不出树）；一次性消耗/计数与校验同一锁内落盘（withFileLock，10 并发恰 1 成功）
+//   - 自指围栏（C-1，T8 fix r1）：vault 根不可分享；guest subPath 与 target 逐段过 INTERNAL_SEGMENTS+
+//     isSensitiveName——.ob-share（分享存储自身）/.trash（恢复材料）/敏感名经分享面永不可达（fail-closed）
 //   - guest 面 fail-closed：内部异常与不存在同形（不泄露存在性）；可解释错误只走管理面
 import crypto from 'node:crypto'
 import fs from 'node:fs'
@@ -28,16 +30,22 @@ export const ROLES = Object.freeze(['read', 'write'])
 export const OPERATIONS = Object.freeze(['read', 'edit', 'create', 'delete', 'rename'])
 export const RATE_LIMIT_PER_MINUTE = 120 // OW-INV-2b 每 IP 120/min
 export const RATE_WINDOW_MS = 60_000
-// 敏感文件名永禁清单（OW-INV-1，v1.1 裁定）：glob 形（* 通配）、大小写不敏感、逐路径段判定。
-// 口径=只滤敏感文件名（含目录段名），不递归过滤业务目录内容（Q1 裁定，残余风险见任务报告）。
+// 敏感文件名永禁清单（OW-INV-1；v1.1 修订（spec-owner 已批，T8 fix r1/M-5）：*.ext 类加尾随通配，
+// 修正 .env* 宽 vs *.pem 窄不一致——x.pem.backup/secrets.pem.backup 类备份残形全命中；误杀反例不回退）。
+// glob 形（* 通配）、大小写不敏感、逐路径段判定；匹配前归一（前导空格+尾随 [. ] 剥除，CIFS/SMB 归一现实）。
+// C-1（T8 fix r1）：guest subPath 逐段同判（内部段+敏感名 fail-closed）——Q1 目录内容可达残余风险已闭合。
 export const SENSITIVE_GLOBS = Object.freeze([
-  '.env*', '*.pem', '*.key', '*.credentials', '.npmrc', '.netrc', '*.p12', '*.pfx',
+  '.env*', '*.pem*', '*.key*', '*.credentials*', '.npmrc', '.netrc', '*.p12*', '*.pfx*',
   'id_rsa*', 'id_dsa*', 'id_ecdsa*', 'id_ed25519*',
 ])
 const SENSITIVE_RE = SENSITIVE_GLOBS.map((glob) => new RegExp(
   `^${glob.split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 'i'))
 const TOKEN_RE = /^[A-Za-z0-9_-]{22,64}$/ // base64url 形（32B→43 字符）；零 '.'/'/'/'\' = 文件名/围栏安全
 const INTERNAL_SEGMENTS = new Set(['.trash', SHARE_DIR]) // 恢复材料/自身存储永不可分享
+function isInternalSegment(seg) {
+  // C-1：内部段判定大小写不敏感（CIFS 大小写不敏感面 .TRASH 与 .trash 同物——fail-closed 不给绕行）
+  return INTERNAL_SEGMENTS.has(String(seg).toLowerCase())
+}
 const LOCK_WAIT_MS = 10_000
 const DAY_MS = 86_400_000
 const DEFAULT_TTL_DAYS = 7
@@ -102,7 +110,11 @@ function burnScrypt() {
 // ── 敏感文件名（OW-INV-1）──────────────────────────────────────────────────
 export function isSensitiveName(name) {
   if (typeof name !== 'string' || name === '') return false
-  return SENSITIVE_RE.some((rx) => rx.test(name))
+  // M-5（v1.1，T8 fix r1）：匹配前归一——前导空格剥除（' id_rsa' 形）+ 尾随 [. ] 剥除
+  // （CIFS/SMB 剥尾随点/空格：secrets.pem./'x.pem ' 与 secrets.pem 同一文件）；前导 '.' 绝不剥（.env 保形）
+  const normalized = name.replace(/^[ ]+/, '').replace(/[. ]+$/, '')
+  if (normalized === '') return false
+  return SENSITIVE_RE.some((rx) => rx.test(normalized))
 }
 
 export function isSensitivePath(relPath) {
@@ -160,10 +172,12 @@ function shareFileAbs(root, token) {
   // token 已过 TOKEN_RE（无 '.'/'/'/'\'）——join 恒在 .ob-share 内，穿越通道封死
   return path.join(shareDirAbs(root), `${token}.json`)
 }
-function readEntrySync(file) {
+function readEntrySync(file, token) {
+  // M-1（T8 fix r1）：entry.token 必须与文件名 token 全等（串号条目 fail-closed 当无此分享——
+  // 防改名/搬运条目借文件名冒充他 token）；缺参比较恒 false=fail-closed
   try {
     const entry = JSON.parse(fs.readFileSync(file, 'utf8'))
-    return entry && typeof entry === 'object' && typeof entry.token === 'string' ? entry : null
+    return entry && typeof entry === 'object' && entry.token === token ? entry : null
   } catch {
     return null // 缺失/坏 JSON 一律当无此分享（fail-closed 同形）
   }
@@ -237,7 +251,11 @@ function normalizeSub(subPath) {
   if (path.posix.isAbsolute(subPath) || /^[a-zA-Z]:/.test(subPath)) return null
   const segs = subPath.split('/')
   if (segs.some((s) => s === '..')) return null
-  return segs.filter((s) => s !== '' && s !== '.').join('/')
+  const kept = segs.filter((s) => s !== '' && s !== '.')
+  // C-1 自指围栏（T8 fix r1）：subPath 逐段过 INTERNAL_SEGMENTS+isSensitiveName——
+  // .ob-share（分享存储自身）/.trash（恢复材料）/敏感名永不可经 guest subPath 触达（fail-closed）
+  if (kept.some((s) => isInternalSegment(s) || isSensitiveName(s))) return null
+  return kept.join('/')
 }
 
 // ── OW-INV-2 范围模型（subPath=share-root-relative；输出=vault 相对路径）────
@@ -248,9 +266,15 @@ function normalizeSub(subPath) {
  */
 export function resolveSharePath(share, subPath) {
   if (!share || typeof share !== 'object' || typeof share.target !== 'string' || share.target === '') return { ok: false }
+  const target = share.target
+  // C-1 纵深（T8 fix r1）：target 本体同样过围栏——vault 根（'.' 族）/内部段/敏感名/穿越/绝对/非法字符的
+  // 条目（含盘上被篡改/遗留条目）一律 {ok:false}，绝不自指暴露 .ob-share/.trash/敏感文件
+  const targetSegs = target.split('/').filter((s) => s !== '' && s !== '.')
+  if (targetSegs.length === 0) return { ok: false }
+  if (target.includes('\0') || target.includes('\\') || path.posix.isAbsolute(target) || /^[a-zA-Z]:/.test(target)) return { ok: false }
+  if (targetSegs.some((s) => s === '..' || isInternalSegment(s) || isSensitiveName(s))) return { ok: false }
   const sub = normalizeSub(subPath)
   if (sub === null) return { ok: false }
-  const target = share.target
   if (share.targetType === 'file') {
     const base = target.split('/').pop()
     if (sub === '' || sub === base || sub === target) return { ok: true, path: target }
@@ -302,8 +326,12 @@ export async function createShare(root, params, options = {}) {
   if (target.includes('\0') || target.includes('\\')) throw fail('bad_request', 'target 含非法字符')
   if (path.isAbsolute(target) || /^[a-zA-Z]:/.test(target)) throw fail('bad_request', 'target 必须是 vault 内相对路径')
   if (target.split('/').some((seg) => seg === '..')) throw fail('bad_request', 'target 拒绝穿越')
+  // C-1（T8 fix r1）：vault 根不可作分享目标——分享必须是具体的文件/目录；根分享会让 guest
+  // 触达 .ob-share（分享存储自身）/.trash（恢复材料）= 自指围栏缺口
+  const targetSegs = target.split('/').filter((seg) => seg !== '' && seg !== '.')
+  if (targetSegs.length === 0) throw fail('bad_request', 'target 拒绝 vault 根（分享必须是具体的文件或目录）')
   const abs = resolveInRoot(root, target) // 围栏单一来源
-  if (target.split('/').some((seg) => INTERNAL_SEGMENTS.has(seg))) {
+  if (targetSegs.some((seg) => isInternalSegment(seg))) {
     throw fail('bad_request', '内部目录（.trash/.ob-share）不可分享')
   }
   // 敏感文件名永禁（OW-INV-1）：任意路径段命中即拒（拒=可解释，先于存在性探测）
@@ -380,7 +408,7 @@ export async function listShares(root) {
   const entries = []
   for (const name of names) {
     if (!name.endsWith('.json')) continue
-    const entry = readEntrySync(path.join(dir, name))
+    const entry = readEntrySync(path.join(dir, name), name.slice(0, -'.json'.length)) // M-1：串号条目不出列表
     if (entry) entries.push(entry)
   }
   entries.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
@@ -389,7 +417,7 @@ export async function listShares(root) {
 
 export async function getShare(root, token) {
   assertToken(token)
-  const entry = readEntrySync(shareFileAbs(root, token))
+  const entry = readEntrySync(shareFileAbs(root, token), token)
   if (!entry) throw fail('not_found', '分享不存在')
   return toPublic(entry)
 }
@@ -397,9 +425,9 @@ export async function getShare(root, token) {
 async function mutateShare(root, token, mutate) {
   assertToken(token)
   const file = shareFileAbs(root, token)
-  if (!readEntrySync(file)) throw fail('not_found', '分享不存在') // 锁前快拒（无 store 目录时不取锁）
+  if (!readEntrySync(file, token)) throw fail('not_found', '分享不存在') // 锁前快拒（无 store 目录时不取锁）
   return await withFileLock(file, async () => {
-    const entry = readEntrySync(file)
+    const entry = readEntrySync(file, token)
     if (!entry) throw fail('not_found', '分享不存在')
     const result = await mutate(entry)
     entry.updatedAt = Date.now()
@@ -472,13 +500,8 @@ export async function checkAccess(root, input, options = {}) {
   const { token, password, ip } = input ?? {}
   const { config, limiter } = options
   const now = options.now ?? Date.now()
-  // 限流判在查表前：响应只取决于 IP，token 有效性不得影响（不泄露存在性）
-  if (limiter) {
-    // 无法归属 IP（调用方没给 ip）→ fail-closed 限流（不发无记名预算；429 统一形）
-    if (typeof ip !== 'string' || ip === '') return rateLimited()
-    const verdict = limiter.check(ip, now)
-    if (!verdict.allowed) return rateLimited()
-  }
+  // IP 口径契约（I-2 / T8 fix r1，T9 依此）：ip=socket.remoteAddress only——绝不默认信任
+  // X-Forwarded-For（客户端可伪造）；仅当显式配置可信代理时才解析 XFF 并取最右可信跳。
   let didWork = false
   const denied = () => accessDenied()
   const deniedQuiet = () => { // 尚未付 scrypt 代价的失败路径：补 dummy
@@ -486,13 +509,24 @@ export async function checkAccess(root, input, options = {}) {
     return accessDenied()
   }
   try {
+    // 限流判在查表前（I-2，T8 fix r1：整块在 fail-closed 信封内——limiter.check 异常落同形 404，绝不外抛）：
+    // 响应只取决于 IP，token 有效性不得影响（不泄露存在性）
+    if (limiter) {
+      // 无法归属 IP（调用方没给 ip）→ fail-closed 限流（不发无记名预算；429 统一形）
+      if (typeof ip !== 'string' || ip === '') return rateLimited()
+      const verdict = limiter.check(ip, now)
+      if (!verdict.allowed) return rateLimited()
+    }
     if (config?.share?.enabled === false) return deniedQuiet()
     if (typeof token !== 'string' || !TOKEN_RE.test(token)) return deniedQuiet()
     const file = shareFileAbs(root, token)
-    if (!readEntrySync(file)) return deniedQuiet()
+    if (!readEntrySync(file, token)) return deniedQuiet()
     return await withFileLock(file, async () => {
-      const entry = readEntrySync(file)
+      const entry = readEntrySync(file, token)
       if (!entry) return deniedQuiet()
+      // I-1（T8 fix r1）fail-closed 复断言：盘上 write 无密码 = OW-INV-1 不变量被破坏
+      // （坏存储/被篡改条目）——同形 404，绝不免密放行
+      if (entry.role === 'write' && typeof entry.passwordHash !== 'string') return deniedQuiet()
       if (typeof entry.passwordHash === 'string') {
         didWork = true // 真 scrypt 校验恰一次
         if (!verifyPassword(typeof password === 'string' ? password : '', entry.passwordHash)) return denied()

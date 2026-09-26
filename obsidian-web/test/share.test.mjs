@@ -91,9 +91,9 @@ test('⑦ 自动生成密码：长度/字符集/100 枚零重复（读得出、�
 })
 
 // ── ② 敏感文件名永禁（OW-INV-1）────────────────────────────────────────────
-test('② 敏感清单：显式常量清单字面锁定（改清单必须过此测试）', () => {
+test('② 敏感清单：显式常量清单字面锁定（v1.1 修订 *.pem*/*.key* 类尾随通配——改清单必须过此测试）', () => {
   assert.deepEqual([...SENSITIVE_GLOBS], [
-    '.env*', '*.pem', '*.key', '*.credentials', '.npmrc', '.netrc', '*.p12', '*.pfx',
+    '.env*', '*.pem*', '*.key*', '*.credentials*', '.npmrc', '.netrc', '*.p12*', '*.pfx*',
     'id_rsa*', 'id_dsa*', 'id_ecdsa*', 'id_ed25519*',
   ])
 })
@@ -105,12 +105,24 @@ test('② 敏感判定：逐类命中 + 大小写 + 精确边界不误杀业务�
     assert.equal(isSensitivePath(`notes/${name}`), true, `路径段命中：notes/${name}`)
   }
   assert.equal(isSensitiveName('.ENV'), true, '大小写不敏感（fail-closed）')
-  // 精确边界：业务名不误杀
-  for (const name of ['notes', 'a.md', 'deep.key.md', 'keyboard.md', 'pemphigus.md', '环境/config.md', '08-unraid.md']) {
+  // 精确边界：业务名不误杀（v1.1 修订：deep.key.md 转命中——与 x.pem.backup 同形 *.key* 类推必中，误杀不回退）
+  for (const name of ['notes', 'a.md', 'keyboard.md', 'pemphigus.md', '环境/config.md', '08-unraid.md']) {
     assert.equal(isSensitiveName(name), false, `不得误杀：${name}`)
   }
+  assert.equal(isSensitiveName('deep.key.md'), true, 'v1.1：*.key* 尾随通配类推（deep.key.md 与 x.pem.backup 结构同形）')
   assert.equal(isSensitivePath('cert.pem/x.md'), true, '敏感名作目录段同样永禁')
   assert.equal(isSensitivePath('notes/.env/x.md'), true, '中间段命中')
+})
+
+test('② M-5 匹配边界强化：*.ext 类尾随通配 + trim 尾随 [. ] + 前导空格剥除（CIFS 归一现实）全命中', () => {
+  for (const name of ['x.pem.backup', 'secrets.pem.backup', 'secrets.pem.', 'x.pem ', 'x.pem.', 'x.pem. .', ' id_rsa', ' id_ed25519.pub', 'X.PEM.BACKUP', 'deep.key.md', 'y.p12.bak', 'z.pfx.old', 'w.credentials.bak', ' .npmrc']) {
+    assert.equal(isSensitiveName(name), true, `必须命中：${JSON.stringify(name)}`)
+    assert.equal(isSensitivePath(`notes/${name}`), true, `路径段命中：notes/${JSON.stringify(name)}`)
+  }
+  // 误杀反例不回退：不含敏感扩展段（.pem/.key 等字面）的业务名仍不误杀
+  for (const name of ['keyboard.md', 'pemphigus.md', 'keynote.md', 'environment.md', '08-unraid.md']) {
+    assert.equal(isSensitiveName(name), false, `不得误杀：${name}`)
+  }
 })
 
 test('② createShare 敏感清单逐类负例：全拒 sensitive_name 且零落盘；业务目标照常可分享', async (t) => {
@@ -191,6 +203,35 @@ test('创建围栏负例：穿越/绝对/NUL/盘符 bad_request、不存在 not_
   await assert.rejects(() => createShare(root, { target: '.trash/notes/x.md', role: 'read' }), (err) => err.code === 'bad_request', '恢复材料不可分享')
   await assert.rejects(() => createShare(root, { target: 'notes', role: 'admin' }), (err) => err.code === 'bad_request', 'role 非法')
   await assert.rejects(() => createShare(root, { role: 'read' }), (err) => err.code === 'bad_request', 'target 缺失')
+})
+
+test('C-1 vault 根不可分享：target=. 一族 bad_request+可解释（分享须具体文件/目录）', async (t) => {
+  const root = tmpVault(t)
+  await assert.rejects(
+    () => createShare(root, { target: '.', role: 'read' }),
+    (err) => err.code === 'bad_request' && /具体/.test(err.message),
+    'vault 根不可分享且消息可解释（点名须具体文件/目录）',
+  )
+  for (const target of ['./', '//', './.', 'notes/../', './../']) {
+    await assert.rejects(() => createShare(root, { target, role: 'read' }), (err) => err.code === 'bad_request', `必须拒：${JSON.stringify(target)}`)
+  }
+  const { total } = await listShares(root)
+  assert.equal(total, 0, '根分享负例零落盘')
+})
+
+test('M-1 串号条目 fail-closed：文件名 A 内容 token:DIFFERENT→管理面/guest 全拒（entry.token===token）', async (t) => {
+  const root = tmpVault(t)
+  const { share } = await createShare(root, { target: 'notes/a.md', role: 'read' })
+  const file = path.join(root, SHARE_DIR, `${share.token}.json`)
+  const entry = JSON.parse(fs.readFileSync(file, 'utf8'))
+  entry.token = 'DIFFERENT'
+  fs.writeFileSync(file, JSON.stringify(entry))
+  await assert.rejects(() => getShare(root, share.token), (err) => err.code === 'not_found', '管理面串号拒')
+  await assert.rejects(() => revokeShare(root, share.token), (err) => err.code === 'not_found', 'mutate 同口径拒')
+  const { total } = await listShares(root)
+  assert.equal(total, 0, '串号条目不出列表（fail-closed）')
+  const res = await checkAccess(root, { token: share.token })
+  assert.deepEqual(res, { ok: false, status: 404, code: 'not_found', message: '分享不存在或已失效' }, 'guest 面同形 404')
 })
 
 test('形参负例：oneShot/expiresAt/ttlDays 非法值 bad_request', async (t) => {
