@@ -247,12 +247,15 @@ test('fts 后端缝可插拔：注册即用、结果形零变化；短查询结�
   const viaFts = await svc.search(SEARCHVAULT, 'needle')
   assert.equal(viaFts.backend, 'fts', 'fts-able 查询（3+ 字）路由到已插 fts 后端')
   assert.deepEqual(viaFts.results, [], '插拔后端行为真实可见：标题无 needle → 零命中（scan 则有 3 条）')
-  for (const item of viaFts.results) assert.deepEqual(Object.keys(item).sort(), ITEM_KEYS)
+  // 假绿修复（I1）：原空 results 上的键集循环零断言已删，键集/消毒断言一律落在下方非空 titleHit 上
 
   const titleHit = await svc.search(SEARCHVAULT, 'Beta Title')
   assert.equal(titleHit.backend, 'fts')
   assert.deepEqual(titleHit.results.map((x) => [x.path, x.line]), [['notes/beta.md', 1]])
   assert.deepEqual(Object.keys(titleHit.results[0]).sort(), ITEM_KEYS, '后端切换零 API 变化')
+  assert.equal(titleHit.results[0].snippet, '<mark>Beta</mark> <mark>Title</mark>', '插拔后端 snippet 同走高亮形态')
+  assert.ok(!/<(?!\/?mark>)/.test(titleHit.results[0].snippet), `titleHit snippet 消毒断言：${titleHit.results[0].snippet}`)
+  assert.ok(!/(^|[^&])&(?!(?:amp|lt|gt|quot|#39);)/.test(titleHit.results[0].snippet.replaceAll('<mark>', '').replaceAll('</mark>', '')), 'titleHit snippet=已转义形态（& 仅限 escapeHtml 实体）')
 
   const fallback = await svc.search(SEARCHVAULT, '链接')
   assert.equal(fallback.backend, 'scan', '2 字盲区查询结构性走 scan/LIKE 兜底，不信任 fts 后端')
@@ -260,4 +263,50 @@ test('fts 后端缝可插拔：注册即用、结果形零变化；短查询结�
 
   const noFts = await createSearchService().search(SEARCHVAULT, 'needle')
   assert.equal(noFts.backend, 'scan', '未插 fts 时默认 scan 后端')
+})
+
+// ── ⑦ I1 出口消毒强制（ARC-1 v-html 破口闭死）：任一后端 snippet 必须=已转义形态 ──
+// 负例=后端返回未转义 snippet（真实现脏后端经注册缝注入，测试面零 mock）→ service 出口拒。
+test('I1 出口消毒强制：任一后端返回未转义 snippet → 拒（bad_backend，fail-closed）', async () => {
+  const dirty = (snippet, name = 'fts') => ({
+    name,
+    async search() {
+      return { hits: [{ path: 'notes/alpha.md', line: 1, snippet, score: 10, title: 'Alpha Note' }], degraded: null }
+    },
+  })
+  const dirtyCases = [
+    'raw <script>alert(1)</script> needle', // 整段未转义（v-html 直通即 XSS）
+    'ok <mark>needle</mark> <img src=x onerror=alert(1)>', // mark 之外藏标签
+    '<mark><svg onload=alert(1)></mark>', // mark 内未转义
+    '</mark>needle<mark>', // 标签游离/乱序（非严格交替形态）
+    'a & b needle', // 裸 &（未过 escapeHtml 口径，非已转义形态）
+    'AT&ampT needle', // & 非法实体（&amp 缺分号）
+    123, // 非字符串
+  ]
+  for (const snippet of dirtyCases) {
+    const svc = createSearchService({ backends: { fts: dirty(snippet) } })
+    await assert.rejects(
+      () => svc.search(SEARCHVAULT, 'needle'),
+      (err) => err.code === 'bad_backend',
+      `必须拒非已转义 snippet：${JSON.stringify(snippet)}`,
+    )
+  }
+  // 「任一后端」含 scan 槽（2 字盲区查询结构性走 scan 槽）：出口断言不区分后端
+  const svcScan = createSearchService({ backends: { scan: dirty('raw <b>needle</b>', 'scan') } })
+  await assert.rejects(() => svcScan.search(SEARCHVAULT, '链接'), (err) => err.code === 'bad_backend')
+})
+
+test('I1 出口消毒强制：已转义形态原样放行（零再加工——选型=拒而非再消毒的对立验证）', async () => {
+  const compliant = 'pre &lt;b&gt; a &amp; &#39;q&#39; <mark>needle</mark> post &gt;'
+  const clean = {
+    name: 'fts',
+    async search() {
+      return { hits: [{ path: 'notes/alpha.md', line: 7, snippet: compliant, score: 10, title: 'Alpha Note' }], degraded: null }
+    },
+  }
+  const svc = createSearchService({ backends: { fts: clean } })
+  const r = await svc.search(SEARCHVAULT, 'needle')
+  assert.equal(r.results.length, 1)
+  assert.equal(r.results[0].snippet, compliant, '合规 snippet 零改动（不二次转义、不破坏高亮）')
+  assert.deepEqual(Object.keys(r.results[0]).sort(), ITEM_KEYS)
 })

@@ -6,6 +6,7 @@
 //   createScanBackend({concurrency, timeoutMs}) → {name:'scan', search({root, plan, limit}) → {hits, degraded}}
 //   createSearchService({backends, concurrency, timeoutMs, limit}) → {search(root, query, {limit})}
 //     → {backend, degraded, query, results:[{path, line, snippet, score, title}]}（结果项键集锁定）
+//     出口强制（I1/ARC-1）：任一后端 hits 的 snippet 必须=已转义形态，不合规拒（assertEscapedSnippet）
 //
 // score 语义（detpecca 教训）：**score = 排序权重，越大越优，仅用于结果排序——非匹配概率、非百分比**。
 //   本地加权：行内命中词 10/词 + 标题命中词 20/词 + 查询整串入标题 +10（合成标题命中行=20/词+10）。
@@ -257,11 +258,43 @@ export function createScanBackend({ concurrency = DEFAULT_CONCURRENCY, timeoutMs
 
 // ── 检索服务：可插拔后端缝（T11 fts 索引后端即插即用，后端切换零 API 变化）────────
 // 后端契约：{name, search({root, plan, limit}) → {hits, degraded}}；hits=结果项形（键集锁定）。
+//   查询串转义义务（fts 后端，M4）：plan.terms 词面进 FTS MATCH / LIKE 之前必须逐词加引号
+//   或转义符号（如 MATCH "C++"）——防 MATCH 'C++' 类符号查询炸 SQL 语法（ERR-004 同类事故）；
+//   snippet 义务：必须=已转义形态（escapeHtml 口径，见下方出口强制，违反即拒）。
 // 选择语义：plan.allFts 且已注册 fts → fts 后端；否则 scan（短词/纯符号盲区结构性走 LIKE 兜底）。
 function clampLimit(value) {
   const n = Math.floor(value)
   if (!Number.isFinite(n)) return DEFAULT_LIMIT
   return Math.min(MAX_LIMIT, Math.max(1, n))
+}
+
+// ── ARC-1 出口消毒强制（I1）：任一后端 hits 的 snippet 必须=已转义形态 ───────────
+// 已转义形态（render-inline escapeHtml 唯一口径：& < > " ' 全实体化，实体仅限
+//   &amp;/&lt;/&gt;/&quot;/&#39;）+ 唯一标签 <mark> 且严格交替（先开后合、零嵌套零游离）。
+// 选型=结构断言+拒（fail-closed 抛 bad_backend → HTTP 500），不静默再消毒：
+//   ① 再消毒会二次转义合规 snippet（&lt; → &amp;lt;）破坏显示与高亮对齐；
+//   ② 拒让违约后端在其测试里立刻炸出，转义义务违约不可被掩盖；
+//   ③ v-html 承接面（SearchResults）宁可 500 也绝不落脏 HTML（ARC-1）。
+function assertEscapedText(text, where) {
+  if (/[<>]/.test(text)) throw fail('bad_backend', `${where}：文本含裸 < 或 >（未转义）`)
+  if (text.replace(/&(?:amp|lt|gt|quot|#39);/g, '').includes('&')) {
+    throw fail('bad_backend', `${where}：文本含裸 & 或非 escapeHtml 实体（非已转义形态）`)
+  }
+}
+
+function assertEscapedSnippet(snippet, where) {
+  if (typeof snippet !== 'string') throw fail('bad_backend', `${where}：snippet 非字符串（${typeof snippet}）`)
+  let opened = false
+  let cursor = 0
+  for (const m of snippet.matchAll(/<\/?mark>/g)) {
+    const isClose = m[0] === '</mark>'
+    if (isClose !== opened) throw fail('bad_backend', `${where}：<mark> 非严格交替（游离/嵌套/乱序）`)
+    assertEscapedText(snippet.slice(cursor, m.index), where)
+    cursor = m.index + m[0].length
+    opened = !isClose
+  }
+  if (opened) throw fail('bad_backend', `${where}：<mark> 未闭合`)
+  assertEscapedText(snippet.slice(cursor), where)
 }
 
 export function createSearchService({ backends = {}, concurrency, timeoutMs, limit = DEFAULT_LIMIT } = {}) {
@@ -276,6 +309,9 @@ export function createSearchService({ backends = {}, concurrency, timeoutMs, lim
       if (!plan.ok) throw fail('bad_request', plan.reason === 'empty' ? 'q 参数缺失' : 'q 参数非法')
       const backend = plan.allFts && registry.fts ? registry.fts : registry.scan
       const { hits, degraded } = await backend.search({ root, plan, limit: clampLimit(reqLimit ?? limit) })
+      // ARC-1 出口强制（I1）：任一后端（含 scan）hits 一律过已转义形态结构断言，不合规拒
+      if (!Array.isArray(hits)) throw fail('bad_backend', `后端 ${backend.name} 返回 hits 非数组（契约违约）`)
+      hits.forEach((hit, i) => assertEscapedSnippet(hit?.snippet, `后端 ${backend.name} 第 ${i} 条 hit`))
       return { backend: backend.name, degraded, query: plan.raw, results: hits }
     },
   }
