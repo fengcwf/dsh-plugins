@@ -1,0 +1,53 @@
+{
+  "name": "obsidian-web",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness 的 Obsidian vault Web 管理插件：Web UI 查看/编辑/下载/分享 + vault 目录维护（宿主半包 REST + client 面板 + 独立分享服务）",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "web",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check lib/index.js && node --check lib/vault-ops.js && node --check lib/share.js && node --check lib/render.js && node --check lib/redact.js && node --test"
+  },
+  "peerDependencies": {
+    "zod": "^4.6.5",
+    "@deepseek-ai/dsh-atomic-write": ">=0.1.7-rc.1",
+    "@deepseek-ai/dsh-llm": ">=0.1.7-rc.1",
+    "@deepseek-ai/dsh-tools": ">=0.1.7-rc.1"
+  },
+  "devDependencies": {
+    "zod": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/zod",
+    "@deepseek-ai/dsh-atomic-write": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-atomic-write",
+    "@deepseek-ai/dsh-llm": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm",
+    "@deepseek-ai/dsh-tools": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-tools"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "obsidian-web",
+    "obsidian",
+    "vault",
+    "share"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fengcwf/dsh-plugins.git",
+    "directory": "obsidian-web"
+  }
+}
