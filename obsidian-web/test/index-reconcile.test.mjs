@@ -155,6 +155,74 @@ test('③ 崩溃续跑：进程级崩溃（账本停在 running+cursor、无收�
   }
 })
 
+// ── C-1 fix：续跑不中毒（账本陈旧态不得复活）────────────────────────────────────
+test('③ C-1 续跑不中毒：中断→续跑→再 refresh=全量（无 resumedFrom、计数不重加）+ source run 改写 superseded', async () => {
+  const vault = makeVault(notes(6))
+  const service1 = createIndexService({ vaultRoot: vault, batchSize: 2 })
+  await assert.rejects(
+    () => service1.reconcile({ _onBatch: ({ batchesDone }) => { if (batchesDone === 2) throw new Error('中途故障') } }),
+    /中途故障/,
+  )
+  service1.stop()
+  const interrupted = ledgerOf(vault).runs.at(-1)
+  assert.equal(interrupted.status, 'interrupted', '中断留痕')
+
+  const service2 = createIndexService({ vaultRoot: vault, batchSize: 2 })
+  try {
+    // 第一次 refresh=续跑（应发生恰一次）
+    const resumed = await service2.refresh()
+    assert.equal(resumed.resumedFrom, interrupted.runId, '续跑溯源入账本')
+    assert.deepEqual(resumed.counts, { seen: 0, added: 6, updated: 0, removed: 0, degraded: 0 }, '续跑计数累计=中断前+续跑')
+
+    // 第二/三次 refresh=全量 pass：绝不带 resumedFrom、计数不重加（全 seen=6、added=0）
+    for (const round of [2, 3]) {
+      const full = await service2.refresh()
+      assert.equal(full.resumedFrom, null, `第 ${round} 次 refresh=全量 pass（无 resumedFrom——陈旧 run 不得再被续跑）`)
+      assert.deepEqual(full.counts, { seen: 6, added: 0, updated: 0, removed: 0, degraded: 0 }, `第 ${round} 次 refresh 计数=全量 seen，不重加不伪造`)
+    }
+    assert.equal(
+      ledgerOf(vault).runs.find((r) => r.runId === interrupted.runId).status,
+      'superseded',
+      '续跑完成后 source run 改写 superseded（防陈旧态复活）',
+    )
+
+    // 中毒清扫：全量 pass 后检索面 6 文件全在（不因重复续跑丢文件/虚计数）
+    const svc = createSearchService({ backends: { fts: service2.ftsBackend } })
+    for (let i = 0; i < 6; i += 1) {
+      const hits = await svc.search(vault, `内容${i}`)
+      assert.deepEqual(hits.results.map((r) => r.path), [`f${String(i).padStart(2, '0')}.md`], `全量 pass 后 f${i} 可检索`)
+    }
+  } finally {
+    service2.stop()
+  }
+})
+
+// ── I-2 fix：对账移除面不得误删 run 期间经钩子入库的文件 ──────────────────────────
+test('① I-2 对账窗口内钩子入库不误删：_onBatch 窗口 createNote → run 结束后该文件仍可检索', async () => {
+  const vault = makeVault(notes(3))
+  const service = createIndexService({ vaultRoot: vault, batchSize: 2 })
+  await service.start() // 注册钩子（保存即增量）；start 先建基线索引
+  try {
+    const { createNote } = await import('../lib/vault-ops.js')
+    const run = await service.reconcile({
+      _onBatch: async ({ batchesDone }) => {
+        if (batchesDone === 1) {
+          const created = await createNote(vault, 'new.md', '# New\n\n窗口新建内容 零窗口证明\n')
+          assert.equal(created.ok, true, '窗口期 createNote 成功')
+        }
+      },
+    })
+    const svc = createSearchService({ backends: { fts: service.ftsBackend } })
+    const hits = await svc.search(vault, '窗口新建内容')
+    assert.deepEqual(hits.results.map((r) => r.path), ['new.md'], 'run 结束后窗口期钩子入库文件仍可检索（不被移除面误删）')
+    const zero = await svc.search(vault, '零窗口证明')
+    assert.deepEqual(zero.results.map((r) => r.path), ['new.md'], '内容完整留存（逐字节可检索）')
+    assert.deepEqual(run.counts, { seen: 3, added: 0, updated: 0, removed: 0, degraded: 0 }, '窗口期入库文件不进 removed（T0 快照差不背锅）')
+  } finally {
+    service.stop()
+  }
+})
+
 // ── ② 30min 定时器用例（假时钟/假定时器注入）+ ④ 陈旧窗口 ≤30min ────────────────
 test('② 定时对账：interval 恰 30min（假定时器捕获）；到点触发全量对账', async () => {
   const vault = makeVault(notes(3))

@@ -72,7 +72,11 @@ export function createIndexService({
   }
 
   function unfinishedRun(ledger) {
-    return [...ledger.runs].reverse().find((r) => r.status === 'running' || r.status === 'interrupted') ?? null
+    // C-1 双管①：只认「最新一条」未完 run（runs.at(-1) 判定）——陈旧未完 run 绝不复活。
+    // 旧实现反向扫描任意 running/interrupted 会重复续跑同一 stale run（cursor 之前的文件永不复检、
+    // initialCounts 重加计数系伪造=账本中毒）；配合②续跑完成改写 source=superseded 根除。
+    const last = ledger.runs.at(-1)
+    return last !== undefined && (last.status === 'running' || last.status === 'interrupted') ? last : null
   }
 
   // ── 全 vault .md 清单（与 scan 后端同口径：dot 条目跳过、symlink 不入、.md only）────────
@@ -119,11 +123,20 @@ export function createIndexService({
     if (ledger.runs.length > LEDGER_KEEP_RUNS) ledger.runs = ledger.runs.slice(-LEDGER_KEEP_RUNS)
     await writeLedger(ledger) // 崩溃态可续：run 态+已处理计数先落盘
 
-    const persist = async () => {
+    const persist = async ({ supersedeSource = null } = {}) => {
       const current = readLedger()
       const self = current.runs.find((r) => r.runId === run.runId)
       const target = self ?? run
       Object.assign(target, run) // 全字段回写（含 status/finishedAt——漏写会让盘上 run 永停 running）
+      // C-1 双管②：续跑完成把 source run 改写 superseded（沿 resumedFrom 链溯源清理，
+      // 多级中断/崩溃链一并收敛）——陈旧 running/interrupted 态不得在账本里等待复活
+      let srcId = supersedeSource
+      while (srcId !== null) {
+        const src = current.runs.find((r) => r.runId === srcId)
+        if (src === undefined) break
+        if (src.status === 'running' || src.status === 'interrupted') src.status = 'superseded'
+        srcId = src.resumedFrom ?? null
+      }
       await writeLedger(current)
     }
 
@@ -163,9 +176,11 @@ export function createIndexService({
         await persist() // 每批账本落盘=续跑凭据（分批可中断）
         await _onBatch?.({ batchesDone, counts: run.counts, cursor: run.cursor })
       }
-      // 移除面：索引有、盘上无 → 出索引（外部删除/绕过钩子的变更在此校正）
+      // 移除面：known（T0 索引快照）键集 ∉ T0 盘上快照 → 出索引（外部删除/绕过钩子的变更在此校正）
+      // I-2：只以 T0 索引快照做差——run 期间经钩子入库（save/create/rename）的路径不在 known=天然保护，
+      //      绝不拿 T0 盘上快照否定 run 中新入库的文件（与「保存即增量=零窗口」自洽）
       const diskPaths = new Set(files.map((f) => f.rel))
-      for (const rel of store.listDocs().keys()) {
+      for (const rel of known.keys()) {
         if (!diskPaths.has(rel)) {
           store.removeFile(rel)
           run.counts.removed += 1
@@ -174,7 +189,7 @@ export function createIndexService({
       run.status = 'done'
       run.finishedAt = now()
       run.cursor = null
-      await persist()
+      await persist({ supersedeSource: run.resumedFrom }) // C-1②：续跑完成改写 source=superseded
       return run
     } catch (err) {
       if (err?.code !== 'simulate-crash') {
