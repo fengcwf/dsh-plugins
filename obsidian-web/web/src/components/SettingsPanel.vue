@@ -6,6 +6,7 @@
 // 同页面板接口统一：App 容器统一传参，未用 props 仅吸收防落 DOM 属性。
 import { onMounted, ref, watch } from 'vue'
 import { fetchShareSettings, postShareSettings } from '../api.js'
+import VaultProfilesPanel from './VaultProfilesPanel.vue'
 
 const props = defineProps({
   path: { type: String, default: '' },
@@ -98,5 +99,6 @@ onMounted(load)
     </el-form>
     <p v-if="error" class="ob-empty" role="alert">{{ error }}</p>
     <p v-else-if="saved" class="ob-hint" role="status">{{ saved }}</p>
+    <VaultProfilesPanel :active-panel="props.activePanel" />
   </section>
 </template>

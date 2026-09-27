@@ -34,7 +34,8 @@ function fail(code, message) {
 const emptyCounts = () => ({ seen: 0, added: 0, updated: 0, removed: 0, degraded: 0 })
 
 /**
- * 创建索引服务（绑定单 vaultRoot；多根档案归 T12）。
+ * 创建索引服务（绑定单 vaultRoot；多根=T12 设置页档案数据面，索引按根建库归后续接线——
+ * root 不一致查询可解释拒，绝不冒充）。
  * @param {{vaultRoot: string, dir?: string, intervalMs?: number, batchSize?: number,
  *          now?: () => number, timers?: {setInterval, clearInterval}, warn?: (line) => void}} opts
  */
@@ -304,7 +305,7 @@ export function createIndexService({
     name: 'fts',
     async search({ root, plan, limit }) {
       if (path.resolve(root) !== rootAbs) {
-        // 绑定根不一致：绝不拿旧根索引冒充（可解释拒；vaultRoot 热改/多根归 T12）
+        // 绑定根不一致：绝不拿旧根索引冒充（可解释拒；热改可解释拒不冒充=T11 交接，多根档案=T12 数据面）
         throw fail('bad_request', `索引库绑定 ${rootAbs}，与查询根 ${root} 不一致——请以 /ob/api/index/refresh 重建`)
       }
       const candidates = store.matchCandidates(plan) // compileQuery plan → FTS MATCH/LIKE（逐词转义）

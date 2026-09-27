@@ -30,7 +30,7 @@ import {
   checkAccess, createRateLimiter, resolveSharePath, shareAllowsOperation,
   accessDenied, rateLimited, isSensitiveName, SHARE_URL_PREFIX,
 } from './share.js'
-import { saveNote, createNote, deletePath, renameNote, readNote, resolveInRoot } from './vault-ops.js'
+import { saveNote, createNote, deletePath, renameNote, readNote, resolveInRoot, assertOpenedRealInRoot } from './vault-ops.js'
 import { renderMarkdown } from './render.js'
 import { redact, REDACTED } from './redact.js'
 
@@ -524,7 +524,7 @@ export function createShareServer(options = {}) {
       return
     }
     if (st.isSymbolicLink()) {
-      notFound(res, headOnly) // guest 面 symlink 门（不解引用；T12 realpath 围栏归位前纵深）
+      notFound(res, headOnly) // guest 面 symlink 门（不解引用；realpath 围栏已归位（T12），本门=表面纵深）
       return
     }
     const hrefOf = (segs) => `${FACE_PREFIX}${encodeURIComponent(share.token)}${segs.length ? `/${segs.map(encodeURIComponent).join('/')}` : ''}`
@@ -570,7 +570,24 @@ ${createForm}`
     if (!isMd) {
       const ext = path.extname(resolved.path).toLowerCase()
       const isText = TEXT_RAW_EXT.has(ext)
-      const buf = isText ? Buffer.from(safeText, 'utf8') : fs.readFileSync(abs)
+      let buf
+      if (isText) {
+        buf = Buffer.from(safeText, 'utf8')
+      } else {
+        // TOCTOU 收口（T12 口径）：二进制下载 fd 打开 + 打开后复核（assertOpenedRealInRoot：
+        // 换物/外逃漂移即 404，内容零外泄——readNote 文本面同款）
+        let fd
+        try {
+          fd = fs.openSync(abs, fs.constants.O_RDONLY)
+          assertOpenedRealInRoot(root, abs, fd)
+          buf = fs.readFileSync(fd)
+        } catch {
+          notFound(res, headOnly)
+          return
+        } finally {
+          if (fd !== undefined) fs.closeSync(fd)
+        }
+      }
       res.writeHead(200, {
         'content-type': isText ? 'text/plain; charset=utf-8' : 'application/octet-stream',
         'content-length': buf.length,

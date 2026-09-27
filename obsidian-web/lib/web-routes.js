@@ -16,6 +16,11 @@
 //   exact /ob/api/shares/create|revoke|password|role   POST → 分享管理操作（T10/OW-US-10）
 //   exact /ob/api/share-settings GET|POST → {data:{externalBaseUrl,lanHost,effectiveLanHost,sharePort}}
 //                                        外网域名设置（T10/OW-US-9：链接生成内外网都显示，服务端单一来源）
+//   exact /ob/api/vault-profiles  GET  → {data:{profiles,activeProfileId}, total}
+//   exact /ob/api/vault-profiles/add|delete|health|activate POST → vault 目录档案面
+//                                        （T12/OW-US-13：默认当前目录+任意已挂载 SMB/NFS 路径+
+//                                          健康检查三探针；切换 restartRequired=true 热改可解释
+//                                          拒不冒充 + 换 vault 各配提示——T10/T11 交接）
 //   exact /ob               GET  → 302 /ob/                            尾斜杠规整
 //   prefix /ob              GET  → web/dist 静态构建物（index.html + assets）
 // API 形（沿历史 obsidian-workbench 惯例）：成功 {data, total?}；失败 {error:{code,message}}。
@@ -43,6 +48,9 @@ import {
 import {
   buildShareLinks, detectLanHost, readShareSettings, writeShareSettings, DEFAULT_SHARE_PORT,
 } from './share-links.js'
+import {
+  listProfiles, addProfile, removeProfile, activateProfile, checkVaultHealth,
+} from './vault-profiles.js'
 import { planExport, MAX_FILES, MAX_BYTES, MAX_ENTRIES } from './export.js'
 import { writeZipTo } from './zip.js'
 import { renderMarkdown } from './render.js'
@@ -542,6 +550,79 @@ function shareSettingsHandler(getConfig) {
   }
 }
 
+// ── /ob/api/vault-profiles*（T12 设置页 vault 目录档案：OW-US-13）────────────────
+// 语义：档案列表（默认当前目录恒在）+ 增/删（任意已挂载 SMB/NFS 路径）+ 健康检查
+//   （可读/可写/延迟三探针；CIFS 挂载抖动容忍）+ 切换（restartRequired:true——热改可解释
+//   拒不冒充，T11 交接）。换 vault 提示（T10）：message 含「重启」+「外网域名等各配」。
+//   鉴权=authGate（T1 惯例/OW-INV-8）；错误=可解释（bad_request/not_found 带码带消息）。
+function vaultProfilesListHandler(getConfig) {
+  return async (req, res) => {
+    try {
+      const { profiles, activeProfileId } = listProfiles(getConfig().vaultRoot)
+      sendJson(res, 200, { data: { profiles, activeProfileId }, total: profiles.length })
+    } catch (err) {
+      failRequest(res, err)
+    }
+  }
+}
+
+function vaultProfilesAddHandler(getConfig) {
+  return async (req, res) => {
+    try {
+      const body = await readJsonBody(req)
+      const { profile } = await addProfile(getConfig().vaultRoot, { name: body?.name, path: body?.path })
+      sendJson(res, 200, { data: { profile } })
+    } catch (err) {
+      failRequest(res, err)
+    }
+  }
+}
+
+function vaultProfilesDeleteHandler(getConfig) {
+  return async (req, res) => {
+    try {
+      const body = await readJsonBody(req)
+      const { profiles, activeProfileId } = await removeProfile(getConfig().vaultRoot, body?.id)
+      sendJson(res, 200, { data: { profiles, activeProfileId } })
+    } catch (err) {
+      failRequest(res, err)
+    }
+  }
+}
+
+// 健康检查：{id} 或 {path} 双入口（id → 档案路径；path 直查）→ {data:{health}} 三探针形
+function vaultProfilesHealthHandler(getConfig) {
+  return async (req, res) => {
+    try {
+      const root = getConfig().vaultRoot
+      const body = await readJsonBody(req)
+      let target = body?.path
+      if (typeof target !== 'string' || target === '') {
+        const id = body?.id
+        const profile = listProfiles(root).profiles.find((p) => p.id === id)
+        if (profile === undefined) throw Object.assign(new Error(`档案不存在：${id}`), { code: 'not_found' })
+        target = profile.path
+      }
+      sendJson(res, 200, { data: { health: checkVaultHealth(target) } })
+    } catch (err) {
+      failRequest(res, err)
+    }
+  }
+}
+
+// 切换：activate → {data:{activeProfileId, restartRequired:true, message}}（T11：不冒充热改）
+function vaultProfilesActivateHandler(getConfig) {
+  return async (req, res) => {
+    try {
+      const body = await readJsonBody(req)
+      const result = await activateProfile(getConfig().vaultRoot, body?.id)
+      sendJson(res, 200, { data: result })
+    } catch (err) {
+      failRequest(res, err)
+    }
+  }
+}
+
 // ── /ob/api/index/refresh（T11 索引三保险·手动刷新：OW-US-11 / OW-INV-11）──────────
 // 语义：POST 立即对账（先查补跑账本——未完 run 先续跑）；成功 200 {data:对账账本 run 形}；
 //   未接索引服务 503 index_unavailable（可解释——检索仍走 scan 兜底，绝不静默装死）。
@@ -599,6 +680,12 @@ export function registerWebRoutes(ctx, getConfig, { distDir, search, index }) {
   add('exact', '/ob/api/shares/password', wrap(sharesPasswordHandler(getConfig), ['POST']))
   add('exact', '/ob/api/shares/role', wrap(sharesRoleHandler(getConfig), ['POST']))
   add('exact', '/ob/api/share-settings', wrap(shareSettingsHandler(getConfig), ['GET', 'POST']))
+  // T12 设置页 vault 目录档案面（OW-US-13）：鉴权=authGate（T1 惯例）
+  add('exact', '/ob/api/vault-profiles', wrap(vaultProfilesListHandler(getConfig)))
+  add('exact', '/ob/api/vault-profiles/add', wrap(vaultProfilesAddHandler(getConfig), ['POST']))
+  add('exact', '/ob/api/vault-profiles/delete', wrap(vaultProfilesDeleteHandler(getConfig), ['POST']))
+  add('exact', '/ob/api/vault-profiles/health', wrap(vaultProfilesHealthHandler(getConfig), ['POST']))
+  add('exact', '/ob/api/vault-profiles/activate', wrap(vaultProfilesActivateHandler(getConfig), ['POST']))
   add('exact', '/ob', wrap(redirectHandler))
   add('prefix', '/ob', wrap(staticHandler(distDir)))
   return () => {

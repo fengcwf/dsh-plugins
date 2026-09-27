@@ -113,3 +113,26 @@ export function fetchShareSettings() {
 export function postShareSettings(patch) {
   return postJson('/ob/api/share-settings', patch)
 }
+
+// ── vault 目录档案（T12/OW-US-13）：列表/新增/删除/健康检查/切换 ────────────────────
+// 切换语义（T11 交接）：activate 返回 restartRequired:true——运行期根不热改，重启生效（见 message）。
+export function fetchVaultProfiles() {
+  return requestJson('/ob/api/vault-profiles')
+}
+
+export function addVaultProfile(name, profilePath) {
+  return postJson('/ob/api/vault-profiles/add', { name, path: profilePath })
+}
+
+export function deleteVaultProfile(id) {
+  return postJson('/ob/api/vault-profiles/delete', { id })
+}
+
+// payload={id} 或 {path} 双入口 → {data:{health:{readable,writable,latencyMs,samples,status}}}
+export function checkVaultProfileHealth(payload) {
+  return postJson('/ob/api/vault-profiles/health', payload)
+}
+
+export function activateVaultProfile(id) {
+  return postJson('/ob/api/vault-profiles/activate', { id })
+}

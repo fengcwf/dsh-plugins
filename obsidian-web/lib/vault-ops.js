@@ -9,8 +9,9 @@
 //   补 ARC-4 崩溃持久化（dsh-atomic-write 明示 fsync out of scope，此处补齐）。
 // 乐观锁（OW-INV-3）：无 expectedMtime/etag 不落盘；锁不符 → {conflict, diffUndo} 零写入（三选：覆盖/重载/对比）。
 // diff undo：保存前内容快照随结果返回（内存级 undo；持久化 undo 归后续）。
-// 路径围栏：本卡=相对路径 + 拒 '..'/绝对路径/盘符/NUL + resolve 后越界拒（OW-INV-7 前置）；
-//          realpath 拒 symlink 逃逸归 T12 与围栏终态合流（本卡不宣称 symlink 安全）。
+// 路径围栏（OW-INV-7 终态，T12 围栏合流）：相对路径 + 拒 '..'（trim 后判——别名穿越同拒）/绝对
+//          路径/盘符/NUL/纯点空格别名段 + realpath 全链逐段解引用拒 symlink 逃逸/遍历/循环——
+//          词法围栏雏形（T2-T11）已升级为 realpath 围栏终态（详见 resolveInRoot 段）。
 // T2 读侧契约（形状锁定=前端 wire 契约，test/vault-ops.test.mjs 锁形）：
 //   listTree(root)            → {root, nodes}    node: {name, path, type, children?}（目录优先字典序）
 //   readNote(root, relPath)   → {path, content, mtime, etag, size}   etag=size-mtime（乐观锁前置）
@@ -19,6 +20,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { writeFileAtomic, withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import { planRewrite, scanMdLinkTargets } from './wikilink-rewrite.js'
+import { isTraversalSeg, isAliasOnlySeg } from './path-alias.js'
 
 function fail(code, message) {
   const err = new Error(message)
@@ -55,16 +57,156 @@ function assertRelPath(relPath) {
   if (typeof relPath !== 'string' || relPath === '') throw fail('bad_request', 'path 参数缺失')
   if (relPath.includes('\0')) throw fail('bad_request', 'path 含非法字符')
   if (path.isAbsolute(relPath) || /^[a-zA-Z]:/.test(relPath)) throw fail('bad_request', 'path 必须是 vault 内相对路径')
-  if (relPath.split('/').some((seg) => seg === '..')) throw fail('bad_request', 'path 拒绝穿越')
+  // 穿越/别名判定按 / 与 \ 双分隔符分段（Win32/SMB 反斜杠=分隔符，fail-closed 只多拒不放行）：
+  // trim 后判 '..'（T8 Ruling 3 交接：'.. '/' ..'≡'..' 同拒，与 share.js normalizeSegAlias 同源口径，
+  // 归一单一来源=path-alias.js）；穿越判定先于别名剔除（T8 Ruling 2：`.. ` 归穿越拒，绝不剔成空段
+  // 静默丢弃）；纯点空格别名段 fail-closed 拒（无独立身份，不静默改写目标路径）；'.' 与空段=通用 no-op。
+  for (const seg of relPath.split(/[/\\]/)) {
+    if (isTraversalSeg(seg)) throw fail('bad_request', 'path 拒绝穿越')
+    if (isAliasOnlySeg(seg)) throw fail('bad_request', 'path 含别名段（纯点空格段无独立身份）')
+  }
 }
 
-// 路径围栏单一来源（T7 导出面复用）：词法围栏 + resolve 后越界拒
+// ── realpath 路径围栏（OW-INV-7 终态，T12 围栏合流）────────────────────────────────
+// 语义：形式拒（含别名穿越）→ root realpath 归一（root 自身 symlink/挂载别名也归一）→ 全链
+// 逐段解引用至真实节点，越 root 即拒（T5 alias 拓扑：中间段 in-root 别名解引用放行、链尾
+// 外指即拒；kb fs-safe fix r1 同款语义、独立实现——差异表见 task-12-report.md）。
+// 消费面契约：返回值仍为词法 abs（export/share 的 lstat 门依赖词法节点身份判 symlink 条目，
+// 表面语义零回退）；I/O 前 realpath 复核=每次操作现算零缓存（TOCTOU 口径①）。
+
+function isInsideRoot(rootReal, target) {
+  const rel = path.relative(rootReal, target)
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel))
+}
+
+/**
+ * dangling 外指面检查（真实路径缺失时启用；T5 alias 拓扑交接）：**全链逐段解引用至真实
+ * 节点或越 root 即拒**——行走不变量：cur 恒为「已完全解引用的真实前缀」，每次 lstat 只解
+ * 一个新段（绝不整路径 lstat：中间段会被内核静默解引用，`a→sub/b`+`sub→root 外`+末段缺失
+ * 拓扑会被 ENOENT 误判「真缺失」放行 → 围栏写穿）。symlink 归一目标的每一段前插回工作队列
+ * 重走逐段解引用。判据：任一跳归一后越 root=逃逸（dangling 外指也算逃逸意图）；链内自环/
+ * 互指或 ELOOP=逃逸；真实前缀下 ENOENT/ENOTDIR=真缺失放行（其下段不可触达）。
+ */
+function symlinksEscape(rootReal, target) {
+  // 队列项 {seg, chain}：chain=解引用链 id（symlink 归一目标继承发起链，原始段开新链）——
+  // 自环/互指判据只在同一链内比较（跨段共享会把 root 内合法自指结构误判成环）。
+  let nextChain = 0
+  const queue = path.relative(rootReal, target).split(path.sep)
+    .filter((s) => s !== '').map((seg) => ({ seg, chain: ++nextChain }))
+  const seenByChain = new Map()
+  let cur = rootReal
+  while (queue.length > 0) {
+    const { seg, chain } = queue.shift()
+    cur = path.join(cur, seg) // 真实前缀上拼一个新段：lstat 只解这一个段
+    let st
+    try {
+      st = fs.lstatSync(cur)
+    } catch (err) {
+      if (err?.code === 'ELOOP') return true // 链内循环 → 与主判 ELOOP 同语义判逃逸
+      return false // 真实前缀下真缺失（ENOENT/ENOTDIR）：无外指面
+    }
+    if (!st.isSymbolicLink()) continue // 本段解至真实节点 → 下一段
+    let link
+    try {
+      link = fs.readlinkSync(cur)
+    } catch {
+      return true // 读不出链接：按不安全形拒
+    }
+    const resolved = path.resolve(path.dirname(cur), link)
+    if (!isInsideRoot(rootReal, resolved)) return true // 外指（dangling 也算逃逸意图）
+    const seen = seenByChain.get(chain) ?? new Set()
+    if (seen.has(resolved)) return true // 同链自环/互指 → 逃逸
+    seen.add(resolved)
+    seenByChain.set(chain, seen)
+    // 归一目标不得整路径跳入：相对 root 的每一段前插回队列（中间段可能又是 symlink）；
+    // 前插保证真实前缀在正确基点上继续累加
+    queue.unshift(...path.relative(rootReal, resolved).split(path.sep)
+      .filter((s) => s !== '').map((s) => ({ seg: s, chain })))
+    cur = rootReal // 回到真实根重建前缀不变量
+  }
+  return false
+}
+
+/**
+ * realpath 围栏单一来源（T7 导出面/T10 分享面复用）：形式拒 + 全链解引用 + root 归属判。
+ * 缺失目标（写侧可建/读侧缺失）先验逃逸面（外指 symlink 拒），真缺失放行。
+ * @returns {string} 词法 abs（消费面 lstat 门依赖词法节点身份；I/O 经内核解引用必落围栏内真实节点）
+ */
 export function resolveInRoot(root, relPath) {
   assertRelPath(relPath)
   const base = path.resolve(root)
   const abs = path.resolve(base, relPath)
   if (abs !== base && !abs.startsWith(base + path.sep)) throw fail('bad_request', 'path 越出 vaultRoot')
+  let rootReal
+  try {
+    rootReal = fs.realpathSync(base) // root 自身 symlink/挂载别名归一
+  } catch {
+    throw fail('bad_request', 'vaultRoot 不可解析（缺失/类型错）')
+  }
+  const target = path.resolve(rootReal, relPath) // relPath 已过形式拒：lexical 必在 rootReal 下
+  let real
+  try {
+    real = fs.realpathSync(target) // 主判：全链解引用至真实节点
+  } catch (err) {
+    if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') {
+      if (symlinksEscape(rootReal, target)) throw fail('bad_request', 'path 拒绝 symlink 逃逸')
+      return abs // 真缺失：可建（写侧）/可报缺失（读侧）
+    }
+    if (err?.code === 'ELOOP') throw fail('bad_request', 'path 拒绝 symlink 循环')
+    throw fail('bad_request', 'path 不可解析')
+  }
+  if (!isInsideRoot(rootReal, real)) throw fail('bad_request', 'path 拒绝 symlink 逃逸（真实节点越出 vaultRoot）')
   return abs
+}
+
+/**
+ * TOCTOU 路径复核缝（操作前/后漂移复核）：abs 当前解析必须仍落 root 内真实节点（缺失面
+ * 复验逃逸意图）。漂移/外指/循环 → throw bad_request（可解释拒）。
+ */
+export function assertRealInRoot(root, abs) {
+  const base = path.resolve(root)
+  if (abs !== base && !abs.startsWith(base + path.sep)) throw fail('bad_request', 'path 越出 vaultRoot')
+  let rootReal
+  try {
+    rootReal = fs.realpathSync(base)
+  } catch {
+    throw fail('bad_request', 'vaultRoot 不可解析（缺失/类型错）')
+  }
+  const target = path.resolve(rootReal, path.relative(base, abs))
+  let real
+  try {
+    real = fs.realpathSync(target)
+  } catch (err) {
+    if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') {
+      if (symlinksEscape(rootReal, target)) throw fail('bad_request', 'path 拒绝 symlink 逃逸（漂移复核）')
+      return
+    }
+    if (err?.code === 'ELOOP') throw fail('bad_request', 'path 拒绝 symlink 循环（漂移复核）')
+    throw fail('bad_request', 'path 不可解析（漂移复核）')
+  }
+  if (!isInsideRoot(rootReal, real)) throw fail('bad_request', 'path 拒绝 symlink 逃逸（漂移复核）')
+}
+
+/**
+ * TOCTOU 打开后复核缝（T9 lstat→open 窄窗收口，读面）：fd 与路径当前真实节点必须同一
+ * （dev/ino 比对，BigInt 防大 inode 失精）+ 路径仍在 root 内。换物/外逃漂移 → throw bad_request。
+ */
+export function assertOpenedRealInRoot(root, abs, fd) {
+  assertRealInRoot(root, abs)
+  const base = path.resolve(root)
+  const rootReal = fs.realpathSync(base)
+  const target = path.resolve(rootReal, path.relative(base, abs))
+  let real
+  try {
+    real = fs.realpathSync(target)
+  } catch {
+    throw fail('bad_request', '打开后复核失败（路径已漂移/缺失）')
+  }
+  const fdStat = fs.fstatSync(fd, { bigint: true })
+  const realStat = fs.statSync(real, { bigint: true })
+  if (fdStat.dev !== realStat.dev || fdStat.ino !== realStat.ino) {
+    throw fail('bad_request', '打开后复核失败（fd 与路径真实节点失配）')
+  }
 }
 
 function statOrThrow(abs, relPath) {
@@ -106,13 +248,33 @@ export function listTree(root) {
 }
 
 // ── readNote：读文件（下载/预览/反链共用读面）─────────────────────────────────────────────
+// TOCTOU 口径（T12，T9 交接 lstat→open 窄窗收口）：open 前 realpath 复核（resolveInRoot 现算）
+// + fd 打开 + 打开后复核（assertOpenedRealInRoot：fstat↔realpath dev/ino 失配即拒）——换物/
+// 外逃漂移在读到内容前拦下，内容零外泄。
 export function readNote(root, relPath) {
   const abs = resolveInRoot(root, relPath)
   const stat = statOrThrow(abs, relPath)
   if (!stat.isFile()) throw fail('not_found', `不是文件：${relPath}`)
-  const content = fs.readFileSync(abs, 'utf8')
-  const size = Buffer.byteLength(content, 'utf8')
-  const mtime = stat.mtimeMs
+  let fd
+  try {
+    fd = fs.openSync(abs, fs.constants.O_RDONLY)
+  } catch (err) {
+    if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') throw fail('not_found', `不存在：${relPath}`)
+    if (err?.code === 'ELOOP') throw fail('bad_request', 'path 拒绝 symlink 循环')
+    throw err
+  }
+  let content
+  let mtime
+  let size
+  try {
+    assertOpenedRealInRoot(root, abs, fd) // 打开后复核（漂移即拒，内容零外泄）
+    content = fs.readFileSync(fd, 'utf8')
+    const fdStat = fs.fstatSync(fd)
+    size = Buffer.byteLength(content, 'utf8')
+    mtime = fdStat.mtimeMs
+  } finally {
+    fs.closeSync(fd)
+  }
   return { path: relPath, content, mtime, etag: `${size}-${mtime}`, size }
 }
 
@@ -147,7 +309,7 @@ function snapshot(content, stat) {
  * >}
  *   diffUndo.before = 保存前内容快照（成功=一键还原源；冲突=盘上现内容，重载/对比基线）
  *   diffUndo.incoming = 冲突时本次尝试写入内容（对比面）
- * 边界：仅覆盖已存在文件（新建归后续任务）；realpath/symlink 围栏归 T12。
+ * 边界：仅覆盖已存在文件（新建=createNote）；realpath/symlink 围栏已归位（T12 终态）。
  */
 export async function saveNote(root, relPath, content, options = {}) {
   const opts = options ?? {}
@@ -162,8 +324,9 @@ export async function saveNote(root, relPath, content, options = {}) {
     throw fail('bad_request', 'etag 非法（必须是非空字符串）')
   }
   if (typeof content !== 'string') throw fail('bad_request', 'content 必须是字符串')
-  const abs = resolveInRoot(root, relPath) // 词法围栏（T12 前置）
+  const abs = resolveInRoot(root, relPath) // realpath 围栏（T12 终态）
   return withFileLock(abs, async () => {
+    resolveInRoot(root, relPath) // TOCTOU 口径②：锁内 realpath 复核（入口→写之间换入即拒）
     const stat = statOrThrow(abs, relPath)
     if (!stat.isFile()) throw fail('not_found', `不是文件：${relPath}`)
     const beforeContent = fs.readFileSync(abs, 'utf8')
@@ -175,6 +338,11 @@ export async function saveNote(root, relPath, content, options = {}) {
     await writeFileAtomic(abs, content, { mode: stat.mode & 0o777 })
     fsyncPath(abs) // ARC-4：fsync 文件
     fsyncPath(path.dirname(abs), { dir: true }) // ARC-4：目录 fsync（rename 可见性）
+    try {
+      assertRealInRoot(root, abs) // TOCTOU 口径③：操作后复核（漂移→io_error 留痕；残窗见 task-12 报告）
+    } catch (err) {
+      throw fail('io_error', `保存后路径复核失败（路径漂移，内容已写入当次真实节点）：${err.message}`)
+    }
     const after = snapshot(content, statOrThrow(abs, relPath))
     emitVaultChange({ type: 'save', path: relPath, content }) // T11 保险①：保存即增量（落盘后发事件）
     return {
@@ -198,19 +366,25 @@ export async function saveNote(root, relPath, content, options = {}) {
  *   | {ok: true, path, mtime, etag, size}
  *   | {ok: false, reason: 'target-exists' | 'parent-missing'}
  * >}
- *   域结果一律对象返回（不抛错）；仅形参/词法围栏非法 throw bad_request；IO 异常 throw io_error。
+ *   域结果一律对象返回（不抛错）；仅形参/围栏非法 throw bad_request；IO 异常 throw io_error。
  */
 export async function createNote(root, relPath, content = '') {
   if (content === undefined) content = ''
   if (typeof content !== 'string') throw fail('bad_request', 'content 必须是字符串')
-  const abs = resolveInRoot(root, relPath) // 词法围栏（单一来源）
+  const abs = resolveInRoot(root, relPath) // realpath 围栏（单一来源，T12 终态）
   try {
     return await withFileLock(abs, async () => {
+      resolveInRoot(root, relPath) // TOCTOU 口径②：锁内 realpath 复核
       const existing = await fs.promises.lstat(abs).catch(() => null)
       if (existing !== null) return { ok: false, reason: 'target-exists' } // 文件/目录同拒（永不静默覆盖）
       await writeFileAtomic(abs, content, { mode: 0o644 })
       fsyncPath(abs) // ARC-4：fsync 文件
       fsyncPath(path.dirname(abs), { dir: true }) // ARC-4：目录 fsync
+      try {
+        assertRealInRoot(root, abs) // TOCTOU 口径③：操作后复核（漂移→io_error 留痕）
+      } catch (err) {
+        throw fail('io_error', `创建后路径复核失败（路径漂移，内容已写入当次真实节点）：${err.message}`)
+      }
       const stat = statOrThrow(abs, relPath)
       emitVaultChange({ type: 'create', path: relPath, content }) // T11 保险①：新建即增量
       return {
@@ -324,7 +498,7 @@ export function scanBacklinks(root, relPath) {
 //   换成目录=真实 finally 清锁故障 ERR_FS_EISDIR=「锁释放抛」）；'rollback-compare:<rel>'=
 //   回滚『比对后、逆放前』断面（锁内；回调内真写盘=回滚窗口并发注入）。
 // 边界声明：改写扫描面=全 vault .md 页面（wikilink/INDEX 零断链承诺面）；md 形链接 [x](y.md)
-//   不改写只留痕（承诺范围外）；目录改名拒（not-a-file）；realpath/symlink 围栏归 T12（词法围栏同前）。
+//   不改写只留痕（承诺范围外）；目录改名拒（not-a-file）；realpath 围栏已归位（T12 终态）。
 const TX_LOCK_WAIT_MS = 10_000
 export const DEFAULT_JOURNAL_MAX_BYTES = 64 * 1024 * 1024
 
@@ -493,7 +667,7 @@ export async function renameNote(root, from, to, options = {}) {
   const opts = options ?? {}
   if (typeof from !== 'string' || from === '') throw fail('bad_request', 'from 参数缺失')
   if (typeof to !== 'string' || to === '') throw fail('bad_request', 'to 参数缺失')
-  const fromAbs = resolveInRoot(root, from) // 词法围栏（throw bad_request）
+  const fromAbs = resolveInRoot(root, from) // realpath 围栏（throw bad_request）
   const toAbs = resolveInRoot(root, to)
   const warnings = []
   const skipped = []
@@ -773,7 +947,7 @@ async function claimTrashSlot(rootAbs, rel, isDir) {
  *   | {ok: false, reason, message, trashPath: null, warnings: string[]}
  * >}
  *   reason ∈ 'confirm-missing'|'confirm-mismatch'|'in-trash'|'not-found'|'not-a-file'|'move-failed'
- *   域结果一律对象返回（不抛错）；仅形参/词法围栏非法 throw bad_request。
+ *   域结果一律对象返回（不抛错）；仅形参/围栏非法 throw bad_request。
  * 测试缝（仅一个，沿 renameNote._onStage 惯例）：'claimed:<trashRel>'=占位已立、rename 前
  *   （并发抢建注入点/占位后故障注入点）；'after-rename:<trashRel>'=rename 落盘后、fsync 前。
  * 边界声明：删除不改写引用面（wikilink 悬空扫描归后续卡）；rename 永不静默覆盖同名=T5 已锁
@@ -790,7 +964,7 @@ export async function deletePath(root, relPath, options = {}) {
     return reject('confirm-missing', '缺双确认（confirm=目标相对路径全等复述）——缺省拒')
   }
   if (confirm !== relPath) return reject('confirm-mismatch', '双确认复述不符（confirm 必须全等于目标相对路径）')
-  const abs = resolveInRoot(root, relPath) // 词法围栏（throw bad_request）
+  const abs = resolveInRoot(root, relPath) // realpath 围栏（throw bad_request）
   // 回收站本体/内部条目拒删（恢复材料受保护；.trash 卷入自身=不可逆坑）。
   // 判定口径=规范化落点（resolved abs 对 <root>/.trash 的前缀判定），不是原始字符串前缀：
   // './.trash/x'、'.trash/./x' 等任何含 '.' 段的词法形态都解析进 .trash，一律拒（修复轮 Issue 1——

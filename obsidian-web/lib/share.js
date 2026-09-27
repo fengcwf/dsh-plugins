@@ -25,6 +25,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import { resolveInRoot, writeAtomicFsync } from './vault-ops.js'
+import { normalizeSegAlias } from './path-alias.js'
 
 // ── 显式常量（改值必须过 test/share*.test.mjs 锁形测试）────────────────────
 export const SHARE_DIR = '.ob-share'
@@ -49,10 +50,8 @@ const SENSITIVE_RE = SENSITIVE_GLOBS.map((glob) => new RegExp(
   `^${glob.split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 'i'))
 export const TOKEN_RE = /^[A-Za-z0-9_-]{22,64}$/ // base64url 形（32B→43 字符）；零 '.'/'/'/'\' = 文件名/围栏安全
 const INTERNAL_SEGMENTS = new Set(['.trash', SHARE_DIR]) // 恢复材料/自身存储永不可分享
-/** CIFS/SMB 别名归一（M-5 同款，单一来源）：剥前导空格+尾随 [. ]；前导 '.' 绝不剥（.env 保形） */
-function normalizeSegAlias(seg) {
-  return String(seg).replace(/^[ ]+/, '').replace(/[. ]+$/, '')
-}
+// CIFS/SMB 别名归一：单一来源收敛 path-alias.js（T12 围栏合流——share.js 模型层与 vault-ops
+// realpath 围栏「同源口径」；M-5 语义不变：剥前导空格+尾随 [. ]、前导 '.' 绝不剥（.env 保形））。
 function isInternalSegment(seg) {
   // C-1：内部段判定大小写不敏感（CIFS 大小写不敏感面 .TRASH 与 .trash 同物——fail-closed 不给绕行）；
   // C-1 fix r2：同过别名归一（trim）——'.ob-share.'/' .TRASH.'/' .trash. ' 等尾随 [. ]/前导空格形与本体同拒
@@ -340,7 +339,7 @@ export async function createShare(root, params, options = {}) {
   }
   const role = p.role
   if (!ROLES.includes(role)) throw fail('bad_request', `role 非法（${ROLES.join('/')}）`)
-  // target 词法围栏（与 vault-ops resolveInRoot 单一来源复核）
+  // target 过 realpath 围栏（T12 终态；与 vault-ops resolveInRoot 单一来源复核）
   const target = p.target
   if (typeof target !== 'string' || target === '') throw fail('bad_request', 'target 参数缺失')
   if (target.includes('\0') || target.includes('\\')) throw fail('bad_request', 'target 含非法字符')

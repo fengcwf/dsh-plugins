@@ -7,7 +7,7 @@
 //   zip64 豁免依据=双上限保证（fix r1 修正 R3 措辞）：MAX_ENTRIES×MAX_BYTES 恒在 16 位计数/32 位尺寸字段内。
 //   限额统一施加于两种导出形（单文件=files 1 + 字节面；目录=zip 全量计数/体量/条目）——OW-US-7 括注挂整特性。
 // 安全面：
-//   - 导出路径过 resolved abs 围栏（词法围栏 + resolve 后越界拒，沿 vault-ops resolveInRoot 单一来源）；
+//   - 导出路径过 realpath 围栏（T12 终态：全链逐段解引用拒逃逸/遍历/循环，沿 vault-ops resolveInRoot 单一来源）；
 //   - lstat 门：symlink 不跟随——单文件 symlink 拒 not-a-file；目录内 symlink/其他条目跳过+留痕；
 //   - 条目名消毒（fix r1/I2）：zip 条目名 '\' → '_'（POSIX 文件名可含反斜杠——对 Windows 解压器是已知
 //     zip-slip 向量；writer 侧 lib/zip.js 同款消毒为后备，双点幂等）；
@@ -36,7 +36,7 @@ const TRASH = '.trash'
  *          | {ok: false, reason, message, actual?, limit?}}
  */
 export function planExport(root, relPath) {
-  const abs = resolveInRoot(root, relPath) // 词法围栏 + resolved abs（throw bad_request）
+  const abs = resolveInRoot(root, relPath) // realpath 围栏 + resolved abs（throw bad_request）
   const base = path.resolve(root)
   const trashAbs = path.resolve(base, TRASH)
   if (abs === trashAbs || abs.startsWith(trashAbs + path.sep)) {

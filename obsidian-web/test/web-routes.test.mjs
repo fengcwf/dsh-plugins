@@ -71,7 +71,9 @@ async function withServer(fn, opts = {}) {
 }
 
 // ── 注册面（API 形锁定到接线层）───────────────────────────────────────────────
-test('注册面锁定：apply 恰注册 17 条 exact API（含 T4 保存/渲染面 + T5 改名面 + T6 删除面 + T7 下载面 + T10 分享管理/设置面 + T11 索引刷新面）+ /ob 重定向 + prefix /ob 静态面', () => {
+// 锁形随规格修订更新非回退（T8 fix1/T11 先例）：17→22 = T12/OW-US-13 vault 目录档案面 +5
+// （vault-profiles GET|add|delete|health|activate）。
+test('注册面锁定：apply 恰注册 22 条 exact API（含 T4 保存/渲染面 + T5 改名面 + T6 删除面 + T7 下载面 + T10 分享管理/设置面 + T11 索引刷新面 + T12 vault 目录档案面）+ /ob 重定向 + prefix /ob 静态面', () => {
   const { routes, ctx } = makeCtx()
   apply(ctx, { vaultRoot: VAULT })
   assert.deepEqual([...routes.keys()].sort(), [
@@ -92,6 +94,11 @@ test('注册面锁定：apply 恰注册 17 条 exact API（含 T4 保存/渲染�
     'exact:/ob/api/shares/revoke',
     'exact:/ob/api/shares/role',
     'exact:/ob/api/tree',
+    'exact:/ob/api/vault-profiles',
+    'exact:/ob/api/vault-profiles/activate',
+    'exact:/ob/api/vault-profiles/add',
+    'exact:/ob/api/vault-profiles/delete',
+    'exact:/ob/api/vault-profiles/health',
     'prefix:/ob',
   ])
 })
@@ -99,7 +106,7 @@ test('注册面锁定：apply 恰注册 17 条 exact API（含 T4 保存/渲染�
 test('dispose 全量注销；无宿主缝（独立测试上下文）不炸不注册', () => {
   const { routes, ctx } = makeCtx()
   const dispose = registerWebRoutes(ctx, () => ({ vaultRoot: VAULT, ui: { pageSize: 50 } }), { distDir: DIST })
-  assert.equal(routes.size, 18)
+  assert.equal(routes.size, 23)
   dispose()
   assert.equal(routes.size, 0)
   assert.doesNotThrow(() => apply({}, { vaultRoot: VAULT }), '缺 webServer/connection 缝时跳过注册（非宿主上下文）')

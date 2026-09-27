@@ -102,7 +102,8 @@ export function apply(ctx, rawConfig) {
     // 生命周期同 T9 惯例：缺 ctx.effect 收敛缝 → 索引不启动（timer 生命周期不可控 fail-closed）
     //   + 留痕（INV-15）；检索仍走 scan 兜底、/ob/api/index/refresh 503 可解释（行为不丢）。
     // 索引库=<vaultRoot>/.ob-index/（ARC-2 展示索引，可全量重建）；vaultRoot 绑定=启动时配置值
-    //   （热改多根归 T12 目录档案卡）；fts 后端注入 search.backends.fts=零 API 变化接管 T3 检索缝。
+    //   （热改可解释拒不冒充；多根档案=T12 设置页 vault 目录档案数据面）；fts 后端注入
+    //   search.backends.fts=零 API 变化接管 T3 检索缝。
     let indexService = null
     if (typeof ctx.effect === 'function') {
       indexService = createIndexService({ vaultRoot: getConfig().vaultRoot, warn: (line) => warn(ctx, line) })
