@@ -9,6 +9,8 @@
 //   exact /ob/api/delete    POST → {data:删除结果}      删除可逆（T6/OW-US-6/OW-INV-5：双确认+.trash）
 //   exact /ob/api/download  GET  → 文本流|zip 流       下载导出（T7/OW-US-7、OW-INV-9：限额超限拒+提示）
 //   exact /ob/api/render    POST → {data:{html,toc}}   live 渲染（T4 分屏预览；ARC-1 前端零 markdown 解析）
+//   exact /ob/api/index/refresh POST → {data:对账 run}  索引手动刷新（T11 保险③/OW-US-11：立即对账）
+//                                        未接索引服务 → 503 index_unavailable（可解释，不装死）
 //   exact /ob/api/shares    GET  → {data:{shares,total,settings,effectiveLanHost,sharePort}, total}
 //                                        分享管理列表（T10/OW-US-10：计数/状态 + links 内外网双地址）
 //   exact /ob/api/shares/create|revoke|password|role   POST → 分享管理操作（T10/OW-US-10）
@@ -27,6 +29,8 @@
 //   degraded=null | {reason:'timeout', message, scanned}（超时 fail-open 部分结果，INV-15 风格留痕）。
 // 检索后端可插拔（T11 索引三保险接管）：registerWebRoutes 第三参 search.backends.fts 注入即用，
 //   短查询（2 字盲区/纯符号）结构性走 scan/LIKE 兜底，后端切换零 API 变化。
+// 索引手动刷新面（T11 保险③）：第三参 index={refresh} 注入即活；refresh() → 对账账本 run 形
+//   （键锁定 test/index-routes.test.mjs：runId/startedAt/finishedAt/status/resumedFrom/cursor/counts/degraded）。
 // 鉴权缝（OW-INV-8）：每条 handler 第一行过 ctx.connection.requestRejection({headers}) → 401/403。
 // 宿主 match 语义（dsh-host-webserver 源码实测）：exact 优先 → 最长前缀，prefix 匹配 p 与 p/<anything>。
 import fs from 'node:fs'
@@ -538,6 +542,28 @@ function shareSettingsHandler(getConfig) {
   }
 }
 
+// ── /ob/api/index/refresh（T11 索引三保险·手动刷新：OW-US-11 / OW-INV-11）──────────
+// 语义：POST 立即对账（先查补跑账本——未完 run 先续跑）；成功 200 {data:对账账本 run 形}；
+//   未接索引服务 503 index_unavailable（可解释——检索仍走 scan 兜底，绝不静默装死）。
+//   超时/中断如实带 degraded 留痕（INV-15）；鉴权=authGate（T1 惯例/OW-INV-8）。
+function indexRefreshHandler(getIndex) {
+  return async (req, res) => {
+    try {
+      const index = getIndex()
+      if (!index || typeof index.refresh !== 'function') {
+        sendJson(res, 503, {
+          error: { code: 'index_unavailable', message: '索引服务未接入（检索走 scan 兜底；宿主 ctx.effect 缺失时索引不启动）' },
+        })
+        return
+      }
+      const run = await index.refresh()
+      sendJson(res, 200, { data: run })
+    } catch (err) {
+      failRequest(res, err)
+    }
+  }
+}
+
 /**
  * 注册 /ob/ 全部路由，返回 dispose 全量注销。
  * @param ctx 宿主上下文（webServer.register + connection.requestRejection 缝）
@@ -545,8 +571,9 @@ function shareSettingsHandler(getConfig) {
  * @param distDir web/dist 构建物目录
  * @param search 可选检索面调参/后端缝：{backends:{fts}, concurrency, timeoutMs, limit}
  *               （T11 索引三保险：注入 backends.fts 即接管 FTS5 检索，HTTP API 形零变化）
+ * @param index 可选索引服务缝：{refresh}（T11 手动刷新；缺省 → 刷新面 503 可解释）
  */
-export function registerWebRoutes(ctx, getConfig, { distDir, search }) {
+export function registerWebRoutes(ctx, getConfig, { distDir, search, index }) {
   const disposers = []
   const searchService = createSearchService(search ?? {})
   const add = (kind, routePath, handler) => disposers.push(ctx.webServer.register({ kind, path: routePath, handler }))
@@ -564,6 +591,7 @@ export function registerWebRoutes(ctx, getConfig, { distDir, search }) {
   add('exact', '/ob/api/delete', wrap(deleteHandler(getConfig), ['POST']))
   add('exact', '/ob/api/download', wrap(downloadHandler(ctx, getConfig)))
   add('exact', '/ob/api/render', wrap(renderHandler(), ['POST']))
+  add('exact', '/ob/api/index/refresh', wrap(indexRefreshHandler(() => index), ['POST']))
   // T10 分享管理面（OW-US-10）+ 设置面（OW-US-9）：鉴权=authGate（T1 惯例）
   add('exact', '/ob/api/shares', wrap(sharesListHandler(getConfig)))
   add('exact', '/ob/api/shares/create', wrap(sharesCreateHandler(getConfig), ['POST']))

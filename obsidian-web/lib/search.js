@@ -7,6 +7,7 @@
 //   createSearchService({backends, concurrency, timeoutMs, limit}) → {search(root, query, {limit})}
 //     → {backend, degraded, query, results:[{path, line, snippet, score, title}]}（结果项键集锁定）
 //     出口强制（I1/ARC-1）：任一后端 hits 的 snippet 必须=已转义形态，不合规拒（assertEscapedSnippet）
+//   matchDocs(plan, docs) → hits（T11 add：索引后端复用面——文件级 AND/命中行/score 同口径）
 //
 // score 语义（detpecca 教训）：**score = 排序权重，越大越优，仅用于结果排序——非匹配概率、非百分比**。
 //   本地加权：行内命中词 10/词 + 标题命中词 20/词 + 查询整串入标题 +10（合成标题命中行=20/词+10）。
@@ -182,6 +183,16 @@ function matchFile(rel, content, plan, probes) {
 
 function cmpHits(a, b) {
   return b.score - a.score || (a.path < b.path ? -1 : a.path > b.path ? 1 : a.line - b.line)
+}
+
+// ── T11 复用面（additive，API 形零变化）：索引后端按同一文件级 AND/命中行/score 口径产出 hits ──
+// fts 索引后端只做候选选择（FTS MATCH/LIKE 窄化），命中行/score/snippet 一律走本函数——
+// 与 scan 后端逐字节同口径（test/index-fts.test.mjs 双后端等价锁）；score=排序权重（越大越优）。
+export function matchDocs(plan, docs) {
+  const probes = compileProbes(plan)
+  const hits = []
+  for (const doc of docs) hits.push(...matchFile(doc.path, doc.content, plan, probes))
+  return hits.sort(cmpHits)
 }
 
 // ── scan 后端：全量扫描 + 并发限流 + 超时 fail-open 降级 ────────────────────────

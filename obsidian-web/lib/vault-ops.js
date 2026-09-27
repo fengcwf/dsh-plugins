@@ -26,6 +26,31 @@ function fail(code, message) {
   return err
 }
 
+// ── vault 变更事件面（T11 保存即增量的钩子缝 / OW-US-11 保险①）──────────────────
+// 写路径成功落盘后发事件（saveNote/createNote/renameNote/deletePath）；冲突/域拒绝/回滚态零事件。
+// 事件形（键锁定 test/index-incremental.test.mjs）：
+//   {type:'save'|'create', path, content}
+//   {type:'rename', from, to, changed}      changed=调用结果 changed 同数组（含 from+to+改写件）
+//   {type:'delete', path, trashPath, isDir}
+// 监听器抛错不回传写路径（逐监听器隔离 + console.warn 留痕，INV-15 禁静默）；返回退订函数。
+const changeListeners = new Set()
+
+export function onVaultChange(listener) {
+  if (typeof listener !== 'function') throw fail('bad_request', 'listener 必须是函数')
+  changeListeners.add(listener)
+  return () => changeListeners.delete(listener)
+}
+
+function emitVaultChange(event) {
+  for (const listener of changeListeners) {
+    try {
+      listener(event)
+    } catch (err) {
+      console.warn(`[obsidian-web] vault-change 监听器抛错（已隔离，写路径不受影响）：${err?.message ?? err}`)
+    }
+  }
+}
+
 function assertRelPath(relPath) {
   if (typeof relPath !== 'string' || relPath === '') throw fail('bad_request', 'path 参数缺失')
   if (relPath.includes('\0')) throw fail('bad_request', 'path 含非法字符')
@@ -151,6 +176,7 @@ export async function saveNote(root, relPath, content, options = {}) {
     fsyncPath(abs) // ARC-4：fsync 文件
     fsyncPath(path.dirname(abs), { dir: true }) // ARC-4：目录 fsync（rename 可见性）
     const after = snapshot(content, statOrThrow(abs, relPath))
+    emitVaultChange({ type: 'save', path: relPath, content }) // T11 保险①：保存即增量（落盘后发事件）
     return {
       ok: true,
       path: relPath,
@@ -186,6 +212,7 @@ export async function createNote(root, relPath, content = '') {
       fsyncPath(abs) // ARC-4：fsync 文件
       fsyncPath(path.dirname(abs), { dir: true }) // ARC-4：目录 fsync
       const stat = statOrThrow(abs, relPath)
+      emitVaultChange({ type: 'create', path: relPath, content }) // T11 保险①：新建即增量
       return {
         ok: true,
         path: relPath,
@@ -651,13 +678,15 @@ export async function renameNote(root, from, to, options = {}) {
     return failTx(err)
   }
 
+  const changed = [...new Set([to, ...rewrites.map((x) => x.rel), from])].sort()
+  emitVaultChange({ type: 'rename', from, to, changed }) // T11 保险①：改名即增量（事务提交后发事件）
   return {
     ok: true,
     from,
     to,
     moved: true,
     selfChanges: selfPlan.changes,
-    changed: [...new Set([to, ...rewrites.map((x) => x.rel), from])].sort(),
+    changed,
     rewritten: rewrites.map((x) => ({ path: x.rel, changes: x.changes })),
     skipped,
     rolledBack: false,
@@ -796,11 +825,13 @@ export async function deletePath(root, relPath, options = {}) {
     } catch (err) {
       warnings.push(`收尾故障（删除已落盘、可逆回收不受影响）：${err?.message ?? err}`)
     }
+    emitVaultChange({ type: 'delete', path: relPath, trashPath: claimed.trashRel, isDir }) // T11 保险①：删除即增量
     return { ok: true, path: relPath, trashPath: claimed.trashRel, warnings }
   } catch (err) {
     if (renamed) {
       // rename 已落盘=删除已发生：绝不谎报失败、绝不误清已回收内容（占位已被 rename 顶替，非本调用占位）
       warnings.push(`收尾故障（删除已落盘、可逆回收不受影响）：${err?.message ?? err}`)
+      emitVaultChange({ type: 'delete', path: relPath, trashPath: claimed.trashRel, isDir }) // T11 保险①（已落盘事实）
       return { ok: true, path: relPath, trashPath: claimed.trashRel, warnings }
     }
     // 失败清残只清本调用占位（外来/既有内容零误伤）；rename 未发生=源未动

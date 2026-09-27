@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import { registerWebRoutes } from './web-routes.js'
 import { createShareServer } from './share-server.js'
+import { createIndexService } from './index-service.js'
 
 // /ob/ UI 静态构建物默认位（web/dist 随包分发，见 web/README.md）
 const DEFAULT_DIST_DIR = fileURLToPath(new URL('../web/dist', import.meta.url))
@@ -96,7 +97,27 @@ export function apply(ctx, rawConfig) {
       const current = Config.safeParse(rawConfig)
       return current.success ? current.data : Config.parse({})
     }
-    const dispose = registerWebRoutes(ctx, getConfig, { distDir: DEFAULT_DIST_DIR })
+
+    // ── T11 接线：索引三保险（OW-US-11/OW-INV-11：保存即增量+30min 对账+手动刷新）────────
+    // 生命周期同 T9 惯例：缺 ctx.effect 收敛缝 → 索引不启动（timer 生命周期不可控 fail-closed）
+    //   + 留痕（INV-15）；检索仍走 scan 兜底、/ob/api/index/refresh 503 可解释（行为不丢）。
+    // 索引库=<vaultRoot>/.ob-index/（ARC-2 展示索引，可全量重建）；vaultRoot 绑定=启动时配置值
+    //   （热改多根归 T12 目录档案卡）；fts 后端注入 search.backends.fts=零 API 变化接管 T3 检索缝。
+    let indexService = null
+    if (typeof ctx.effect === 'function') {
+      indexService = createIndexService({ vaultRoot: getConfig().vaultRoot, warn: (line) => warn(ctx, line) })
+      ctx.effect(() => indexService.stop())
+      indexService.start().catch((err) => {
+        warn(ctx, `[obsidian-web] 索引启动补跑失败（scan 兜底仍可用，30min 定时器重试）：${err?.message ?? err}`)
+      })
+    } else {
+      warn(ctx, '[obsidian-web] 缺 ctx.effect 收敛缝：索引服务未启动（检索走 scan 兜底，/ob/api/index/refresh 503）')
+    }
+    const dispose = registerWebRoutes(ctx, getConfig, {
+      distDir: DEFAULT_DIST_DIR,
+      search: indexService === null ? undefined : { backends: { fts: indexService.ftsBackend } },
+      index: indexService === null ? undefined : { refresh: () => indexService.refresh() },
+    })
     if (typeof ctx.effect === 'function') ctx.effect(dispose)
 
     // ── T9 接线：分享服务独立入口（OW-INV-10：独立 listener、生命周期独立可单独关停）────────
