@@ -8,10 +8,13 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createIndexService, RECONCILE_INTERVAL_MS, INDEX_DIR_NAME } from '../lib/index-service.js'
+import { createIndexService, RECONCILE_INTERVAL_MS } from '../lib/index-service.js'
+import { resolveIndexDir } from '../lib/index-store.js'
 import { createSearchService } from '../lib/search.js'
 
 const TMP_ROOT = fileURLToPath(new URL('./.tmp-index-recon', import.meta.url))
+// 0.1.1 起索引库落本地盘 <indexDir>/<vault 名-哈希>/（迁出 CIFS）——测试显式给 indexDir（HOME 污染防线）
+const IDX_BASE = path.join(TMP_ROOT, 'idx')
 
 function makeVault(files) {
   fs.rmSync(TMP_ROOT, { recursive: true, force: true })
@@ -27,13 +30,13 @@ function makeVault(files) {
 
 test.after(() => fs.rmSync(TMP_ROOT, { recursive: true, force: true }))
 
-const ledgerOf = (vault) => JSON.parse(fs.readFileSync(path.join(vault, INDEX_DIR_NAME, 'reconcile-ledger.json'), 'utf8'))
+const ledgerOf = (vault) => JSON.parse(fs.readFileSync(path.join(resolveIndexDir({ vaultRoot: vault, indexDir: IDX_BASE }), 'reconcile-ledger.json'), 'utf8'))
 const notes = (n) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`f${String(i).padStart(2, '0')}.md`, `# Note ${i}\n\nbody ${i} 内容${i}\n`]))
 
 // ── ③ 对账账本落盘：计数语义 seen/added/updated/removed/degraded + 时间戳 ─────────
 test('③ 对账账本落盘：增量 diff 计数（seen/added/updated/removed）逐次精确 + 账本 JSON 可读（时间戳/计数/状态）', async () => {
   const vault = makeVault(notes(4))
-  const service = createIndexService({ vaultRoot: vault, batchSize: 2 })
+  const service = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE, batchSize: 2 })
   try {
     const run1 = await service.reconcile()
     assert.deepEqual(run1.counts, { seen: 0, added: 4, updated: 0, removed: 0, degraded: 0 }, '首建全量 added')
@@ -67,7 +70,7 @@ test('③ 对账账本落盘：增量 diff 计数（seen/added/updated/removed�
 
 test('③ degraded 留痕：对账中途文件消失 → 逐条 {path,reason,message} 入账本 + 计数（INV-15 禁静默）', async () => {
   const vault = makeVault(notes(5))
-  const service = createIndexService({ vaultRoot: vault, batchSize: 2 })
+  const service = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE, batchSize: 2 })
   try {
     const run = await service.reconcile({
       _onBatch: ({ batchesDone }) => {
@@ -91,7 +94,7 @@ test('③ degraded 留痕：对账中途文件消失 → 逐条 {path,reason,mes
 // ── ③ 崩溃续跑（账本可读 → 先查补跑账本）──────────────────────────────────────
 test('③ 中断续跑：对账中断（interrupted 账本+cursor）→ 新服务启动先查补跑账本 → 续跑完成、计数累计', async () => {
   const vault = makeVault(notes(6))
-  const service1 = createIndexService({ vaultRoot: vault, batchSize: 2 })
+  const service1 = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE, batchSize: 2 })
   await assert.rejects(
     () => service1.reconcile({ _onBatch: ({ batchesDone }) => { if (batchesDone === 2) throw new Error('中途故障') } }),
     /中途故障/,
@@ -103,7 +106,7 @@ test('③ 中断续跑：对账中断（interrupted 账本+cursor）→ 新服�
   assert.equal(typeof interrupted.cursor, 'string', '批间 cursor 落盘=续跑凭据')
   assert.equal(interrupted.counts.added, 4, '中断前已处理批次入账')
 
-  const service2 = createIndexService({ vaultRoot: vault, batchSize: 2 })
+  const service2 = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE, batchSize: 2 })
   try {
     await service2.start() // 先查补跑账本 → 续跑
     const runs = ledgerOf(vault).runs
@@ -123,7 +126,7 @@ test('③ 中断续跑：对账中断（interrupted 账本+cursor）→ 新服�
 
 test('③ 崩溃续跑：进程级崩溃（账本停在 running+cursor、无收尾）→ 新服务启动续跑完成', async () => {
   const vault = makeVault(notes(6))
-  const service1 = createIndexService({ vaultRoot: vault, batchSize: 2 })
+  const service1 = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE, batchSize: 2 })
   await assert.rejects(
     () => service1.reconcile({
       _onBatch: ({ batchesDone }) => {
@@ -143,7 +146,7 @@ test('③ 崩溃续跑：进程级崩溃（账本停在 running+cursor、无收�
   assert.equal(typeof crashed.cursor, 'string')
   assert.equal(crashed.counts.added, 2)
 
-  const service2 = createIndexService({ vaultRoot: vault, batchSize: 2 })
+  const service2 = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE, batchSize: 2 })
   try {
     await service2.start()
     const resumed = ledgerOf(vault).runs.at(-1)
@@ -158,7 +161,7 @@ test('③ 崩溃续跑：进程级崩溃（账本停在 running+cursor、无收�
 // ── C-1 fix：续跑不中毒（账本陈旧态不得复活）────────────────────────────────────
 test('③ C-1 续跑不中毒：中断→续跑→再 refresh=全量（无 resumedFrom、计数不重加）+ source run 改写 superseded', async () => {
   const vault = makeVault(notes(6))
-  const service1 = createIndexService({ vaultRoot: vault, batchSize: 2 })
+  const service1 = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE, batchSize: 2 })
   await assert.rejects(
     () => service1.reconcile({ _onBatch: ({ batchesDone }) => { if (batchesDone === 2) throw new Error('中途故障') } }),
     /中途故障/,
@@ -167,7 +170,7 @@ test('③ C-1 续跑不中毒：中断→续跑→再 refresh=全量（无 resum
   const interrupted = ledgerOf(vault).runs.at(-1)
   assert.equal(interrupted.status, 'interrupted', '中断留痕')
 
-  const service2 = createIndexService({ vaultRoot: vault, batchSize: 2 })
+  const service2 = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE, batchSize: 2 })
   try {
     // 第一次 refresh=续跑（应发生恰一次）
     const resumed = await service2.refresh()
@@ -200,7 +203,7 @@ test('③ C-1 续跑不中毒：中断→续跑→再 refresh=全量（无 resum
 // ── I-2 fix：对账移除面不得误删 run 期间经钩子入库的文件 ──────────────────────────
 test('① I-2 对账窗口内钩子入库不误删：_onBatch 窗口 createNote → run 结束后该文件仍可检索', async () => {
   const vault = makeVault(notes(3))
-  const service = createIndexService({ vaultRoot: vault, batchSize: 2 })
+  const service = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE, batchSize: 2 })
   await service.start() // 注册钩子（保存即增量）；start 先建基线索引
   try {
     const { createNote } = await import('../lib/vault-ops.js')
@@ -232,7 +235,7 @@ test('② 定时对账：interval 恰 30min（假定时器捕获）；到点触�
     clearInterval: () => { tick = null },
   }
   let fakeNow = 1_000_000
-  const service = createIndexService({ vaultRoot: vault, now: () => fakeNow, timers: fakeTimers })
+  const service = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE, now: () => fakeNow, timers: fakeTimers })
   try {
     await service.start()
     assert.ok(tick, 'start() 排定定时器')
@@ -261,7 +264,7 @@ test('④ 陈旧窗口 ≤30min：任意外部变更最迟 30min 内入索引（
     clearInterval: () => {},
   }
   let fakeNow = 5_000_000
-  const service = createIndexService({ vaultRoot: vault, now: () => fakeNow, timers: fakeTimers })
+  const service = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE, now: () => fakeNow, timers: fakeTimers })
   try {
     await service.start()
     const changeAt = fakeNow // 上次对账刚完成，外部变更立刻发生（最坏时机）
@@ -289,14 +292,14 @@ test('② 启动补跑：距上次完成 >30min（或无账本）→ start() 立
   const vault = makeVault(notes(2))
   const fakeTimers = { setInterval: () => ({ unref() {} }), clearInterval: () => {} }
   let fakeNow = 10_000_000
-  const service1 = createIndexService({ vaultRoot: vault, now: () => fakeNow, timers: fakeTimers })
+  const service1 = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE, now: () => fakeNow, timers: fakeTimers })
   await service1.reconcile()
   service1.stop()
 
   // 外部变更后停机，重启时距上次完成 >30min → 立即补跑
   fs.writeFileSync(path.join(vault, 'ext.md'), '# Ext\n\nexternal 外部内容\n')
   fakeNow += RECONCILE_INTERVAL_MS + 1
-  const service2 = createIndexService({ vaultRoot: vault, now: () => fakeNow, timers: fakeTimers })
+  const service2 = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE, now: () => fakeNow, timers: fakeTimers })
   try {
     await service2.start()
     const svc = createSearchService({ backends: { fts: service2.ftsBackend } })

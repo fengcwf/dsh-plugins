@@ -1,6 +1,10 @@
 // index-store — 索引库（T11 / OW-US-11）：node:sqlite FTS5（trigram tokenizer）展示索引。
-// ARC-2：sqlite 仅展示索引——持久化落 vault 文件系统 `<vaultRoot>/.ob-index/`（.ob-share/ 外独立目录，
-//   dot 条目不出树/不出分享面/不入 walk；索引可随时全量重建，非权威数据源）。
+// ARC-2：sqlite 仅展示索引——可随时全量重建，非权威数据源。落点（0.1.1 迁出 CIFS，fix-boot-lock）：
+//   `<indexDir>/<vaultDirName>/`（多 vault 档案各一库），indexDir 缺省 `~/.dsh/cache/obsidian-web/`
+//   （本地盘）；旧落点 `<vaultRoot>/.ob-index/`（0.1.1 前）仅剩检测留痕（index-service），绝不静默删除。
+//   根因实证（fix-boot-lock-report E1-E10）：vault 落 CIFS（nounix,mapposix）时 SMB per-handle 字节锁
+//   把 SQLite 同 fd 锁升级判自身冲突（EACCES→SQLITE_BUSY）——该挂载任何 SQLite 写恒失败，
+//   索引库必须落本地盘；busy_timeout/fail-open/自愈照旧保留（双保险，见下）。
 // 库形（TECH §2.2「schema 同 kb-context 口径」独立实现，差异表见 task-11-report）：
 //   docs(id, path UNIQUE, title, size, mtime_ms, content) + docs_fts(title, body, tokenize='trigram')
 //   + meta(rule_fingerprint)——规则指纹变更=清库重建（kb-context FTS_RULE_FINGERPRINT 同款语义，doc 级）。
@@ -10,12 +14,71 @@
 //   fts 词面 → 逐词加引号（内部 " 加倍转义）后 AND 连接进 MATCH；like 词面 → SQL LIKE（\ % _ 转义）。
 //   LIKE 预过滤=ASCII 大小写折叠（非 ASCII 大小写对可能比 regex /i 窄——service 层结构性兜底保证
 //   like 词面生产不可达本路径；命中行/AND 语义由 search.matchDocs 复核，绝不由 SQL 单独裁决）。
+import crypto from 'node:crypto'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { deriveTitle } from './search.js'
 
 export const FTS_RULE_FINGERPRINT = 'fts5/trigram/doc-level/v1'
+
+// ── 索引库落点解析（单一来源，0.1.1 迁出 CIFS）──────────────────────────────────────
+// Config.indexDir（字符串）= 索引库基目录；缺省/空串/纯空白 → 出厂默认 `~/.dsh/cache/obsidian-web/`
+//   （本地盘；`~`/`~/` 前缀按 os.homedir() 展开，其余 path.resolve）。
+// 每 vault 一库：`<indexDir>/<vaultDirName(vaultRoot)>/`——安全名（basename 净化，仅 [A-Za-z0-9._-]）
+//   + vaultRoot sha256 前 16 位（防撞名：同名 vault 落不同目录，多 vault 档案各一库）。
+// 显式 dir = 全落点覆盖（测试缝/特殊部署），优先级 dir > indexDir > 出厂默认。
+export const DEFAULT_INDEX_DIR_BASE = '~/.dsh/cache/obsidian-web'
+export const LEGACY_INDEX_DIR_NAME = '.ob-index' // 旧落点目录名（0.1.1 前 <vaultRoot>/.ob-index/）
+
+/** indexDir 基目录展开：空/缺省→出厂默认；`~`/`~/`→os.homedir()；其余绝对化 */
+export function expandIndexDirBase(indexDir) {
+  const raw = typeof indexDir === 'string' ? indexDir.trim() : ''
+  const base = raw === '' ? DEFAULT_INDEX_DIR_BASE : raw
+  if (base === '~') return os.homedir()
+  if (base.startsWith('~/')) return path.join(os.homedir(), base.slice(2))
+  return path.resolve(base)
+}
+
+/** 每 vault 子目录名：安全名（净化 basename，空→'vault'，截 32）+ sha256(rootAbs) 前 16 位（防撞名） */
+export function vaultIndexDirName(vaultRootAbs) {
+  const safe = path.basename(vaultRootAbs).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 32) || 'vault'
+  const hash = crypto.createHash('sha256').update(vaultRootAbs).digest('hex').slice(0, 16)
+  return `${safe}-${hash}`
+}
+
+/** 索引库落点解析（service/store 共用单一来源）：dir > indexDir > 出厂默认 */
+export function resolveIndexDir({ vaultRoot, indexDir, dir } = {}) {
+  if (typeof vaultRoot !== 'string' || vaultRoot === '') throw new Error('vaultRoot 参数缺失')
+  const rootAbs = path.resolve(vaultRoot)
+  if (dir !== undefined) return path.resolve(dir)
+  return path.join(expandIndexDirBase(indexDir), vaultIndexDirName(rootAbs))
+}
+
+// ── 开库自愈（fix-boot-lock）────────────────────────────────────────────────────────
+// node:sqlite 默认 busy_timeout=0：锁竞争下写事务立即 SQLITE_BUSY（"database is locked"）。
+// 开库纪律：①PRAGMA busy_timeout 正等待 ②小退避重试（指数退避，仅锁类错误重试）——瞬时锁竞争
+//   （他进程持锁/并发开库）自愈。⚠️ 根因实证（2026-09-28 boot 失败，报告 fix-boot-lock-report）：
+//   vault 落 CIFS（nounix,mapposix）挂载时，SMB per-handle 字节锁把 SQLite 同 fd 锁升级
+//   （F_WRLCK 覆盖同 fd 已持 F_RDLCK 同区间）判冲突 EACCES→SQLITE_BUSY——该环境任何 SQLite 写
+//   （含建库 SCHEMA）恒失败，busy_timeout/重试只对「真锁竞争」自愈；挂载锁语义故障由上层
+//   fail-open（index-service degraded）兜底，绝不炸插件装载。
+export const DEFAULT_BUSY_TIMEOUT_MS = 500
+export const DEFAULT_OPEN_ATTEMPTS = 2
+export const DEFAULT_RETRY_DELAY_MS = 50
+
+/** 同步小退避（Atomics.wait——开库是同步面，不得引入异步时序） */
+function sleepSync(ms) {
+  if (!(ms > 0)) return
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/** 锁类错误（可重试）：SQLITE_BUSY(5)/SQLITE_LOCKED(6) 语义——其余错误立即上抛不重试 */
+function isLockError(err) {
+  if (err?.errcode === 5 || err?.errcode === 6) return true
+  return /locked|busy/i.test(String(err?.message ?? ''))
+}
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -45,18 +108,43 @@ function matchExpr(ftsTerms) {
 }
 
 /**
- * 打开/建库（幂等；目录缺失自建）。
- * @param {{vaultRoot: string, dir?: string}} dir 缺省 `<vaultRoot>/.ob-index`
+ * 打开/建库（幂等；目录缺失自建）——锁竞争自愈：busy_timeout pragma 正等待 + 小退避重试（指数）。
+ * @param {{vaultRoot: string, indexDir?: string, dir?: string, busyTimeoutMs?: number,
+ *          openAttempts?: number, retryDelayMs?: number}} 落点解析见 resolveIndexDir（dir>indexDir>默认）
  * @returns store 句柄（node:sqlite 同步 API；close() 收敛）
  */
-export function createIndexStore({ vaultRoot, dir } = {}) {
+export function createIndexStore({
+  vaultRoot,
+  indexDir,
+  dir,
+  busyTimeoutMs = DEFAULT_BUSY_TIMEOUT_MS,
+  openAttempts = DEFAULT_OPEN_ATTEMPTS,
+  retryDelayMs = DEFAULT_RETRY_DELAY_MS,
+} = {}) {
   if (typeof vaultRoot !== 'string' || vaultRoot === '') throw new Error('vaultRoot 参数缺失')
   const rootAbs = path.resolve(vaultRoot)
-  const dirAbs = dir === undefined ? path.join(rootAbs, '.ob-index') : path.resolve(dir)
+  const dirAbs = resolveIndexDir({ vaultRoot: rootAbs, indexDir, dir })
   fs.mkdirSync(dirAbs, { recursive: true })
   const dbPath = path.join(dirAbs, 'index.db')
+  const attempts = Math.max(1, Math.floor(openAttempts))
+  const backoffMs = Math.max(0, Math.floor(retryDelayMs))
+  const busyMs = Number.isFinite(busyTimeoutMs) ? Math.max(0, Math.floor(busyTimeoutMs)) : DEFAULT_BUSY_TIMEOUT_MS
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return openOnce({ rootAbs, dirAbs, dbPath, busyMs })
+    } catch (err) {
+      if (!isLockError(err) || attempt >= attempts) throw err
+      sleepSync(backoffMs * 2 ** (attempt - 1)) // 小退避（指数）——瞬时锁竞争自愈；只重试锁类错误
+    }
+  }
+}
+
+/** 单次开库：busy_timeout pragma → SCHEMA → 规则指纹核 → 预编译语句；任一步失败关连接（重试干净起步） */
+function openOnce({ rootAbs, dirAbs, dbPath, busyMs }) {
   const db = new DatabaseSync(dbPath)
-  db.exec(SCHEMA)
+  try {
+    db.exec(`PRAGMA busy_timeout = ${busyMs}`)
+    db.exec(SCHEMA)
   // 规则指纹核（tokenizer/规则版本变了 → 清库重建，绝不新旧口径混跑）
   let rebuilt = false
   const fp = db.prepare("SELECT value FROM meta WHERE key = 'rule_fingerprint'").get()
@@ -176,18 +264,23 @@ export function createIndexStore({ vaultRoot, dir } = {}) {
     return Number(db.prepare('SELECT COUNT(*) AS n FROM docs').get().n)
   }
 
-  return {
-    vaultRoot: rootAbs,
-    dir: dirAbs,
-    dbPath,
-    rebuilt,
-    upsertFile,
-    upsertFiles,
-    removeFile,
-    removeTree,
-    listDocs,
-    matchCandidates,
-    count,
-    close: () => db.close(),
+    return {
+      vaultRoot: rootAbs,
+      dir: dirAbs,
+      dbPath,
+      rebuilt,
+      busyTimeoutMs: busyMs,
+      upsertFile,
+      upsertFiles,
+      removeFile,
+      removeTree,
+      listDocs,
+      matchCandidates,
+      count,
+      close: () => db.close(),
+    }
+  } catch (err) {
+    try { db.close() } catch { /* 关闭失败不掩盖原错误（重试/上抛以原错误为准） */ }
+    throw err
   }
 }

@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { registerWebRoutes } from './web-routes.js'
 import { createShareServer } from './share-server.js'
 import { createIndexService } from './index-service.js'
+import { DEFAULT_INDEX_DIR_BASE } from './index-store.js'
 
 // /ob/ UI 静态构建物默认位（web/dist 随包分发，见 web/README.md）
 const DEFAULT_DIST_DIR = fileURLToPath(new URL('../web/dist', import.meta.url))
@@ -29,6 +30,10 @@ export const inject = ['webServer', 'connection']
 export const Config = z.object({
   // vault 根路径：所有读写/下载/分享/目录维护的文件系统根（T12 起叠加 realpath 路径围栏，OW-INV-7）
   vaultRoot: z.string().default(DEFAULT_VAULT_ROOT),
+  // 索引库基目录（0.1.1 迁出 CIFS，fix-boot-lock）：索引=可重建零损失缓存（ARC-2）落本地盘，
+  // 每 vault 一库 `<indexDir>/<vault 名-哈希>/`；缺省/空串/纯空白 → 出厂默认 `~/.dsh/cache/obsidian-web/`
+  // （`~` 按 os.homedir() 展开；解析语义单一来源=index-store.resolveIndexDir，测试锁定）
+  indexDir: z.string().default(DEFAULT_INDEX_DIR_BASE),
   // 分享模型（PRODUCT OW-INV-1，v1.1）：逐条显式生成、默认不对外；写权限强制访问密码
   share: z.object({
     enabled: z.boolean().default(true),
@@ -101,16 +106,26 @@ export function apply(ctx, rawConfig) {
     // ── T11 接线：索引三保险（OW-US-11/OW-INV-11：保存即增量+30min 对账+手动刷新）────────
     // 生命周期同 T9 惯例：缺 ctx.effect 收敛缝 → 索引不启动（timer 生命周期不可控 fail-closed）
     //   + 留痕（INV-15）；检索仍走 scan 兜底、/ob/api/index/refresh 503 可解释（行为不丢）。
-    // 索引库=<vaultRoot>/.ob-index/（ARC-2 展示索引，可全量重建）；vaultRoot 绑定=启动时配置值
+    // 索引库=<indexDir>/<vault 名-哈希>/（0.1.1 迁出 CIFS 落本地盘，ARC-2 展示索引可全量重建；
+    //   旧落点 <vaultRoot>/.ob-index/ 检测留痕）；vaultRoot/indexDir 绑定=启动时配置值
     //   （热改可解释拒不冒充；多根档案=T12 设置页 vault 目录档案数据面）；fts 后端注入
     //   search.backends.fts=零 API 变化接管 T3 检索缝。
     let indexService = null
     if (typeof ctx.effect === 'function') {
-      indexService = createIndexService({ vaultRoot: getConfig().vaultRoot, warn: (line) => warn(ctx, line) })
-      ctx.effect(() => indexService.stop())
-      indexService.start().catch((err) => {
-        warn(ctx, `[obsidian-web] 索引启动补跑失败（scan 兜底仍可用，30min 定时器重试）：${err?.message ?? err}`)
-      })
+      // fix-boot-lock fail-open 网兜：索引库是展示面（ARC-2 可重建零损失）——任何索引面故障绝不炸
+      //   插件装载。createIndexService 内部已对建库/开库失败 fail-open（degraded 留痕+自愈重试），
+      //   此层是最后防线（意外异常同样放行装载+留痕，INV-15 禁静默）。
+      try {
+        const cfg = getConfig()
+        indexService = createIndexService({ vaultRoot: cfg.vaultRoot, indexDir: cfg.indexDir, warn: (line) => warn(ctx, line) })
+        ctx.effect(() => indexService.stop())
+        indexService.start().catch((err) => {
+          warn(ctx, `[obsidian-web] 索引启动补跑失败（scan 兜底仍可用，30min 定时器重试）：${err?.message ?? err}`)
+        })
+      } catch (err) {
+        indexService = null
+        warn(ctx, `[obsidian-web] 索引服务启动失败（fail-open：插件继续装载，检索走 scan 兜底，/ob/api/index/refresh 503）：${err?.message ?? err}`)
+      }
     } else {
       warn(ctx, '[obsidian-web] 缺 ctx.effect 收敛缝：索引服务未启动（检索走 scan 兜底，/ob/api/index/refresh 503）')
     }

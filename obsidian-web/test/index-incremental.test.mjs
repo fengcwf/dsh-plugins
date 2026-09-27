@@ -15,6 +15,9 @@ import { createIndexService } from '../lib/index-service.js'
 import { createSearchService } from '../lib/search.js'
 
 const TMP_ROOT = fileURLToPath(new URL('./.tmp-index-inc', import.meta.url))
+// 0.1.1 起索引库落本地盘 <indexDir>/<vault 名-哈希>/（迁出 CIFS）——测试显式给 indexDir，
+//   绝不落真实 ~/.dsh/cache（HOME 污染防线）；落点解析语义单独锁定（test/index-dir.test.mjs）
+const IDX_BASE = path.join(TMP_ROOT, 'idx')
 
 function makeVault(files) {
   fs.rmSync(TMP_ROOT, { recursive: true, force: true })
@@ -32,7 +35,7 @@ test.after(() => fs.rmSync(TMP_ROOT, { recursive: true, force: true }))
 
 /** 服务+检索面真装配（fts 接管缝原样消费） */
 async function startService(vault) {
-  const service = createIndexService({ vaultRoot: vault })
+  const service = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE })
   await service.start()
   return { service, svc: createSearchService({ backends: { fts: service.ftsBackend } }) }
 }
