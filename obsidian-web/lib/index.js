@@ -106,11 +106,19 @@ export function apply(ctx, rawConfig) {
     //   search.backends.fts=零 API 变化接管 T3 检索缝。
     let indexService = null
     if (typeof ctx.effect === 'function') {
-      indexService = createIndexService({ vaultRoot: getConfig().vaultRoot, warn: (line) => warn(ctx, line) })
-      ctx.effect(() => indexService.stop())
-      indexService.start().catch((err) => {
-        warn(ctx, `[obsidian-web] 索引启动补跑失败（scan 兜底仍可用，30min 定时器重试）：${err?.message ?? err}`)
-      })
+      // fix-boot-lock fail-open 网兜：索引库是展示面（ARC-2 可重建零损失）——任何索引面故障绝不炸
+      //   插件装载。createIndexService 内部已对建库/开库失败 fail-open（degraded 留痕+自愈重试），
+      //   此层是最后防线（意外异常同样放行装载+留痕，INV-15 禁静默）。
+      try {
+        indexService = createIndexService({ vaultRoot: getConfig().vaultRoot, warn: (line) => warn(ctx, line) })
+        ctx.effect(() => indexService.stop())
+        indexService.start().catch((err) => {
+          warn(ctx, `[obsidian-web] 索引启动补跑失败（scan 兜底仍可用，30min 定时器重试）：${err?.message ?? err}`)
+        })
+      } catch (err) {
+        indexService = null
+        warn(ctx, `[obsidian-web] 索引服务启动失败（fail-open：插件继续装载，检索走 scan 兜底，/ob/api/index/refresh 503）：${err?.message ?? err}`)
+      }
     } else {
       warn(ctx, '[obsidian-web] 缺 ctx.effect 收敛缝：索引服务未启动（检索走 scan 兜底，/ob/api/index/refresh 503）')
     }

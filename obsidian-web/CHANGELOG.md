@@ -1,5 +1,14 @@
 # Changelog — obsidian-web
 
+## 0.1.1 — 2026-09-28
+- **Bug 修复：boot 因索引库打开失败而装载失败（`database is locked`）→ fail-open**（生产日志 304/324 两轮 boot 必现，`1 entry did not activate`，插件装载失败）：
+  - **根因（复现/strace/库文件态实证，详见 `.superpowers/sdd/tasks/fix-boot-lock-report.md`）**：vault 落 CIFS（`vers=3.1.1,nounix,mapposix,noperm,soft`）挂载，SMB per-handle 字节锁语义把 SQLite 同 fd 锁升级（`F_WRLCK [0x40000002,510)` 覆盖同 fd 已持 `F_RDLCK` 同区间）判为自身冲突 `EACCES`→SQLITE_BUSY→`database is locked`——该挂载上任何 SQLite 写（含建库 SCHEMA）恒失败（全新文件/零进程持有必挂、`index.db` 停在 0 字节、本地盘同代码整条锁序列全绿）。候选①锁残留/②双实例双开/③IMMEDIATE 并发事务均被实证排除。
+  - **产品语义（boot 永不因索引失败而装载失败——索引库是展示面，ARC-2 可重建零损失）**：`createIndexService` 建库/开库失败 fail-open——插件继续装载，索引面进 degraded 留痕（INV-15 风格：warn 线 + 对账账本 run `status:'degraded'` + `status()` 可观测），检索走 scan 兜底（`createSearchService` 对 fts 后端 `index_unavailable` 自动降级 scan，`backend` 如实报 scan）；`apply` 另加最后防线网兜（任何索引面异常同样放行装载+留痕）。
+  - **开库自愈**：`PRAGMA busy_timeout`（缺省 500ms；node:sqlite 默认 0=锁竞争立即失败）+ 小退避重试（缺省 2 次、指数退避 50ms 起，只重试锁类错误 SQLITE_BUSY/LOCKED）——真锁竞争（他进程持锁/并发开库）自愈；tick/手动刷新/start 补跑同径 `ensureStore` 自愈重试，恢复后全量对账重建（run `done`+计数如实）。
+  - **`POST /ob/api/index/refresh`**：索引面 degraded 自愈失败 → 与「未接索引服务」同形 503 `index_unavailable`（可解释，不装死）。
+  - **回归测试**（真验零 mock，`test/index-failopen.test.mjs` 6 项）：真锁（第二连接 `BEGIN IMMEDIATE` 持锁）→ apply 必成功 + degraded 留痕 + refresh 503；释放后自愈重建（run `done`+计数如实）；跨进程持锁释放→退避重试自愈（真第二进程）；busy_timeout 真生效（持锁下失败耗时 ≥ busyTimeout）；degraded 期检索自动降级 scan、恢复后回 fts；degraded 态增量跳过留痕不炸 + `stop()` 安全收敛。
+  - **已知边界（如实）**：根因在挂载锁语义（环境面）——本修复保证 boot/检索行为不丢并把重试自愈做实，但该 CIFS 挂载上索引库将持续 degraded（重试无法愈合恒定的锁语义故障，检索走 scan 兜底）；要恢复索引能力需调整挂载锁语义或把索引库迁出 CIFS（NEEDS_CONTEXT 交裁定，见报告）。
+
 ## 0.1.0 — 2026-09-26
 - **插件壳首发（T1）**：`obsidian-web/` 包骨架——`package.json`（`dsh.bundle.patch` + 零第三方运行时依赖，zod/dsh 共享包 peer+dev 双声明）、`cordis.patch.yml`（insert 行 + 全键 config）、`lib/index.js` 入口。
 - **导出契约（R13 教训回归）**：default 导出为 `{inject, apply}` 对象（工厂函数形态会被宿主静默忽略）；`name`/`inject`/`Config`/`apply` 同步具名导出。

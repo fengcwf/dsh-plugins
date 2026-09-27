@@ -614,7 +614,8 @@ function vaultProfilesActivateHandler(getConfig) {
 
 // ── /ob/api/index/refresh（T11 索引三保险·手动刷新：OW-US-11 / OW-INV-11）──────────
 // 语义：POST 立即对账（先查补跑账本——未完 run 先续跑）；成功 200 {data:对账账本 run 形}；
-//   未接索引服务 503 index_unavailable（可解释——检索仍走 scan 兜底，绝不静默装死）。
+//   未接索引服务 / 索引面 degraded 自愈失败 → 503 index_unavailable（可解释——检索仍走 scan 兜底，
+//   绝不静默装死）。
 //   超时/中断如实带 degraded 留痕（INV-15）；鉴权=authGate（T1 惯例/OW-INV-8）。
 function indexRefreshHandler(getIndex) {
   return async (req, res) => {
@@ -629,6 +630,14 @@ function indexRefreshHandler(getIndex) {
       const run = await index.refresh()
       sendJson(res, 200, { data: run })
     } catch (err) {
+      // 索引面 degraded（fix-boot-lock fail-open）：自愈重试仍失败 → 与「未接索引服务」同形 503
+      //   index_unavailable（可解释；检索走 scan 兜底）
+      if (err?.code === 'index_unavailable') {
+        sendJson(res, 503, {
+          error: { code: 'index_unavailable', message: String(err?.message ?? '索引库暂不可用（fail-open degraded；tick/手动刷新自愈重试）') },
+        })
+        return
+      }
       failRequest(res, err)
     }
   }

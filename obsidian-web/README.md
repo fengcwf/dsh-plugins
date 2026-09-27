@@ -8,13 +8,13 @@ DeepSeek Harness（DSH）的 **Obsidian vault Web 管理插件**：在 dsh web �
 - **分享面**：唯一公开放行面 `/ob_share/<token>`（独立服务，默认逐条显式生成、不对外），可单独关停。
 - **写安全**：保存带 mtime/etag 乐观锁 + 冲突 diff undo（OW-INV-3）；改名/移动多文件 journal 事务（OW-INV-4）；删除 .trash 可逆（OW-INV-5）。
 
-> 当前 0.1.0（未发版）含 T1-T14 全业务面：阅读/搜索/分屏编辑/改名事务/可逆删除/下载导出/分享（live 面+管理面）/索引三保险/vault 目录档案/同页面板 UI。
+> 当前 0.1.1（未发版）含 T1-T14 全业务面 + 0.1.1 boot 失败修复（索引开库失败 fail-open）：阅读/搜索/分屏编辑/改名事务/可逆删除/下载导出/分享（live 面+管理面）/索引三保险/vault 目录档案/同页面板 UI。
 
 ## 安装（钉版本）
 
 ```bash
 # 安装/升级 = 钉版本 git 快照（升级 = 换新 tag 重执行同一条命令）
-dsh plugin --profile web add 'github:fengcwf/dsh-plugins#obsidian-web-v0.1.0&path:obsidian-web'
+dsh plugin --profile web add 'github:fengcwf/dsh-plugins#obsidian-web-v0.1.1&path:obsidian-web'
 /root/.dsh/start-dsh.sh        # 重启生效（会闪断会话，选空档执行）
 
 # 卸载

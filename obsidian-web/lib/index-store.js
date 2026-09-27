@@ -17,6 +17,30 @@ import { deriveTitle } from './search.js'
 
 export const FTS_RULE_FINGERPRINT = 'fts5/trigram/doc-level/v1'
 
+// ── 开库自愈（fix-boot-lock）────────────────────────────────────────────────────────
+// node:sqlite 默认 busy_timeout=0：锁竞争下写事务立即 SQLITE_BUSY（"database is locked"）。
+// 开库纪律：①PRAGMA busy_timeout 正等待 ②小退避重试（指数退避，仅锁类错误重试）——瞬时锁竞争
+//   （他进程持锁/并发开库）自愈。⚠️ 根因实证（2026-09-28 boot 失败，报告 fix-boot-lock-report）：
+//   vault 落 CIFS（nounix,mapposix）挂载时，SMB per-handle 字节锁把 SQLite 同 fd 锁升级
+//   （F_WRLCK 覆盖同 fd 已持 F_RDLCK 同区间）判冲突 EACCES→SQLITE_BUSY——该环境任何 SQLite 写
+//   （含建库 SCHEMA）恒失败，busy_timeout/重试只对「真锁竞争」自愈；挂载锁语义故障由上层
+//   fail-open（index-service degraded）兜底，绝不炸插件装载。
+export const DEFAULT_BUSY_TIMEOUT_MS = 500
+export const DEFAULT_OPEN_ATTEMPTS = 2
+export const DEFAULT_RETRY_DELAY_MS = 50
+
+/** 同步小退避（Atomics.wait——开库是同步面，不得引入异步时序） */
+function sleepSync(ms) {
+  if (!(ms > 0)) return
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/** 锁类错误（可重试）：SQLITE_BUSY(5)/SQLITE_LOCKED(6) 语义——其余错误立即上抛不重试 */
+function isLockError(err) {
+  if (err?.errcode === 5 || err?.errcode === 6) return true
+  return /locked|busy/i.test(String(err?.message ?? ''))
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS docs (
@@ -45,18 +69,42 @@ function matchExpr(ftsTerms) {
 }
 
 /**
- * 打开/建库（幂等；目录缺失自建）。
- * @param {{vaultRoot: string, dir?: string}} dir 缺省 `<vaultRoot>/.ob-index`
+ * 打开/建库（幂等；目录缺失自建）——锁竞争自愈：busy_timeout pragma 正等待 + 小退避重试（指数）。
+ * @param {{vaultRoot: string, dir?: string, busyTimeoutMs?: number, openAttempts?: number,
+ *          retryDelayMs?: number}} dir 缺省 `<vaultRoot>/.ob-index`
  * @returns store 句柄（node:sqlite 同步 API；close() 收敛）
  */
-export function createIndexStore({ vaultRoot, dir } = {}) {
+export function createIndexStore({
+  vaultRoot,
+  dir,
+  busyTimeoutMs = DEFAULT_BUSY_TIMEOUT_MS,
+  openAttempts = DEFAULT_OPEN_ATTEMPTS,
+  retryDelayMs = DEFAULT_RETRY_DELAY_MS,
+} = {}) {
   if (typeof vaultRoot !== 'string' || vaultRoot === '') throw new Error('vaultRoot 参数缺失')
   const rootAbs = path.resolve(vaultRoot)
   const dirAbs = dir === undefined ? path.join(rootAbs, '.ob-index') : path.resolve(dir)
   fs.mkdirSync(dirAbs, { recursive: true })
   const dbPath = path.join(dirAbs, 'index.db')
+  const attempts = Math.max(1, Math.floor(openAttempts))
+  const backoffMs = Math.max(0, Math.floor(retryDelayMs))
+  const busyMs = Number.isFinite(busyTimeoutMs) ? Math.max(0, Math.floor(busyTimeoutMs)) : DEFAULT_BUSY_TIMEOUT_MS
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return openOnce({ rootAbs, dirAbs, dbPath, busyMs })
+    } catch (err) {
+      if (!isLockError(err) || attempt >= attempts) throw err
+      sleepSync(backoffMs * 2 ** (attempt - 1)) // 小退避（指数）——瞬时锁竞争自愈；只重试锁类错误
+    }
+  }
+}
+
+/** 单次开库：busy_timeout pragma → SCHEMA → 规则指纹核 → 预编译语句；任一步失败关连接（重试干净起步） */
+function openOnce({ rootAbs, dirAbs, dbPath, busyMs }) {
   const db = new DatabaseSync(dbPath)
-  db.exec(SCHEMA)
+  try {
+    db.exec(`PRAGMA busy_timeout = ${busyMs}`)
+    db.exec(SCHEMA)
   // 规则指纹核（tokenizer/规则版本变了 → 清库重建，绝不新旧口径混跑）
   let rebuilt = false
   const fp = db.prepare("SELECT value FROM meta WHERE key = 'rule_fingerprint'").get()
@@ -176,18 +224,23 @@ export function createIndexStore({ vaultRoot, dir } = {}) {
     return Number(db.prepare('SELECT COUNT(*) AS n FROM docs').get().n)
   }
 
-  return {
-    vaultRoot: rootAbs,
-    dir: dirAbs,
-    dbPath,
-    rebuilt,
-    upsertFile,
-    upsertFiles,
-    removeFile,
-    removeTree,
-    listDocs,
-    matchCandidates,
-    count,
-    close: () => db.close(),
+    return {
+      vaultRoot: rootAbs,
+      dir: dirAbs,
+      dbPath,
+      rebuilt,
+      busyTimeoutMs: busyMs,
+      upsertFile,
+      upsertFiles,
+      removeFile,
+      removeTree,
+      listDocs,
+      matchCandidates,
+      count,
+      close: () => db.close(),
+    }
+  } catch (err) {
+    try { db.close() } catch { /* 关闭失败不掩盖原错误（重试/上抛以原错误为准） */ }
+    throw err
   }
 }

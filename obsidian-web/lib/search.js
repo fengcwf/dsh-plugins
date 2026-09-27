@@ -318,8 +318,19 @@ export function createSearchService({ backends = {}, concurrency, timeoutMs, lim
     async search(root, query, { limit: reqLimit } = {}) {
       const plan = compileQuery(query)
       if (!plan.ok) throw fail('bad_request', plan.reason === 'empty' ? 'q 参数缺失' : 'q 参数非法')
-      const backend = plan.allFts && registry.fts ? registry.fts : registry.scan
-      const { hits, degraded } = await backend.search({ root, plan, limit: clampLimit(reqLimit ?? limit) })
+      let backend = plan.allFts && registry.fts ? registry.fts : registry.scan
+      const req = { root, plan, limit: clampLimit(reqLimit ?? limit) }
+      let out
+      try {
+        out = await backend.search(req)
+      } catch (err) {
+        // 索引面 degraded fail-open（fix-boot-lock）：fts 后端 index_unavailable → scan 兜底（行为不丢，
+        // backend 如实报 scan）；其余错误照抛（绝不吞后端故障）
+        if (err?.code !== 'index_unavailable' || backend === registry.scan) throw err
+        backend = registry.scan
+        out = await backend.search(req)
+      }
+      const { hits, degraded } = out
       // ARC-1 出口强制（I1）：任一后端（含 scan）hits 一律过已转义形态结构断言，不合规拒
       if (!Array.isArray(hits)) throw fail('bad_backend', `后端 ${backend.name} 返回 hits 非数组（契约违约）`)
       hits.forEach((hit, i) => assertEscapedSnippet(hit?.snippet, `后端 ${backend.name} 第 ${i} 条 hit`))

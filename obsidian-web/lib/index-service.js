@@ -47,13 +47,80 @@ export function createIndexService({
   now = Date.now,
   timers = globalThis,
   warn = (line) => console.warn(line),
+  busyTimeoutMs,
+  openAttempts,
+  retryDelayMs,
 } = {}) {
   if (typeof vaultRoot !== 'string' || vaultRoot === '') throw fail('bad_request', 'vaultRoot 参数缺失')
   const rootAbs = path.resolve(vaultRoot)
   const dirAbs = dir === undefined ? path.join(rootAbs, INDEX_DIR_NAME) : path.resolve(dir)
-  const store = createIndexStore({ vaultRoot: rootAbs, dir: dirAbs })
   const ledgerPath = path.join(dirAbs, LEDGER_NAME)
-  if (store.rebuilt) warn('[obsidian-web] 索引规则指纹变更：已清库待对账重建（fts5/trigram/doc-level）')
+
+  // ── 开库 fail-open（fix-boot-lock）：索引库是展示面（ARC-2 可重建零损失）——建库/开库失败绝不炸
+  //    插件装载：degraded 留痕（INV-15 风格：warn 线 + 账本 run status='degraded'）后继续，
+  //    tick/手动刷新/start 补跑经 ensureStore 自愈重试（busy_timeout+小退避在 index-store 层）。
+  let store = null
+  let degraded = null // {reason, message, at} 留痕面（status() 可读）
+  let degradedEventWarned = false
+  const openOpts = { vaultRoot: rootAbs, dir: dirAbs, busyTimeoutMs, openAttempts, retryDelayMs }
+
+  function tryOpen() {
+    const opened = createIndexStore(openOpts)
+    store = opened
+    if (degraded !== null) warn('[obsidian-web] 索引库已恢复（自愈重试成功）：索引面 degraded → ok')
+    degraded = null
+    degradedEventWarned = false
+    if (opened.rebuilt) warn('[obsidian-web] 索引规则指纹变更：已清库待对账重建（fts5/trigram/doc-level）')
+    return opened
+  }
+
+  function noteDegraded(err) {
+    const message = String(err?.message ?? err)
+    degraded = { reason: 'index-store-unavailable', message, at: now() }
+    warn(`[obsidian-web] 索引库打开失败（fail-open：插件继续装载，索引面 degraded，检索走 scan 兜底；tick/手动刷新自愈重试）：${message}`)
+  }
+
+  // degraded 留痕（INV-15 风格）：账本 run 形（键锁定 index-routes RUN_KEYS），status='degraded'
+  //   ——unfinishedRun 只续跑 running/interrupted，degraded 行纯留痕不进续跑面
+  async function recordDegraded() {
+    try {
+      const ledger = readLedger()
+      const t = now()
+      ledger.runs.push({
+        runId: `${t}-${Math.random().toString(36).slice(2, 8)}`,
+        startedAt: t,
+        finishedAt: t,
+        status: 'degraded',
+        resumedFrom: null,
+        cursor: null,
+        counts: emptyCounts(),
+        degraded: [{ path: null, reason: 'index-store-unavailable', message: String(degraded?.message ?? '索引库打开失败') }],
+      })
+      if (ledger.runs.length > LEDGER_KEEP_RUNS) ledger.runs = ledger.runs.slice(-LEDGER_KEEP_RUNS)
+      await writeLedger(ledger)
+    } catch (err) {
+      warn(`[obsidian-web] degraded 留痕落账失败（账本目录不可写？warn 线仍留痕）：${err?.message ?? err}`)
+    }
+  }
+
+  /** 自愈重试入口：库缺失→重开（指数退避在 index-store 层）；失败=degraded 留痕 + index_unavailable */
+  async function ensureStore() {
+    if (store !== null) return store
+    try {
+      return tryOpen()
+    } catch (err) {
+      noteDegraded(err)
+      await recordDegraded() // INV-15 禁静默：每轮自愈失败留痕落账
+      throw fail('index_unavailable', `索引库不可用（fail-open degraded；检索走 scan 兜底，tick/手动刷新自愈重试）：${err?.message ?? err}`)
+    }
+  }
+
+  try {
+    tryOpen()
+  } catch (err) {
+    noteDegraded(err)
+    void recordDegraded() // 构造期同步面 fire-and-forget（落账失败已在内部留痕）
+  }
 
   // ── 对账账本（INV-15 风格留痕：时间戳/计数/degraded；崩溃后重启可续）──────────────
   function readLedger() {
@@ -109,6 +176,7 @@ export function createIndexService({
   // 计数语义：added=新入索引 / updated=mtime|size 变更重索引 / seen=未变 / removed=索引有盘上无 /
   //          degraded=处理失败留痕（INV-15 禁静默）。续跑：cursor 前的文件=中断前已处理（计数随账本累计）。
   async function runReconcile({ _onBatch, resumedFrom = null, initialCounts = null, initialCursor = null } = {}) {
+    await ensureStore() // 自愈重试入口（tick/手动刷新/start 补跑同径）；失败=index_unavailable 上抛（degraded 留痕已落）
     const ledger = readLedger()
     const run = {
       runId: `${now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -229,6 +297,14 @@ export function createIndexService({
 
   // ── ①保存即增量：事件钩子 → 毫秒级文件级增量（失败留痕不回传写路径，对账兜底校正）────────
   function onEvent(event) {
+    if (store === null) {
+      // degraded 态增量跳过（不空转重试——自愈归 tick/手动刷新）；每 episode 一条 warn（INV-15 禁静默防刷屏）
+      if (!degradedEventWarned) {
+        degradedEventWarned = true
+        warn('[obsidian-web] 索引增量更新跳过：索引库 degraded（30min 对账兜底校正；tick/手动刷新自愈重试）')
+      }
+      return
+    }
     try {
       if (event.type === 'save' || event.type === 'create') {
         if (!event.path.toLowerCase().endsWith('.md')) return
@@ -297,7 +373,8 @@ export function createIndexService({
     offHook?.()
     offHook = null
     started = false
-    store.close()
+    store?.close()
+    store = null
   }
 
   // ── fts 后端（T3 检索缝接管：{name, search({root,plan,limit})}，零 API 变化）────────────
@@ -308,7 +385,8 @@ export function createIndexService({
         // 绑定根不一致：绝不拿旧根索引冒充（可解释拒；热改可解释拒不冒充=T11 交接，多根档案=T12 数据面）
         throw fail('bad_request', `索引库绑定 ${rootAbs}，与查询根 ${root} 不一致——请以 /ob/api/index/refresh 重建`)
       }
-      const candidates = store.matchCandidates(plan) // compileQuery plan → FTS MATCH/LIKE（逐词转义）
+      const s = await ensureStore() // 自愈重试；失败抛 index_unavailable（search 层自动降级 scan）
+      const candidates = s.matchCandidates(plan) // compileQuery plan → FTS MATCH/LIKE（逐词转义）
       const hits = matchDocs(plan, candidates) // 命中行/score/snippet=scan 同口径（score=排序权重）
       return {
         hits: hits.slice(0, Math.max(1, Math.floor(limit) || 50)),
@@ -317,12 +395,25 @@ export function createIndexService({
     },
   }
 
+  /** 索引面状态（degraded 留痕可观测面，INV-15）：ready=库可用；degraded=开库失败留痕 */
+  function status() {
+    return {
+      vaultRoot: rootAbs,
+      dir: dirAbs,
+      ready: store !== null,
+      degraded: degraded === null ? null : { ...degraded },
+    }
+  }
+
   return {
     vaultRoot: rootAbs,
     dir: dirAbs,
     ledgerPath,
-    store,
+    get store() {
+      return store
+    },
     ftsBackend,
+    status,
     start,
     stop,
     refresh,

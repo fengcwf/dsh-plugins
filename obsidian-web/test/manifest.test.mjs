@@ -47,15 +47,15 @@ test('manifest：dsh.bundle.patch 指向真实文件且 patch 行 name == 包名
   assert.match(yml, new RegExp(`name:\\s*'${pkg.name}'`), 'patch 行 name 与包名一致（否则层不生效）')
 })
 
-test('发版纪律：version 0.1.0 + CHANGELOG ## 0.1.0 + README 三段（用途/安装钉版本/配置）+ 发版检查清单（发版级机械锁：src/dist 同批由 check-release 把关）', () => {
+test('发版纪律：version 0.1.1 + CHANGELOG ## 0.1.1 + README 三段（用途/安装钉版本/配置）+ 发版检查清单（发版级机械锁：src/dist 同批由 check-release 把关）', () => {
   const pkg = readJson('../package.json')
-  assert.equal(pkg.version, '0.1.0')
-  assert.match(readText('../CHANGELOG.md'), /^## 0\.1\.0/m, 'CHANGELOG 必须含 ## 0.1.0')
+  assert.equal(pkg.version, '0.1.1')
+  assert.match(readText('../CHANGELOG.md'), /^## 0\.1\.1/m, 'CHANGELOG 必须含 ## 0.1.1')
   const readme = readText('../README.md')
   for (const heading of ['用途', '安装', '配置']) {
     assert.match(readme, new RegExp(`^## .*${heading}`, `m`), `README 缺「${heading}」段`)
   }
-  assert.match(readme, /obsidian-web-v0\.1\.0/, '安装段必须钉版本 tag（安装钉版本）')
+  assert.match(readme, /obsidian-web-v0\.1\.1/, '安装段必须钉版本 tag（安装钉版本）')
   // T2 交接检查项增补（T14 收口）+ fix r1 口径降格：清单文案=「发版级机械锁：src/dist 同批由 check-release 把关」
   // —— 本断言只锁文案（如实标注）；真实新鲜度锁=check-release.sh commit 级校验，行为面由
   //    check-release-dist-freshness.test.mjs 真 git 仓真验（src 变更无 dist 变更必红）。
