@@ -42,7 +42,7 @@ function user(text) {
 function recallMessage(text) {
   return {
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: 'kb-context', form: 'recall', sections: [{ name: 'kb-context', text }] },
+    source: { kind: 'kb-context', form: 'recall', sections: [{ name: 'kb-context', text }] },
   }
 }
 
@@ -138,9 +138,8 @@ test('⑤ 转义防伪造：`</kb-context>`/伪标签转义、属性引号转义
 test('① INV-5 反例：注入输入/消息键集精确（无 model 字段）；真 dsh-llm createUserMessage 产物键集实证', async () => {
   const input = buildInjectionInput([HIT])
   assert.deepEqual(Object.keys(input).sort(), ['content', 'source'], '输入只允许 content/source 两键')
-  assert.deepEqual(Object.keys(input.source).sort(), ['form', 'kind', 'plugin', 'sections'])
-  assert.equal(input.source.kind, 'plugin')
-  assert.equal(input.source.plugin, 'kb-context')
+  assert.deepEqual(Object.keys(input.source).sort(), ['form', 'kind', 'sections'], 'source 键集={kind,form,sections}（无 plugin 键——v3-to-v4 producer-owned 依据）')
+  assert.equal(input.source.kind, 'kb-context', 'kind=插件自有名（≠"plugin"，生产事故根因钉死）')
   assert.equal(input.source.form, 'recall')
   assert.deepEqual(input.source.sections, [{ name: 'kb-context', text: input.content[0].text }])
   assert.ok(!('model' in input), 'INV-5：注入输入禁带 model')
@@ -162,6 +161,48 @@ test('① INV-5 反例：注入消息带 model 字段必须拒（seam 产物夹�
   const { result, decision } = await run(h)
   assert.deepEqual(result.kbContext, { injected: false, degraded: 'error', reason: 'model-field' })
   assert.deepEqual(result.messages, decision.messages, '拒绝的消息不得进会话（差分 0）')
+})
+
+// ── S1b：session-format v4 真校验器回归（BUG 2026-09-28：producer-owned source kind） ──
+// 真校验器 = dsh 安装里的 @deepseek-ai/dsh-session-format-v3-to-v4（只读引用，零 mock）：
+// restoreReleasedV4Artifact 对已知事件跑 assertV4MessageSources→source()（V4 原生面）——source() 显式拒绝
+// kind==='plugin'，报错原文 "format v4 message requires a producer-owned source kind"（即生产事故那句）。
+
+const V4_VALIDATOR = '/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-session-format-v3-to-v4/lib/index.js'
+const V4_PRODUCER_OWNED_ERROR = 'format v4 message requires a producer-owned source kind'
+
+/** 对等构造 V4 event：user/message 追加形（surfaceOp:'append'），data=注入产物消息 */
+function v4Artifact(message) {
+  return {
+    header: { version: 4, id: 'sess-regression', createdAt: 0, isSeeded: false, delegationDepth: 0 },
+    inheritedEventCount: 0,
+    events: [{ type: 'user/message', seq: 0, surfaceOp: 'append', data: message }],
+  }
+}
+
+test('① 回归（BUG 2026-09-28）：注入产物过 v3-to-v4 真校验器（source.kind=插件自有名 "kb-context"）', async () => {
+  const { restoreReleasedV4Artifact } = await import(V4_VALIDATOR)
+  const { createUserMessage } = await import('@deepseek-ai/dsh-llm')
+  const msg = createUserMessage(buildInjectionInput([HIT]))
+  assert.doesNotThrow(
+    () => restoreReleasedV4Artifact(v4Artifact(msg), new Set(['user/message'])),
+    'kind:"kb-context"（producer-owned）必须过 V4 原生面 source()/assertV4MessageSources 校验（生产报错回归）',
+  )
+})
+
+test('① 回归负例：旧形 kind:"plugin" 必被拒且报错原文钉死（producer-owned 语义不许弱化）', async () => {
+  const { restoreReleasedV4Artifact } = await import(V4_VALIDATOR)
+  const { createUserMessage } = await import('@deepseek-ai/dsh-llm')
+  // 旧形（BUG 根因形态）：kind:'plugin' + plugin 键——生产事故报错语义钉死在此
+  const legacy = createUserMessage({
+    content: [{ type: 'text', text: 'x' }],
+    source: { kind: 'plugin', plugin: 'kb-context', form: 'recall', sections: [{ name: 'kb-context', text: 'x' }] },
+  })
+  assert.throws(
+    () => restoreReleasedV4Artifact(v4Artifact(legacy), new Set(['user/message'])),
+    (e) => e.constructor.name === 'SessionFormatError' && e.message === V4_PRODUCER_OWNED_ERROR,
+    'kind:"plugin" 必被拒且报错=生产事故原文（钉死报错语义）',
+  )
 })
 
 // ── S2：pre-step 姿势（官方 waterfall） ──────────────────────────────────────
@@ -187,8 +228,7 @@ test('命中注入：messages 尾部追加一条注入消息，decision 其余�
   assert.equal(result.messages.length, decision.messages.length + 1)
   assert.deepEqual(result.messages.slice(0, -1), decision.messages, '原消息序原样保留')
   const msg = result.messages[result.messages.length - 1]
-  assert.equal(msg.source.kind, 'plugin')
-  assert.equal(msg.source.plugin, 'kb-context')
+  assert.equal(msg.source.kind, 'kb-context')
   assert.equal(msg.source.form, 'recall')
   assert.ok(msg.content[0].text.includes('<kb-context source="wiki/INDEX.md:3-12">'))
   assert.equal(h.calls.search.length, 1)
@@ -412,9 +452,9 @@ test('T7 诊断注入：触发命中+零命中+emptyState → 注入一条 <kb-c
   assert.deepEqual(Object.keys(msg).sort(), ['content', 'id', 'role', 'source'], '真 dsh-llm 产物键集（stub 缝补位）')
   assert.ok(!('model' in msg), 'INV-5：诊断消息禁 model 字段')
   assert.deepEqual(msg.source, {
-    kind: 'plugin', plugin: 'kb-context', form: 'recall',
+    kind: 'kb-context', form: 'recall',
     sections: [{ name: 'kb-context', text: msg.content[0].text }],
-  }, 'source 形状沿用 T5 契约，sections 与 content 同文')
+  }, 'source 形状沿用 T5 契约（producer-owned：kind=插件自有名、无 plugin 键），sections 与 content 同文')
   assert.equal(h.calls.search.length, 1, '诊断走一次检索缝')
   assert.ok(!('kbContext' in result), '干净诊断注入沿「无 degraded 不留痕」')
 })
@@ -601,7 +641,7 @@ test('apply 全链路集成：真 T2 索引 + 真 T3 search + 真 dsh-llm 注入
   assert.deepEqual(Object.keys(msg).sort(), ['content', 'id', 'role', 'source'], '真 dsh-llm 产物键集精确')
   assert.ok(!('model' in msg), 'INV-5：无 model 字段')
   assert.deepEqual(msg.source, {
-    kind: 'plugin', plugin: 'kb-context', form: 'recall',
+    kind: 'kb-context', form: 'recall',
     sections: [{ name: 'kb-context', text: msg.content[0].text }],
   })
   assert.match(msg.content[0].text, /^<kb-context source="wiki\/cost\.md:1-\d+">/)

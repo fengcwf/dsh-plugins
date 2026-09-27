@@ -9,6 +9,9 @@
 //   注册 `{prepend:true}`（在 lib/index.js apply）。外层 signal 预中止按官方姿势原样返回（取消≠超时）。
 // ⚠️ INV-5 防回归（ERR [2026-09-17]）：注入消息禁带 model 字段——键集由 buildInjectionInput 精确闭合，
 //   且 createUserMessage 缝产物若夹带 model 一律拒收（注入体带 model 必须拒，不进会话）。
+//   键集契约（BUG 修复 2026-09-28 同步）：source 键集={kind,form,sections}；kind=插件自有名 'kb-context'
+//   （v3-to-v4 producer-owned 依据：source.kind 必须非空且 ≠'plugin'，否则 "format v4 message requires
+//   a producer-owned source kind" 炸会话——旧形 kind:'plugin'+plugin 键是生产事故根因，迁移面亦剥 plugin 键）。
 // ⚠️ INV-11 注入防伪造：片段文本 `<`→字面序列 `\u003c`（六字符，非真实 '<'）——伪闭合/开标签失去结构；
 //   source 属性值再加 `"`→`\u0022`（safeLabelValue 口径，防属性逃逸）。
 // ⚠️ INV-11 脱敏哨兵（delta-spec §4.4）：片段体注入前过 lib/redact.js 三层中和（PEM 整块 / 赋值形态保 key /
@@ -32,9 +35,9 @@ import { normalizeEmptyState } from './diagnose.js'
 /** 同 query 去重窗口（毫秒）：TECH §3「同 query 10s 去重」契约字面 */
 export const QUERY_DEDUP_MS = 10_000
 
-// 注入消息 source 契约字面量（delta-spec §2）
-const SOURCE_KIND = 'plugin'
-const SOURCE_PLUGIN = 'kb-context'
+// 注入消息 source 契约字面量（delta-spec §2；kind=插件自有名——v3-to-v4 producer-owned 依据：
+// source.kind 非空且 ≠'plugin'，无 plugin 键）
+const SOURCE_KIND = 'kb-context'
 const SOURCE_FORM = 'recall'
 const SECTION_NAME = 'kb-context'
 
@@ -102,9 +105,13 @@ export function buildEmptyStateText({ state, hint }) {
 }
 
 /**
- * 注入输入（delta-spec §2 逐字形状）：`{content:[{type:'text', text}], source:{kind:'plugin',
- * plugin:'kb-context', form:'recall', sections:[{name:'kb-context', text}]}}`。
- * 键集精确闭合（content/source 两键）——**禁 model 字段**（INV-5 反例测试钉住）。
+ * 注入输入（delta-spec §2 逐字形状）：`{content:[{type:'text', text}], source:{kind:'kb-context',
+ * form:'recall', sections:[{name:'kb-context', text}]}}`。
+ * 键集精确闭合（content/source 两键；source 键集={kind,form,sections}）——**禁 model 字段**
+ * （INV-5 反例测试钉住）。
+ * ⚠️ kind='kb-context'（插件自有名，非 'plugin'）：v3-to-v4 producer-owned 依据——V4 原生面 source()
+ *   显式拒绝 kind==='plugin'（"format v4 message requires a producer-owned source kind"）；迁移映射
+ *   rewritePluginSource 亦剥 plugin 键、kind 取插件自有名，此处直出规范形。
  * ⚠️ text 进 createUserMessage 前已经 safeBody 中和（INV-11 §4.4）。
  */
 export function buildInjectionInput(hits) {
@@ -117,7 +124,6 @@ function injectionInputFromText(text) {
     content: [{ type: 'text', text }],
     source: {
       kind: SOURCE_KIND,
-      plugin: SOURCE_PLUGIN,
       form: SOURCE_FORM,
       sections: [{ name: SECTION_NAME, text }],
     },
@@ -137,10 +143,10 @@ export function visibleText(message) {
   return c.filter((p) => p?.type === 'text' && typeof p.text === 'string').map((p) => p.text).join('\n')
 }
 
-/** 本插件注入消息判定（delta-spec §2 source 形状三键咬合） */
+/** 本插件注入消息判定（delta-spec §2 source 形状三键咬合：kind='kb-context' + form='recall' + sections 数组） */
 export function isRecallMessage(message) {
   const s = message?.source
-  return s?.kind === SOURCE_KIND && s?.plugin === SOURCE_PLUGIN && s?.form === SOURCE_FORM
+  return s?.kind === SOURCE_KIND && s?.form === SOURCE_FORM && Array.isArray(s?.sections)
 }
 
 /**

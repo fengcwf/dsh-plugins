@@ -7,7 +7,7 @@ fengcwf 的 dsh 插件 monorepo。每个子目录一个可安装的 dsh 组合�
 | [dsh-rtk-kit](dsh-rtk-kit/) | 0.2.0 | RTK 集成：bash 命令自动改写走 rtk 压缩（resolve 缝、fail-open）+ 会话 awareness + rtk_doctor 诊断 |
 | [dsh-github-ops](dsh-github-ops/) | 0.2.0 | GitHub 集成：GitHub 命令强制 token 模式 + web_fetch 匿名 API 门禁 + 11 个仓库管理工具（gh 后端） |
 | [dsh-login-gate](dsh-login-gate/) | 0.2.0 | 登录门禁：表单登录（scrypt + HMAC 会话）+ 认证反代 + 原生 DSH 会话 + WS tunnel 修复 |
-| [kb-context](kb-context/) | 0.2.0 | 知识库上下文：vault 增量索引（FTS5）+ 检索（BM25/LIKE 兜底+deadline 守卫）+ 会话注入（触发/脱敏/截断）+ wiki_read/wiki_search/kb_diagnose 工具 |
+| [kb-context](kb-context/) | 0.2.1 | 知识库上下文：vault 增量索引（FTS5）+ 检索（BM25/LIKE 兜底+deadline 守卫）+ 会话注入（触发/脱敏/截断）+ wiki_read/wiki_search/kb_diagnose 工具 |
 | [wiki-steward](wiki-steward/) | 0.2.0 | wiki 管家：会话捕获入 raw/ + kb_validate 六规则校验 + kb_mark sha256 原子回写 + wiki CRUD（.trash 可逆/journal 事务/wikilink 重写）+ 入队告警 + tools/pre-execute 写入拦截 |
 
 ## 版本纪律（强制，缺一不可）
