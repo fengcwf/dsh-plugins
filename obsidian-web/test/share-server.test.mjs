@@ -21,6 +21,9 @@ import { apply } from '../lib/index.js'
 
 const TMP = fileURLToPath(new URL('./.tmp-share-server', import.meta.url))
 fs.mkdirSync(TMP, { recursive: true })
+// 0.1.1 起索引库落本地盘 <indexDir>/<vault 名-哈希>/（迁出 CIFS）——apply 接线测试显式给 indexDir
+//   （HOME 污染防线；落点解析语义单独锁定 test/index-dir.test.mjs）
+const IDX_BASE = path.join(TMP, 'idx')
 
 // 冻结形字面锁定（与 share.js 单源逐字节对齐 + 本文件独立字面双锁）
 const NOT_FOUND_BODY = '{"ok":false,"status":404,"code":"not_found","message":"分享不存在或已失效"}'
@@ -826,7 +829,7 @@ test('T9 接线：apply 宿主缝+ctx.effect → 起独立分享 listener（serv
     connection: { requestRejection: () => undefined },
     effect: (fn) => effects.push(fn),
   }
-  apply(ctx, { vaultRoot: vault, server: { sharePort: probe } })
+  apply(ctx, { vaultRoot: vault, indexDir: IDX_BASE, server: { sharePort: probe } })
   const base = `http://127.0.0.1:${probe}`
   const face = await waitForFace(`${base}/ob_share/`)
   assert.equal(face.status, 404, '分享面已监听（统一 404 体）')
@@ -846,7 +849,7 @@ test('T9 接线：缺 ctx.effect 收敛缝 → 分享面不起（公开面生命
     webServer: { register: () => () => {} },
     connection: { requestRejection: () => undefined },
   }
-  apply(ctx, { vaultRoot: vault, server: { sharePort: probe } })
+  apply(ctx, { vaultRoot: vault, indexDir: IDX_BASE, server: { sharePort: probe } })
   assert.ok(warnings.some((w) => w.includes('分享服务')), '缺缝必须留痕（INV-15）')
   await assert.rejects(() => get(`http://127.0.0.1:${probe}/ob_share/`), '缺收敛缝不得开公开面')
 })

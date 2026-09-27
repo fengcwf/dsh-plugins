@@ -22,6 +22,8 @@ import { createIndexService } from '../lib/index-service.js'
 
 const TMP = fileURLToPath(new URL('./.tmp-fence', import.meta.url))
 fs.mkdirSync(TMP, { recursive: true })
+// 0.1.1 起索引库落本地盘 <indexDir>/<vault 名-哈希>/（迁出 CIFS）——测试显式给 indexDir（HOME 污染防线）
+const IDX_BASE = path.join(TMP, 'idx')
 
 let seq = 0
 function makeVault() {
@@ -296,7 +298,7 @@ test('消费面回归⑥index：symlink 文件/目录零入面（walk 不解引�
   fs.writeFileSync(path.join(outside, 'evil.md'), '# EVIL\n')
   fs.symlinkSync(path.join(outside, 'evil.md'), path.join(root, 'link.md'))
   fs.symlinkSync(outside, path.join(root, 'linkdir'))
-  const svc = createIndexService({ vaultRoot: root, timers: { setInterval: () => 0, clearInterval: () => {} } })
+  const svc = createIndexService({ vaultRoot: root, indexDir: IDX_BASE, timers: { setInterval: () => 0, clearInterval: () => {} } })
   const run = await svc.refresh()
   const indexed = run.counts.seen + run.counts.added + run.counts.updated
   assert.equal(indexed, 2, `索引面只含真实 md（a.md+real.md）：${JSON.stringify(run.counts)}`)

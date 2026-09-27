@@ -29,6 +29,9 @@ test('Config 全键默认值与契约精确一致（delta-specs §2）', async (
   const { Config } = await import('../lib/index.js')
   const expected = {
     vaultRoot: '/mnt/unraid_data/Obsidian',
+    // 0.1.1 规格锁扩展（fix-boot-lock 后续裁定：索引库迁出 CIFS 落本地盘）：indexDir=索引库基目录，
+    //   字面默认 `~/.dsh/cache/obsidian-web`（~ 展开/空串回落语义锁定 test/index-dir.test.mjs）
+    indexDir: '~/.dsh/cache/obsidian-web',
     share: { enabled: true, defaultTtlDays: 7, requirePasswordForWrite: true },
     ui: { pageSize: 50 },
     // T9 规格锁扩展（Ruling 见 task-9-report：server 组随分享服务接线扩 shareHost/trustProxy，
@@ -49,12 +52,15 @@ test('Config 部分覆盖只改触达键（热改语义）', async () => {
   assert.equal(c.share.requirePasswordForWrite, true)
   assert.equal(c.ui.pageSize, 100)
   assert.equal(c.vaultRoot, '/mnt/unraid_data/Obsidian', '未触达键 vaultRoot 保持默认（字面锁定）')
+  assert.equal(c.indexDir, '~/.dsh/cache/obsidian-web', '未触达键 indexDir 保持默认（字面锁定）')
+  assert.equal(Config.parse({ indexDir: '/data/idx' }).indexDir, '/data/idx', 'indexDir 显式覆盖只改触达键')
   assert.equal(c.server.sharePort, 3500)
 })
 
 test('Config 拒绝错误类型（schema 真校验，非透传）', async () => {
   const { Config } = await import('../lib/index.js')
   assert.throws(() => Config.parse({ vaultRoot: 123 }), 'vaultRoot 非字符串必须拒')
+  assert.throws(() => Config.parse({ indexDir: 123 }), 'indexDir 非字符串必须拒')
   assert.throws(() => Config.parse({ share: { enabled: 'yes' } }), 'share.enabled 非布尔必须拒')
   assert.throws(() => Config.parse({ share: { defaultTtlDays: '7' } }), 'defaultTtlDays 非数字必须拒')
   assert.throws(() => Config.parse({ share: { requirePasswordForWrite: 1 } }), 'requirePasswordForWrite 非布尔必须拒')

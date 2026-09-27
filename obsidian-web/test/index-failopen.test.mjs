@@ -17,12 +17,15 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 import { apply } from '../lib/index.js'
-import { createIndexService, INDEX_DIR_NAME } from '../lib/index-service.js'
-import { createIndexStore } from '../lib/index-store.js'
+import { createIndexService } from '../lib/index-service.js'
+import { createIndexStore, resolveIndexDir } from '../lib/index-store.js'
 import { createSearchService, compileQuery } from '../lib/search.js'
 import { createNote } from '../lib/vault-ops.js'
 
 const TMP_ROOT = fileURLToPath(new URL('./.tmp-index-failopen', import.meta.url))
+// 0.1.1 起索引库落本地盘 <indexDir>/<vault 名-哈希>/（迁出 CIFS）——测试显式给 indexDir（HOME 污染防线）
+const IDX_BASE = path.join(TMP_ROOT, 'idx')
+const idxDir = (vault) => resolveIndexDir({ vaultRoot: vault, indexDir: IDX_BASE })
 
 test.after(() => fs.rmSync(TMP_ROOT, { recursive: true, force: true }))
 
@@ -37,9 +40,10 @@ function makeVault(files) {
   return dir
 }
 
-// 真锁库形态准备：0 字节库（生产实证形态=建库期被锁，SCHEMA 从未写入）
+// 真锁库形态准备：0 字节库（生产实证形态=建库期被锁，SCHEMA 从未写入）——0.1.1 起落点=
+//   本地盘 <indexDir>/<vault 名-哈希>/（resolveIndexDir 单一来源，锁的正是服务将开的库）
 function prepareDb(vault) {
-  const dir = path.join(vault, INDEX_DIR_NAME)
+  const dir = idxDir(vault)
   fs.mkdirSync(dir, { recursive: true })
   const dbPath = path.join(dir, 'index.db')
   fs.writeFileSync(dbPath, '')
@@ -64,7 +68,7 @@ function lockDb(vault) {
 }
 
 function readLedger(vault) {
-  return JSON.parse(fs.readFileSync(path.join(vault, INDEX_DIR_NAME, 'reconcile-ledger.json'), 'utf8'))
+  return JSON.parse(fs.readFileSync(path.join(idxDir(vault), 'reconcile-ledger.json'), 'utf8'))
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -126,7 +130,7 @@ test('① 真锁下 apply 必成功（fail-open）+ degraded 留痕（INV-15）+
   const { routes, warnings, effects, ctx } = makeHost()
   const port = await freePort()
   try {
-    assert.doesNotThrow(() => apply(ctx, { vaultRoot: vault, server: { sharePort: port } }), 'apply 期建库/开库失败绝不炸插件装载')
+    assert.doesNotThrow(() => apply(ctx, { vaultRoot: vault, indexDir: IDX_BASE, server: { sharePort: port } }), 'apply 期建库/开库失败绝不炸插件装载')
     assert.ok(routes.has('exact:/ob/api/index/refresh'), '索引刷新路由照挂（索引面 degraded ≠ 路由缺席）')
     assert.ok(
       warnings.some((l) => l.includes('fail-open') && l.includes('degraded')),
@@ -169,6 +173,7 @@ test('② service 级 degraded 留痕 + 释放后自愈重建（status() 可观�
   const warns = []
   const service = createIndexService({
     vaultRoot: vault,
+    indexDir: IDX_BASE,
     busyTimeoutMs: 30,
     openAttempts: 1,
     retryDelayMs: 1,
@@ -225,7 +230,7 @@ test('③ busy_timeout+小退避重试自愈：跨进程持锁释放 → 开库�
     })
     assert.equal(locked, true)
     const t0 = Date.now()
-    const store = createIndexStore({ vaultRoot: vault, busyTimeoutMs: 40, openAttempts: 6, retryDelayMs: 50 })
+    const store = createIndexStore({ vaultRoot: vault, indexDir: IDX_BASE, busyTimeoutMs: 40, openAttempts: 6, retryDelayMs: 50 })
     const elapsed = Date.now() - t0
     assert.equal(store.count(), 0)
     assert.ok(elapsed >= 250, `开库必须等到持锁释放（真重试自愈，非首试即成）：elapsed=${elapsed}ms`)
@@ -242,7 +247,7 @@ test('④ busy_timeout pragma 真生效：持锁下开库失败耗时 ≥ busyTi
   try {
     const t0 = Date.now()
     assert.throws(
-      () => createIndexStore({ vaultRoot: vault, busyTimeoutMs: 250, openAttempts: 1 }),
+      () => createIndexStore({ vaultRoot: vault, indexDir: IDX_BASE, busyTimeoutMs: 250, openAttempts: 1 }),
       (err) => /locked|busy/i.test(String(err?.message ?? '')),
     )
     const elapsed = Date.now() - t0
@@ -255,7 +260,7 @@ test('④ busy_timeout pragma 真生效：持锁下开库失败耗时 ≥ busyTi
 test('⑤ 检索行为不丢：degraded 期 fts 查询自动降级 scan；自愈后回 fts（真 degraded 服务，零 mock）', async () => {
   const vault = makeVault({ 'a.md': 'alpha content here\n', 'b.md': 'beta content here\n' })
   const lock = lockDb(vault)
-  const service = createIndexService({ vaultRoot: vault, busyTimeoutMs: 30, openAttempts: 1, retryDelayMs: 1, warn: () => {} })
+  const service = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE, busyTimeoutMs: 30, openAttempts: 1, retryDelayMs: 1, warn: () => {} })
   const search = createSearchService({ backends: { fts: service.ftsBackend } })
   try {
     const degraded = await search.search(vault, 'alpha')
@@ -277,7 +282,7 @@ test('⑥ degraded 态：保存即增量跳过留痕不炸（每 episode 一条 
   const vault = makeVault({ 'a.md': 'alpha\n' })
   const lock = lockDb(vault)
   const warns = []
-  const service = createIndexService({ vaultRoot: vault, busyTimeoutMs: 20, openAttempts: 1, retryDelayMs: 1, warn: (l) => warns.push(String(l)) })
+  const service = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE, busyTimeoutMs: 20, openAttempts: 1, retryDelayMs: 1, warn: (l) => warns.push(String(l)) })
   try {
     await service.start().catch(() => {}) // 启动补跑失败留痕（定时器仍排定——生产语义）
     await createNote(vault, 'new1.md', 'one\n')

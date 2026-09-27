@@ -9,10 +9,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { registerWebRoutes } from '../lib/web-routes.js'
-import { createIndexService, INDEX_DIR_NAME } from '../lib/index-service.js'
+import { createIndexService } from '../lib/index-service.js'
+import { resolveIndexDir } from '../lib/index-store.js'
 
 const TMP_ROOT = fileURLToPath(new URL('./.tmp-index-routes', import.meta.url))
 const DIST = fileURLToPath(new URL('./fixtures/dist', import.meta.url))
+// 0.1.1 起索引库落本地盘 <indexDir>/<vault 名-哈希>/（迁出 CIFS）——测试显式给 indexDir（HOME 污染防线）
+const IDX_BASE = path.join(TMP_ROOT, 'idx')
+const ledgerOf = (vault) => JSON.parse(fs.readFileSync(path.join(resolveIndexDir({ vaultRoot: vault, indexDir: IDX_BASE }), 'reconcile-ledger.json'), 'utf8'))
 
 function makeVault(files) {
   fs.rmSync(TMP_ROOT, { recursive: true, force: true })
@@ -77,7 +81,7 @@ const COUNT_KEYS = ['added', 'degraded', 'removed', 'seen', 'updated']
 
 test('手动刷新：POST /ob/api/index/refresh → 200 {data:对账 run 形}（计数/degraded 键锁定）+ 账本落盘', async () => {
   const vault = makeVault({ 'a.md': '# A\n\nhello world\n', 'b.md': '# B\n\nfoo bar\n' })
-  const service = createIndexService({ vaultRoot: vault })
+  const service = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE })
   await service.start()
   try {
     await withServer(async (base) => {
@@ -93,7 +97,7 @@ test('手动刷新：POST /ob/api/index/refresh → 200 {data:对账 run 形}（
       const res2 = await fetch(`${base}/ob/api/index/refresh`, { method: 'POST' })
       const run2 = (await res2.json()).data
       assert.deepEqual(run2.counts, { seen: 2, added: 1, updated: 0, removed: 0, degraded: 0 }, '刷新即对账校正')
-      const ledger = JSON.parse(fs.readFileSync(path.join(vault, INDEX_DIR_NAME, 'reconcile-ledger.json'), 'utf8'))
+      const ledger = ledgerOf(vault)
       assert.equal(ledger.runs.at(-1).runId, run2.runId, '刷新入对账账本')
     }, { index: { refresh: () => service.refresh() }, vault })
   } finally {
@@ -117,9 +121,9 @@ test('手动刷新边界：GET 405（POST only）；未接索引服务 503 index
 
 test('手动刷新鉴权缝（OW-INV-8）：未通过 requestRejection → 401/403 零副作用（账本零新 run）', async () => {
   const vault = makeVault({ 'a.md': '# A\n\nhello world\n' })
-  const service = createIndexService({ vaultRoot: vault })
+  const service = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE })
   await service.start()
-  const before = JSON.parse(fs.readFileSync(path.join(vault, INDEX_DIR_NAME, 'reconcile-ledger.json'), 'utf8')).runs.length
+  const before = ledgerOf(vault).runs.length
   try {
     for (const rejection of [401, 403]) {
       await withServer(async (base) => {
@@ -127,7 +131,7 @@ test('手动刷新鉴权缝（OW-INV-8）：未通过 requestRejection → 401/4
         assert.equal(res.status, rejection)
       }, { rejection, index: { refresh: () => service.refresh() }, vault })
     }
-    const after = JSON.parse(fs.readFileSync(path.join(vault, INDEX_DIR_NAME, 'reconcile-ledger.json'), 'utf8')).runs.length
+    const after = ledgerOf(vault).runs.length
     assert.equal(after, before, '鉴权拒→零对账副作用')
   } finally {
     service.stop()

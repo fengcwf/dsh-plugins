@@ -8,7 +8,7 @@ DeepSeek Harness（DSH）的 **Obsidian vault Web 管理插件**：在 dsh web �
 - **分享面**：唯一公开放行面 `/ob_share/<token>`（独立服务，默认逐条显式生成、不对外），可单独关停。
 - **写安全**：保存带 mtime/etag 乐观锁 + 冲突 diff undo（OW-INV-3）；改名/移动多文件 journal 事务（OW-INV-4）；删除 .trash 可逆（OW-INV-5）。
 
-> 当前 0.1.1（未发版）含 T1-T14 全业务面 + 0.1.1 boot 失败修复（索引开库失败 fail-open）：阅读/搜索/分屏编辑/改名事务/可逆删除/下载导出/分享（live 面+管理面）/索引三保险/vault 目录档案/同页面板 UI。
+> 当前 0.1.1（未发版）含 T1-T14 全业务面 + 0.1.1 boot 失败修复（索引开库失败 fail-open + 索引库迁出 CIFS 落本地盘 `indexDir`）：阅读/搜索/分屏编辑/改名事务/可逆删除/下载导出/分享（live 面+管理面）/索引三保险/vault 目录档案/同页面板 UI。
 
 ## 安装（钉版本）
 
@@ -28,6 +28,7 @@ dsh plugin --profile web remove obsidian-web
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `vaultRoot` | `/mnt/unraid_data/Obsidian` | 所有读写/下载/分享/目录维护的文件系统根（T12 起 realpath 围栏拒穿越/symlink） |
+| `indexDir` | `~/.dsh/cache/obsidian-web` | 索引库基目录（本地盘，0.1.1 迁出 CIFS）：每 vault 一库 `<indexDir>/<vault 名-哈希>/`；空/缺省=出厂默认（`~` 按 os.homedir() 展开）；索引=可重建缓存（ARC-2），旧落点 `<vaultRoot>/.ob-index/` 检测到仅留痕提示重建、不自动删除 |
 | `share.enabled` | `true` | 分享总开关；`false` 时 `/ob_share/*` 全 404（fail-closed） |
 | `share.defaultTtlDays` | `7` | 分享链接默认有效期（天） |
 | `share.requirePasswordForWrite` | `true` | 写权限强制访问密码（生成后可改） |

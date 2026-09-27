@@ -13,6 +13,8 @@ import { createIndexService } from '../lib/index-service.js'
 import { createSearchService, compileQuery } from '../lib/search.js'
 
 const TMP_ROOT = fileURLToPath(new URL('./.tmp-index-fts', import.meta.url))
+// 0.1.1 起索引库落本地盘 <indexDir>/<vault 名-哈希>/（迁出 CIFS）——测试显式给 indexDir（HOME 污染防线）
+const IDX_BASE = path.join(TMP_ROOT, 'idx')
 const ITEM_KEYS = ['line', 'path', 'score', 'snippet', 'title']
 const DATA_KEYS = ['backend', 'degraded', 'query', 'results']
 
@@ -38,7 +40,7 @@ function makeVault(files, { wipe = true } = {}) {
 test.after(() => fs.rmSync(TMP_ROOT, { recursive: true, force: true }))
 
 async function startService(vault) {
-  const service = createIndexService({ vaultRoot: vault })
+  const service = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE })
   await service.start()
   return { service, svc: createSearchService({ backends: { fts: service.ftsBackend } }), scan: createSearchService() }
 }
@@ -132,7 +134,7 @@ test('⑥ 2 字盲区仍走兜底：短词/纯符号查询结构性走 scan（LI
 test('边界：查询 root 与索引库 root 不一致 → bad_request 可解释拒（绝不拿旧根索引冒充）', async () => {
   const vault = makeVault(FIX)
   const other = makeVault(FIX, { wipe: false }) // 第二个 tmp vault（同内容不同根，与首库共存）
-  const service = createIndexService({ vaultRoot: vault })
+  const service = createIndexService({ vaultRoot: vault, indexDir: IDX_BASE })
   await service.start()
   try {
     const svc = createSearchService({ backends: { fts: service.ftsBackend } })

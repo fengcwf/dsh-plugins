@@ -14,10 +14,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { onVaultChange, writeAtomicFsync } from './vault-ops.js'
 import { matchDocs } from './search.js'
-import { createIndexStore } from './index-store.js'
+import { createIndexStore, resolveIndexDir, LEGACY_INDEX_DIR_NAME } from './index-store.js'
 
 export const RECONCILE_INTERVAL_MS = 30 * 60 * 1000 // 陈旧窗口 ≤30min（OW-INV-11）
-export const INDEX_DIR_NAME = '.ob-index'
+export const INDEX_DIR_NAME = LEGACY_INDEX_DIR_NAME // 旧落点目录名（0.1.1 前 <vaultRoot>/.ob-index/）——现仅用于旧落点检测留痕
 const LEDGER_NAME = 'reconcile-ledger.json'
 const LEDGER_VERSION = 1
 const LEDGER_KEEP_RUNS = 50 // 账本行数上限（防无界增长；计数如实、仅旧 run 滚出）
@@ -36,12 +36,14 @@ const emptyCounts = () => ({ seen: 0, added: 0, updated: 0, removed: 0, degraded
 /**
  * 创建索引服务（绑定单 vaultRoot；多根=T12 设置页档案数据面，索引按根建库归后续接线——
  * root 不一致查询可解释拒，绝不冒充）。
- * @param {{vaultRoot: string, dir?: string, intervalMs?: number, batchSize?: number,
+ * @param {{vaultRoot: string, indexDir?: string, dir?: string, intervalMs?: number, batchSize?: number,
  *          now?: () => number, timers?: {setInterval, clearInterval}, warn?: (line) => void}} opts
+ *          落点=index-store.resolveIndexDir（dir > indexDir > 出厂默认 ~/.dsh/cache/obsidian-web/）
  */
 export function createIndexService({
   vaultRoot,
   dir,
+  indexDir,
   intervalMs = RECONCILE_INTERVAL_MS,
   batchSize = DEFAULT_BATCH_SIZE,
   now = Date.now,
@@ -53,8 +55,19 @@ export function createIndexService({
 } = {}) {
   if (typeof vaultRoot !== 'string' || vaultRoot === '') throw fail('bad_request', 'vaultRoot 参数缺失')
   const rootAbs = path.resolve(vaultRoot)
-  const dirAbs = dir === undefined ? path.join(rootAbs, INDEX_DIR_NAME) : path.resolve(dir)
+  const dirAbs = resolveIndexDir({ vaultRoot: rootAbs, indexDir, dir })
   const ledgerPath = path.join(dirAbs, LEDGER_NAME)
+
+  // 旧落点检测（0.1.1 迁出 CIFS）：`<vaultRoot>/.ob-index/` 检测到 → 提示重建留痕。
+  // 索引=可重建零损失缓存（ARC-2）——直接在本地盘新落点重建（不迁移旧库）；旧目录绝不静默删除
+  //   （不可逆红线），留用户手动清理。显式 dir 落旧落点（测试缝）=同落点，不提示。
+  const legacyDir = path.join(rootAbs, LEGACY_INDEX_DIR_NAME)
+  if (dirAbs !== legacyDir && fs.existsSync(legacyDir)) {
+    warn(
+      `[obsidian-web] 检测到旧索引落点 ${legacyDir}（0.1.1 前索引库随 vault 落 CIFS）：`
+      + `索引=可重建零损失缓存（ARC-2），已在本地盘新落点 ${dirAbs} 重建；旧目录未删除（防不可逆），可手动清理`,
+    )
+  }
 
   // ── 开库 fail-open（fix-boot-lock）：索引库是展示面（ARC-2 可重建零损失）——建库/开库失败绝不炸
   //    插件装载：degraded 留痕（INV-15 风格：warn 线 + 账本 run status='degraded'）后继续，

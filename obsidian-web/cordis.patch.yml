@@ -7,6 +7,9 @@
       config:
         # vault 根路径：所有读写/下载/分享/目录维护的文件系统根（T12 起 realpath 围栏拒穿越/symlink）
         vaultRoot: '/mnt/unraid_data/Obsidian'
+        # 索引库基目录（0.1.1 迁出 CIFS 落本地盘）：每 vault 一库 <indexDir>/<vault 名-哈希>/；
+        # 空/缺省=出厂默认 ~/.dsh/cache/obsidian-web/（~ 按 os.homedir() 展开；索引=可重建缓存 ARC-2）
+        indexDir: '~/.dsh/cache/obsidian-web'
         # 分享模型（PRODUCT OW-INV-1）：逐条显式生成、默认不对外；写权限强制访问密码
         share:
           enabled: true
