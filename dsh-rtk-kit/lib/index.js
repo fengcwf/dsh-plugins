@@ -89,7 +89,7 @@ export function apply(ctx, rawConfig) {
         agent.inject(
           createUserMessage({
             content: [{ type: 'text', text }],
-            source: name,
+            source: { kind: name },
           }),
         )
       } catch (error) {

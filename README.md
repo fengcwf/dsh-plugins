@@ -1,6 +1,7 @@
-# dsh-plugins
+# dsh-plugins —— fengcwf 的 dsh 自研插件集（monorepo）
 
-fengcwf 的 dsh 插件 monorepo。每个子目录一个可安装的 dsh 组合包（bundle），**git 快照安装**进 dsh profile（不使用 link: 模式）。
+> **布局说明（2026-09-27 扁平化）**：本仓库根 = `~/.dsh/plugins/`，每个插件一目录并列居下（`dsh-plugins/` 嵌套层已撤销）。目标 dsh：`>=0.1.0-rc.6 <0.2.0-0`；插件均零构建纯 ESM JS。
+> **位置语义**（官方 docs/user/develop/basic/publish.zh.md）：**源码位**=`~/.dsh/plugins/<插件名>/`（本仓子目录）；**安装落地**=`~/.dsh/profiles/<profile>/node_modules/<pkg>`（`dsh plugin` = profile 内 pnpm，钉版本 git 快照；link: 模式废弃——2026-09-23 缺依赖事故教训）。
 
 | 插件 | 版本 | 职责 |
 |---|---|---|
@@ -9,38 +10,44 @@ fengcwf 的 dsh 插件 monorepo。每个子目录一个可安装的 dsh 组合�
 | [dsh-login-gate](dsh-login-gate/) | 0.2.0 | 登录门禁：表单登录（scrypt + HMAC 会话）+ 认证反代 + 原生 DSH 会话 + WS tunnel 修复 |
 | [kb-context](kb-context/) | 0.2.0 | 知识库上下文：vault 增量索引（FTS5）+ 检索（BM25/LIKE 兜底+deadline 守卫）+ 会话注入（触发/脱敏/截断）+ wiki_read/wiki_search/kb_diagnose 工具 |
 | [wiki-steward](wiki-steward/) | 0.2.0 | wiki 管家：会话捕获入 raw/ + kb_validate 六规则校验 + kb_mark sha256 原子回写 + wiki CRUD（.trash 可逆/journal 事务/wikilink 重写）+ 入队告警 + tools/pre-execute 写入拦截 |
-| [obsidian-web](obsidian-web/) | 0.1.0 | Obsidian vault Web 管理：查看/编辑/下载/分享 + 目录维护（OW-US-1..14；已发版 obsidian-web-v0.1.0） |
+| [obsidian-web](obsidian-web/) | 0.1.0 | Obsidian vault Web 管理：查看/编辑/下载/分享 + 目录维护（OW-US-1..14） |
 
 ## 版本纪律（强制，缺一不可）
 
-**每次更新必须同时**：
+**每次更新必须同时**：① `package.json` `version` bump（semver）② 插件目录 `CHANGELOG.md` 加 `## <版本> — <日期>` 更新记录 ③ 本 README 版本表同步 ④ 提交并打 tag **`<插件名>-v<版本>`** ⑤ `bash scripts/check-release.sh <插件名>` PASS 后才 push。
 
-1. `package.json` 的 `version` bump（semver）
-2. 插件目录 `CHANGELOG.md` 加一条 `## <版本> — <日期>` 更新记录
-3. 本 README 版本表同步
-4. 提交并打 tag **`<插件名>-v<版本>`**（如 `dsh-rtk-kit-v0.2.0`）
-5. `bash scripts/check-release.sh <插件名>` PASS 后才 push
-
-## 安装 / 更新（本地 dsh profile）
+## 安装 / 更新（本地 dsh profile，钉版本 git 快照）
 
 ```bash
-# 安装/更新 = 钉版本的 git 快照（升级 = 换新 tag 重执行同一条命令）
-dsh plugin --profile web add 'github:fengcwf/dsh-plugins#dsh-rtk-kit-v0.2.0&path:dsh-rtk-kit'
-dsh plugin --profile web add 'github:fengcwf/dsh-plugins#dsh-github-ops-v0.2.0&path:dsh-github-ops'
-dsh plugin --profile web add 'github:fengcwf/dsh-plugins#dsh-login-gate-v0.2.0&path:dsh-login-gate'
+dsh plugin --profile web add 'github:fengcwf/dsh-plugins#<插件名>-v<版本>&path:<插件名>'   # 安装/更新=换新 tag 重执行，同名即替换
+dsh plugin --profile web remove <插件名>                                                    # 卸载
 /root/.dsh/start-dsh.sh        # 重启生效（会闪断会话，选空档执行）
-
-# 卸载
-dsh plugin --profile web remove dsh-rtk-kit
 ```
 
-git 快照安装自动代装 `dependencies`（zod 等）；`@deepseek-ai/*` 为 peer，由 dsh 运行时拦截层共享宿主实例。
+- git 快照自动代装 `dependencies`（zod 等）；`@deepseek-ai/*` 为 peer，由 dsh 运行时拦截层共享宿主实例。
+- 无热链路：线上跑的永远是可追溯的钉版本（特性不是摩擦）。
+- 前置：`rtk --version`（缺了 dsh-rtk-kit 自动退化为恒等）、`gh auth status`（已登录 fengcwf）。
+- 配置在各包 `cordis.patch.yml`（随包分发，`insert` 行即插件入口）；用户覆盖走 profile 层 `cordis.patch.yml`（config 整行替换）。
+- 运维排障 skill：`~/.agents/skills/dsh-plugin-ops/`。
 
 ## 开发
 
 ```bash
-cd ~/.dsh/plugins/dsh-plugins/<插件名>
+cd ~/.dsh/plugins/<插件名>
 pnpm install      # checkout 自持 node_modules（官方约定；devDep 副本供独立测试）
 node --test       # 必含 load.test.mjs 加载冒烟（防"测试全绿但起不来"）
-bash ../scripts/check-release.sh <插件名>   # 发版纪律体检
+bash ../scripts/check-release.sh <插件名>   # 发版纪律体检（version/CHANGELOG/README/tag/dist 五对齐）
 ```
+
+## 与社区方案的差异（详见 [11-社区插件调研与设计决策.md](11-社区插件调研与设计决策.md)）
+
+**dsh-rtk-kit vs 社区 rtk 流派**（DeepTrial/dsh-bash-rtk executor 路线、pharaohnie/dsh-rtk-tools 工具路线、dd2673 等 rewrite 路线）：
+- 改写路由交给 `rtk rewrite`（链式感知、随 rtk 升级自动进化）而不是手写 44 项白名单；
+- `stdin == null` 守卫让 hook-runner 等宿主内部 shell 调用永不被改写；
+- awareness 三档随插件装卸；修掉 `rtk rewrite` 0.49.0 成功码 rc=3 的判定坑。
+
+**dsh-github-ops vs GitHub MCP server**（实测）：schema ≈2k vs ≈12.8k token；token 来源 gh hosts.yml 命令替换（值不进日志）vs 显式 env PAT；强制力构造性 vs 模型自选；`github_api` 万能入口+`--jq` 投影 vs 专用工具；需要 MCP 全家桶可并存（`dsh-mcp-client` 另挂）。
+
+## 采纳的社区模式（TOP）
+
+RTK 官方 hooks（exit-code 四态/thin delegate/全链路 fail-open/递归防护三件套/awareness 三档）、GitHub MCP（命名规范/描述内嵌选型指导/fields 裁剪/read-only 边界/DeprecatedToolAliases）、gh CLI（免配置 token/--jq 裁剪/gh api 万能后端）、fast-bash（rewrite/hint/block 三档）、PivotStack/dsh-github（危险操作显式确认）。
