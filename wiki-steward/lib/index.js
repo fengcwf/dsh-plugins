@@ -18,6 +18,7 @@
 //   写类 readOnly 执行面收窄为 crud 族（wiki_write/wiki_delete/wiki_rename），kb_validate 只读永不拦。
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createCaptureState, observe, stopping, turnEnded, isSubagentHeader } from './capture.js'
@@ -28,6 +29,9 @@ import { kbValidate, quickFindings, RULES } from './validate.js'
 import { kbMark } from './mark.js'
 import { wikiWrite, wikiDelete, wikiRename } from './crud.js'
 import { createWriteGate } from './gate.js'
+import { defaultLogSources } from './ingest-log.js'
+import { createIngestTrigger } from './ingest-trigger.js'
+import { registerIngestRoutes } from './ingest-routes.js'
 
 export const name = 'wiki-steward'
 export const inject = ['tools']
@@ -561,6 +565,53 @@ export function apply(ctx, rawConfig, opts = {}) {
       swallow('session/disposed', e)
     }
   })
+
+  // ---- 设置页签数据面（ingest 面板：/wiki-steward/api/* + web/dist 静态）----
+  // webServer/connection 软取得（T13 timer 同款姿势）：inject 维持 ['tools'] 不加服务（load.test 钉住），
+  // cordis 未 inject 取服务属性会抛 → try/catch 兜底。缺缝=非 web 部署面，fail-open 留痕（INV-15）：
+  // 捕获/工具面照常，只是设置页签数据面不注册。页签注册在客户端面（lib/client.js settings.plugins.tab）。
+  const softService = (name, probe) => {
+    try {
+      if (typeof ctx?.get === 'function') {
+        const a = ctx.get(name)
+        if (probe(a)) return a
+        const b = ctx.get(name, false) // 非严格：提供者未激活也认（懒补接面）
+        if (probe(b)) return b
+      }
+    } catch { /* cordis 代理在服务缺位时抛——走兜底 */ }
+    try {
+      if (probe(ctx?.[name])) return ctx[name]
+    } catch { /* 同上 */ }
+    return null
+  }
+  const webServerSvc = softService('webServer', (s) => typeof s?.register === 'function')
+  const connSvc = softService('connection', (s) => typeof s?.requestRejection === 'function')
+  if (webServerSvc !== null && connSvc !== null) {
+    const webOpts = opts.web ?? {}
+    const ingestHome = webOpts.home ?? os.homedir()
+    const ingestLogDir = webOpts.logDir ?? path.join(ingestHome, '.dsh', 'logs', 'cron')
+    const distDir = webOpts.distDir ?? fileURLToPath(new URL('../web/dist', import.meta.url))
+    const trigger = webOpts.trigger ?? createIngestTrigger({ home: ingestHome, logDir: ingestLogDir, now: () => new Date(nowMs()) })
+    const sources = webOpts.sources ?? defaultLogSources({ home: ingestHome })
+    const disposers = registerIngestRoutes({
+      register: (spec) => webServerSvc.register(spec),
+      connection: connSvc,
+      getConfig: readCfg, // 热改现读（与工具层 write.readOnly 同源）
+      trigger,
+      sources,
+      distDir,
+      warn: (line) => warn(ctx, `[wiki-steward] ${line}`),
+    })
+    if (typeof ctx.effect === 'function') {
+      ctx.effect(() => {
+        for (const d of disposers) {
+          try { d() } catch { /* 收敛不抛 */ }
+        }
+      })
+    }
+  } else {
+    warn(ctx, '[wiki-steward] webServer/connection 服务缝缺失，设置页签数据面（/wiki-steward/api/*）未注册（fail-open：捕获/工具面照常）')
+  }
 }
 
 // ⚠️ default 必须是对象（R13）：宿主读 default.inject / default.apply

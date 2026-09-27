@@ -21,7 +21,7 @@ function user(text) {
 
 test('① recall-loop 防护：plugin/system/无 source 消息含触发词不触发；同文 user 触发（INV-3）', () => {
   const injectedText = '<kb-context source="wiki/INDEX.md:1-9">wiki obsidian 索引目录 wiki索引 obsidian索引 hot.md INDEX.md [[hot]] @wiki/hot.md</kb-context>'
-  const injected = { content: [{ type: 'text', text: injectedText }], source: { kind: 'plugin', plugin: 'kb-context', form: 'recall' } }
+  const injected = { content: [{ type: 'text', text: injectedText }], source: { kind: 'kb-context', form: 'recall', sections: [{ name: 'kb-context', text: injectedText }] } }
   assert.deepEqual(matchTrigger(injected, {}), { matched: false, query: '' }, 'plugin 注入文本全是触发词也不得再触发')
   assert.equal(matchTrigger({ content: [{ type: 'text', text: injectedText }], source: { kind: 'system' } }, {}).matched, false)
   assert.equal(matchTrigger({ content: [{ type: 'text', text: injectedText }] }, {}).matched, false, '缺 source 不触发')

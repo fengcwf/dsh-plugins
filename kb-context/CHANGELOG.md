@@ -1,5 +1,14 @@
 # CHANGELOG — kb-context
 
+## 0.2.1 — 2026-09-28
+
+生产 bug 修复：启用 kb-context 后对话报错 `format v4 message requires a producer-owned source kind`。
+
+- **注入消息 source 契约修正**（`lib/inject.js`，BUG 2026-09-28）：`source` 由旧形 `kind:'plugin'`+`plugin:'kb-context'` 改为 **`{kind:'kb-context', form:'recall', sections:[…]}`**（键集={kind,form,sections}，去 plugin 键）——v3-to-v4 producer-owned 依据：V4 原生面 `source()` 显式拒绝 kind:'plugin'（报错原文即本 bug 症状），迁移映射 `rewritePluginSource` 亦剥 plugin 键、kind 取插件自有名，此处直出规范形
+- **INV-5 键集契约注释/断言同步**：source 键集={kind,form,sections}；禁 model 字段拒收等既有语义零弱化（`isRecallMessage` 三键咬合改 kind/form/sections）
+- **真校验器回归（零 mock）**：import dsh 安装里的 `dsh-session-format-v3-to-v4` `restoreReleasedV4Artifact`（内部 `assertV4MessageSources`→`source()`）对真 `createUserMessage` 注入产物校验——正例 kind:'kb-context' 通过；负例旧形 kind:'plugin' 必拒且报错原文钉死（RED 恰红先行：旧形下正例回归恰红=生产事故原文）
+- 测试 155→157（+2 回归）
+
 ## 0.2.0 — 2026-09-26
 
 首个功能版：检索/注入/工具全量交付（0.1.0 壳版留待面全部落地）+ 终审遗留清障批。

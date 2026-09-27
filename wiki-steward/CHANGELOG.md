@@ -1,5 +1,17 @@
 # CHANGELOG — wiki-steward
 
+## 0.3.0 — 2026-09-28
+
+设置页签 ingest 面板（用户反馈需求）：dsh 设置页新增 **wiki-steward · Ingest 页签**（`settings.plugins.tab`），可查 ingest 日志与相关设置、手动触发 ingest（双动作）。
+
+- **设置页签**（`lib/client.js`，dsh 客户端面零构建工厂形）：`dsh.client`（platform=web, inject=slots）+ `exports["./client"]` 扫描契约；`apply` 经 `ctx.slots.inject('settings.plugins.tab')` 注册页签（id=wiki-steward, order=30）——**只碰 settings 子面，root 壳槽位（launcher/trigger/header/close/action/section/onboarding）禁注册**；页签组件动态 import Vue 面板（`mount(el,{apiBase}) → {unmount()}` 契约，清理幂等，加载失败容器内如实报错不白屏）
+- **Vue 面板**（`web/`，kb/obsidian-web web/ 惯例：web/ 源码 → web/dist 构建物随包入库；**最小构建选型=vite lib 形单入口**→`dist/panel.js + style.css`，Vue 打进构建物、运行时零第三方请求；不引 element-plus——面板纯展示+两按钮控件需求为零，样式对齐 dsh token；devDeps: vue/@vitejs/plugin-vue/vite）：组件 ≤300 行禁 v-if 重交互（ARC-6 同款），逻辑全落 `web/src/lib/*.js` 纯模块（log-view/trigger-model/settings-model），.vue 只做展示（容器/展示分离）
+- **ingest 日志**（`lib/ingest-log.js`）：调研结论=**无统一日志文件**（ingest-pipeline.py 仅 stdout；夜间任务日志在 `~/.dsh/logs/cron/wiki-ingest-YYYYMMDD.log`（dsh-cron.sh 写）；告警账本 `~/.dsh/kb-alerts.md`）→ 面板**各来源拼接+逐行如实标注来源**（id/label/文件名/行号），顺序（dateKey,文件名,行号）升序（告警行内时间戳优先）；尾部 N 行+滚动加载（锚点游标，追加不破坏回翻，游标失效=空页 stale 留痕不编造）；超限文件只读尾段+行级 truncated 留痕
+- **手动触发 ingest 双动作**（`lib/ingest-trigger.js`，裁定语义=脚本不语义编译）：「**扫描增量**」调 `ingest-pipeline.py scan --summary` 机械面（H3 规矩只调脚本本体），结果（增量清单）写扫描日志 `wiki-ingest-scan-YYYYMMDD.log` → 面板可见，`summarizeScan` 机械解析（真实输出形钉测试）；「**触发蒸馏**」呼叫 headless 任务通道 `/root/bin/dsh-cron.sh wiki-ingest 21-wiki-ingest.md`（detached 不阻塞请求，flock 防重入探针=已跑则不重入）并提示「**蒸馏由任务执行**」（按钮绝不做 LLM 蒸馏）；通道不可用则**不渲染蒸馏按钮**+面板写明「蒸馏走夜间任务/手动会话」（不造假通道）
+- **相关设置**：Config 面（vaultRoot/capture/write/queue/secrets）+ vaultRoot/write.readOnly **只读展示**（INV-7 注记，语义勿动）+ 日志来源/蒸馏通道状态如实展示；本波可改项最小集=∅（用户需求是"查看"；改 config=走 cordis config 热改语义，不进本面板）
+- **数据面**（`lib/ingest-routes.js`，obsidian-web /ob/ 同款形）：`GET /wiki-steward/api/ingest/{logs,settings}`、`POST /wiki-steward/api/ingest/{scan,distill}`、prefix `/wiki-steward` 静态（web/dist，穿越围栏：URL 归一化前后双判+分量拒+realpath 前缀核）；API 形 {data}/{error:{code,message}}，每条 handler 第一行过 `connection.requestRejection` 鉴权缝；接线=webServer/connection **软取得**（T13 timer 同款姿势，`inject` 维持 `['tools']` 不变——load.test 钉住），缺缝 fail-open 留痕（捕获/工具面照常），`ctx.effect` 收敛 dispose
+- 测试 245→308（+63：ingest-log 12 / ingest-trigger 11 / web-panel 13 / ingest-routes 11 / client-face 6 / ingest-wire 6 / ingest-dist 4——真文件系统+child_process 注入缝；真验含真跑 ingest-pipeline.py scan（只读）+真跑 dsh-cron.sh 缺任务文件 exit 2 / flock 防重入 exit 3（DSH_CRON_LOG_DIR/DSH_KB_ALERTS 注入落点，绝不碰真 home、绝不触发 LLM）；双 umask 口径 308/308×2 全绿、npm run check exit 0）；既有 245 断言零改动（mkCtx/load 最小假缝补 webServer/connection 两 stub，各用例留痕计数语义不变）
+
 ## 0.2.0 — 2026-09-26
 
 首个功能版：捕获/校验/回写/CRUD/队列/拦截全量交付（0.1.0 壳版留待面全部落地）+ 终审遗留清障批。

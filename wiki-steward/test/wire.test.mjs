@@ -18,13 +18,24 @@ function mkCtx() {
   const warnings = []
   const registered = []
   const intervals = []
+  const webRoutes = []
   return {
     handlers,
     warnings,
     registered,
     intervals,
+    webRoutes,
     logger: { warn: (l) => warnings.push(l) },
     tools: { register: (tool) => registered.push(tool) },
+    // 设置页签数据面服务缝（webServer.register + connection.requestRejection 最小形；
+    // 缺缝 fail-open 留痕另有专用用例——ingest-wire.test.mjs）。
+    webServer: {
+      register(spec) {
+        webRoutes.push(spec)
+        return () => {}
+      },
+    },
+    connection: { requestRejection: () => undefined },
     // T13 timer 服务缝（cordis-plugin-timer 最小形：ctx.get('timer').interval）；
     // timer 缺失 fail-open 留痕另有专用用例。
     get(name) {
