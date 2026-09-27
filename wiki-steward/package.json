@@ -1,21 +1,25 @@
 {
   "name": "wiki-steward",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "DeepSeek Harness 的 Obsidian vault 写侧插件：会话捕获双轨落盘、kb_validate 机械校验、kb_mark sha256 原子回写、wiki CRUD 围栏、失败幂等队列与告警（默认只读，写侧记账主动、动手被动）",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./client": "./lib/client.js"
   },
   "files": [
     "lib",
+    "web",
     "cordis.patch.yml",
     "CHANGELOG.md"
   ],
   "scripts": {
     "test": "node --test",
-    "check": "node --check lib/index.js && node --check lib/secrets.js && node --check lib/fs-safe.js && node --check lib/capture.js && node --check lib/buffer.js && node --check lib/validate.js && node --check lib/mark.js && node --check lib/crud.js && node --check lib/queue.js && node --check lib/alert.js && node --check lib/gate.js && node --test"
+    "check": "node --check lib/index.js && node --check lib/secrets.js && node --check lib/fs-safe.js && node --check lib/capture.js && node --check lib/buffer.js && node --check lib/validate.js && node --check lib/mark.js && node --check lib/crud.js && node --check lib/queue.js && node --check lib/alert.js && node --check lib/gate.js && node --check lib/ingest-log.js && node --check lib/ingest-trigger.js && node --check lib/ingest-routes.js && node --check lib/client.js && node --test",
+    "build": "vite build --config web/vite.config.js",
+    "dev": "vite --config web/vite.config.js"
   },
   "peerDependencies": {
     "zod": "^4.6.5",
@@ -25,11 +29,20 @@
   "devDependencies": {
     "zod": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/zod",
     "@deepseek-ai/dsh-llm": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm",
-    "@deepseek-ai/dsh-tools": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-tools"
+    "@deepseek-ai/dsh-tools": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-tools",
+    "vue": "^3.5.43",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "vite": "^8.3.1"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "slots"
+      ]
     }
   },
   "keywords": [

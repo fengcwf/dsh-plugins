@@ -74,7 +74,7 @@ test('Config 默认值无可变共享引用（多次 parse 互不污染）', asy
 test('apply：非法配置留痕不静默（INV-15），合法配置零告警', async () => {
   const { apply } = await import('../lib/index.js')
   const warnings = []
-  const ctx = { logger: { warn: (line) => warnings.push(line) }, on: () => {}, tools: { register: () => {} }, get: () => ({ interval: () => () => {} }) } // T9：apply 注册三事件缝；T12：tools 缝（缺失会另计 fail-open 留痕，见 wire.test）；T13：timer 缝（同款）
+  const ctx = { logger: { warn: (line) => warnings.push(line) }, on: () => {}, tools: { register: () => {} }, get: () => ({ interval: () => () => {} }), webServer: { register: () => () => {} }, connection: { requestRejection: () => undefined } } // T9：apply 注册三事件缝；T12：tools 缝（缺失会另计 fail-open 留痕，见 wire.test）；T13：timer 缝（同款）；本特性：webServer/connection 缝（缺失会另计留痕，见 ingest-wire.test）
   apply(ctx, { capture: { bufferRounds: '3' } })
   assert.equal(warnings.length, 1)
   assert.match(warnings[0], /bufferRounds/)
@@ -91,7 +91,7 @@ test('apply：无 logger 时回落 console.warn（行为不丢）', async () => 
   const orig = console.warn
   console.warn = (line) => recorded.push(line)
   try {
-    apply({ on: () => {}, tools: { register: () => {} }, get: () => ({ interval: () => () => {} }) }, { secrets: { enabled: 'on' } })
+    apply({ on: () => {}, tools: { register: () => {} }, get: () => ({ interval: () => () => {} }), webServer: { register: () => () => {} }, connection: { requestRejection: () => undefined } }, { secrets: { enabled: 'on' } })
   } finally {
     console.warn = orig
   }
