@@ -1,6 +1,6 @@
 # CHANGELOG — wiki-steward
 
-## 0.2.0 — 2026-09-24
+## 0.2.0 — 2026-09-26
 
 首个功能版：捕获/校验/回写/CRUD/队列/拦截全量交付（0.1.0 壳版留待面全部落地）+ 终审遗留清障批。
 
@@ -12,9 +12,9 @@
 - **拦截**（`lib/gate.js`）：`tools/pre-execute` 判定矩阵（allow/ask/deny 三态无输入改写）——readOnly vault 写类全 deny 早拦、新建不合指引 deny+指路、存量页问题 ask 不阻塞修复、非 vault/读工具零快检放行、edit 补丁外推按编辑后内容判、异常 fail-open 留痕
 - **共享层**：`lib/secrets.js` 三层脱敏+占位符+计数；`lib/fs-safe.js` 写安全基元——`writeAtomic`（wx 独占+双 fsync+rename+失败清残）、`withFileLock`/`withLeaseLock`（lease 时间戳 stale 自愈+超时接管留痕）、`realpathGuard`（形式拒→归一→归属→dangling 外指逐段判逃逸）、`journalSave`/`journalRollback`（content+sha256+mode 快照、逆放+幂等）
 - **遗留清障批（终审 deferred 收口）**：`journalRollback` 写后 fchmod 精确还原 mode（不受 umask 截损，双 umask 口径同判）；`withLeaseLock` 释放=成功 `unlink(lease.json)` 原子放弃+锁目录实例门（dev+inode）——「绝不拆新持有者」结构性成立；`.trash` 落点 O_EXCL 占位（wx 文件/mkdir 目录独占后 rename 覆盖占位=唯一落点）；CJK 判据补扩展 B+ 代理对区段（纯扩展 B 命名不误报）；`collectMd`/`listWikiMd` readdir 失败 io 留痕（校验/改写漏报面收口）；⑥证据规则收窄 wiki/ 域（`wikiRel !== null` 一门，raw/ 捕获产物不触发）；⑥引用行判据收紧（fence/代码块内行不算，引用行须正文）；mark 行形核 prefix/suffix strip 区字节不变；INDEX `key=''` 畸形登记→歧义拒（不再静默 continue）；kb_mark 失败原因枚举死项 `read-only` 清理；gate reason 去裁定黑话
-- 测试 245/245（load/secrets/fs-safe/capture/buffer/validate/mark/crud/queue/alert/gate/wire——mkdtemp 真文件系统零 mock，故障注入仅 _write/_failAt/_beforeApply/_readdir/_probe 缝；双 umask 口径复核）
+- 测试 245/245（load/secrets/fs-safe/capture/buffer/validate/mark/crud/queue/alert/gate/wire——mkdtemp 真文件系统零 mock，故障注入仅 _write/_failAt/_beforeApply/_readdir 缝；双 umask 口径复核）
 
-## 0.1.0 — 2026-09-25
+## 0.1.0 — 2026-09-23
 
 初版：插件骨架（壳）、全量脱敏与写安全共享层（Task 8）。
 
