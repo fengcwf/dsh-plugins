@@ -850,3 +850,22 @@ test('T9 接线：缺 ctx.effect 收敛缝 → 分享面不起（公开面生命
   assert.ok(warnings.some((w) => w.includes('分享服务')), '缺缝必须留痕（INV-15）')
   await assert.rejects(() => get(`http://127.0.0.1:${probe}/ob_share/`), '缺收敛缝不得开公开面')
 })
+
+// ── F1（终审 fix-wave）：share-server 读写面 realpath 咽喉——目录经别名（→.ob-share）不得列表 ──
+test('F1 share-server 读写面 realpath 咽喉：目录经别名（→.ob-share/hidden）404 不泄内部段；正常文件读 200 零回退', async () => {
+  const vault = makeVault('f1-dirlist', { 'notes/keep.md': '# K', '.ob-share/hidden/secret.json': '{"pw":"x"}' })
+  const config = makeConfig(vault)
+  // 前提：vault 内预存 in-root 目录别名（→.ob-share），位于分享范围内（notes/alias）
+  fs.symlinkSync(path.join(vault, '.ob-share'), path.join(vault, 'notes', 'alias'))
+  const { share } = await createShare(vault, { target: 'notes', role: 'read' })
+  await withServer(config, async (base) => {
+    const okRes = await get(`${base}/ob_share/${share.token}/keep.md`)
+    assert.equal(okRes.status, 200, '正常文件读 200（正例零回退）')
+    // 目录经别名（notes/alias/hidden → .ob-share/hidden）：最终真实节点落内部段 → 404，不得列表泄露
+    const aliasRes = await get(`${base}/ob_share/${share.token}/alias/hidden`)
+    assert.equal(aliasRes.status, 404, '目录经别名（→.ob-share）不得列表（内部段永不可经分享面触达）')
+    const body = await aliasRes.text()
+    assert.ok(!body.includes('secret.json'), '不得泄露 .ob-share/hidden 内容（条目名都不出）')
+    assert.ok(!body.includes('"pw"'), '不得泄露 .ob-share/hidden 文件内容')
+  })
+})

@@ -22,7 +22,7 @@
 //   仅形参/围栏非法 throw bad_request（沿 deletePath/renameNote 惯例）。
 import fs from 'node:fs'
 import path from 'node:path'
-import { resolveInRoot } from './vault-ops.js'
+import { resolveInRoot, isInternalRealPath } from './vault-ops.js'
 
 export const MAX_FILES = 5000
 export const MAX_BYTES = 500 * 1024 * 1024
@@ -41,6 +41,11 @@ export function planExport(root, relPath) {
   const trashAbs = path.resolve(base, TRASH)
   if (abs === trashAbs || abs.startsWith(trashAbs + path.sep)) {
     return { ok: false, reason: 'in-trash', message: `回收站条目不提供导出（恢复材料非工作面）：${relPath}` }
+  }
+  // F1 咽喉（realpath 前缀判定，与词法判定并存不替换）：in-root 目录别名（→.trash/.ob-share）
+  // 解引用至内部段真实落点 = 同判 in-trash（词法前缀判定曾被别名绕过，恢复材料经别名可被导出）。
+  if (isInternalRealPath(root, abs)) {
+    return { ok: false, reason: 'in-trash', message: `回收站/内部条目不提供导出（恢复材料非工作面）：${relPath}` }
   }
   const node = fs.lstatSync(abs, { throwIfNoEntry: false })
   if (node == null) return { ok: false, reason: 'not-found', message: `不存在：${relPath}` }

@@ -79,6 +79,45 @@ function isInsideRoot(rootReal, target) {
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel))
 }
 
+// ── F1 内部段真实落点判定（realpath 前缀咽喉，与名字级判定并存不替换）────────────────
+// final-probes.md §5 缺口：内部段/.trash 保护全是名字级判定（isInternalSegment / 词法 in-trash 前缀），
+// 而 realpath 围栏放行 in-root 中间段目录别名解引用（OW-INV-7⑨）——组合后 in-root 目录别名
+// （→.ob-share/.trash）可绕过「永不可经分享面触达」。修法=升格 realpath 前缀判定：最终真实节点
+// （缺失面=最深已存在祖先的真实落点）落 <rootReal>/.trash 或 <rootReal>/.ob-share 前缀=内部落点，拒。
+// 普通 in-root 目录别名解引用（OW-INV-7⑨）真实节点非内部段前缀→不触发，正例零回退。
+// T6 大小写 FS 词法绕过随闭：比对两侧同过 toLowerCase（realpath 归一后仍按不敏感口径比对，
+// 防在盘名大小写形）；与 share.js isInternalSegment 同口径（不敏感+别名归一族）。
+const INTERNAL_SEGMENT_DIRS = ['.trash', '.ob-share'] // 恢复材料/分享存储自身（同 share.js SHARE_DIR）
+export function isInternalRealPath(root, abs) {
+  const base = path.resolve(root)
+  let rootReal
+  try {
+    rootReal = fs.realpathSync(base) // root 自身 symlink/挂载别名归一
+  } catch {
+    return true // vaultRoot 不可解析 = fail-closed 内部落点（拒）
+  }
+  // 最深已存在祖先真实落点：存在目标=全链解引用；缺失目标（写侧可建）=父链真实落点决定新节点归宿。
+  // 逐段上溯直到 realpath 成功（绝不整路径 lstat 让中间段被内核静默解引用——与 symlinksEscape 同理）。
+  let probe = path.resolve(abs)
+  let real = null
+  for (;;) {
+    try {
+      real = fs.realpathSync(probe)
+      break
+    } catch (err) {
+      if (err?.code !== 'ENOENT' && err?.code !== 'ENOTDIR') return true // 不可解 = fail-closed 内部（拒）
+      const parent = path.dirname(probe)
+      if (parent === probe) return false // 已到文件系统根：无内部落点
+      probe = parent
+    }
+  }
+  const realLower = real.toLowerCase()
+  return INTERNAL_SEGMENT_DIRS.some((d) => {
+    const internalAbs = path.join(rootReal, d).toLowerCase()
+    return realLower === internalAbs || realLower.startsWith(internalAbs + path.sep)
+  })
+}
+
 /**
  * dangling 外指面检查（真实路径缺失时启用；T5 alias 拓扑交接）：**全链逐段解引用至真实
  * 节点或越 root 即拒**——行走不变量：cur 恒为「已完全解引用的真实前缀」，每次 lstat 只解
@@ -253,6 +292,7 @@ export function listTree(root) {
 // 外逃漂移在读到内容前拦下，内容零外泄。
 export function readNote(root, relPath) {
   const abs = resolveInRoot(root, relPath)
+  if (isInternalRealPath(root, abs)) throw fail('bad_request', '内部目录（.trash/.ob-share）不可触达') // F1 咽喉
   const stat = statOrThrow(abs, relPath)
   if (!stat.isFile()) throw fail('not_found', `不是文件：${relPath}`)
   let fd
@@ -326,8 +366,10 @@ export async function saveNote(root, relPath, content, options = {}) {
   }
   if (typeof content !== 'string') throw fail('bad_request', 'content 必须是字符串')
   const abs = resolveInRoot(root, relPath) // realpath 围栏（T12 终态）
+  if (isInternalRealPath(root, abs)) throw fail('bad_request', '内部目录（.trash/.ob-share）不可触达') // F1 咽喉
   return withFileLock(abs, async () => {
     resolveInRoot(root, relPath) // TOCTOU 口径②：锁内 realpath 复核（入口→写之间换入即拒）
+    if (isInternalRealPath(root, abs)) throw fail('bad_request', '内部目录（.trash/.ob-share）不可触达') // F1 咽喉（锁内复核）
     // T14 收口（T12 review Issue 1(b)）：写面显式拒最终分量 symlink（lstat 门与 export/share 同向，
     // 不解引用）——文件级别名写语义裁定=写面拒：别名节点不被 rename 顶替、别名目标不被静默写穿
     // （同物不变量保真）；中间段目录别名解引用语义不变（OW-INV-7⑨ 正例）。
@@ -379,9 +421,11 @@ export async function createNote(root, relPath, content = '') {
   if (content === undefined) content = ''
   if (typeof content !== 'string') throw fail('bad_request', 'content 必须是字符串')
   const abs = resolveInRoot(root, relPath) // realpath 围栏（单一来源，T12 终态）
+  if (isInternalRealPath(root, abs)) throw fail('bad_request', '内部目录（.trash/.ob-share）不可触达') // F1 咽喉
   try {
     return await withFileLock(abs, async () => {
       resolveInRoot(root, relPath) // TOCTOU 口径②：锁内 realpath 复核
+      if (isInternalRealPath(root, abs)) throw fail('bad_request', '内部目录（.trash/.ob-share）不可触达') // F1 咽喉（锁内复核）
       const existing = await fs.promises.lstat(abs).catch(() => null)
       // T14 收口（T12 review Issue 1(b)）：最终分量 symlink=类型显式拒 not-a-file（与 export/share
       // lstat 门同向；非 target-exists 冒充占用）——不顶替别名节点、不写穿别名目标（同物不变量保真）
@@ -679,6 +723,9 @@ export async function renameNote(root, from, to, options = {}) {
   if (typeof to !== 'string' || to === '') throw fail('bad_request', 'to 参数缺失')
   const fromAbs = resolveInRoot(root, from) // realpath 围栏（throw bad_request）
   const toAbs = resolveInRoot(root, to)
+  if (isInternalRealPath(root, fromAbs) || isInternalRealPath(root, toAbs)) {
+    throw fail('bad_request', '内部目录（.trash/.ob-share）不可触达') // F1 咽喉（源/目标同判）
+  }
   const warnings = []
   const skipped = []
   const result = (over) => ({
@@ -982,6 +1029,11 @@ export async function deletePath(root, relPath, options = {}) {
   const trashAbs = path.resolve(path.resolve(root), TRASH)
   if (abs === trashAbs || abs.startsWith(trashAbs + path.sep)) {
     return reject('in-trash', `回收站条目不可再删（恢复材料受保护）：${relPath}`)
+  }
+  // F1 咽喉（realpath 前缀判定，与词法判定并存不替换）：in-root 目录别名（→.trash/.ob-share）
+  // 解引用至内部段真实落点 = 同判 in-trash（词法前缀判定曾被别名绕过，恢复材料/分享存储被移位）。
+  if (isInternalRealPath(root, abs)) {
+    return reject('in-trash', `回收站/内部条目不可再删（恢复材料受保护）：${relPath}`)
   }
   // 源 lstat 门：不解引用——symlink/其他拒 not-a-file；真实文件/真实目录删除保留
   const node = await fs.promises.lstat(abs).catch(() => null)

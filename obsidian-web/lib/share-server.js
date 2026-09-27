@@ -30,7 +30,7 @@ import {
   checkAccess, createRateLimiter, resolveSharePath, shareAllowsOperation,
   accessDenied, rateLimited, isSensitiveName, SHARE_URL_PREFIX,
 } from './share.js'
-import { saveNote, createNote, deletePath, renameNote, readNote, resolveInRoot, assertOpenedRealInRoot } from './vault-ops.js'
+import { saveNote, createNote, deletePath, renameNote, readNote, resolveInRoot, assertOpenedRealInRoot, isInternalRealPath } from './vault-ops.js'
 import { renderMarkdown } from './render.js'
 import { redact, REDACTED } from './redact.js'
 import { shareCss } from './share-theme.js'
@@ -510,6 +510,13 @@ export function createShareServer(options = {}) {
       abs = resolveInRoot(root, resolved.path)
       st = fs.lstatSync(abs)
     } catch {
+      notFound(res, headOnly)
+      return
+    }
+    // F1 咽喉（share-server 读写面 realpath 前缀判定，与名字级判定并存不替换）：最终真实节点落
+    // <rootReal>/.ob-share、<rootReal>/.trash 前缀=内部落点，guest 面一律 404（fail-closed）——
+    // 别名（→.ob-share/.trash）下目录列表/读/下载全断（in-root 目录别名经 share-server 触达内部段封死）。
+    if (isInternalRealPath(root, abs)) {
       notFound(res, headOnly)
       return
     }
