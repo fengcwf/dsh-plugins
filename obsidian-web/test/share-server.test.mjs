@@ -227,7 +227,7 @@ test('② 404 体=share.js accessDenied() 冻结四键形单源逐字节对齐�
 
 // ── ③ guest 写矩阵：笔记分享（写）=仅内容编辑 ────────────────────────────────
 test('③ 笔记分享（写）=仅内容编辑：edit✓（乐观锁+diffUndo），create/delete/rename→405，他路径→404', async () => {
-  const vault = makeVault('file-write', { 'hello.md': '# 旧内容', 'other.md': '他文件' })
+  const vault = makeVault('file-write', { 'hello.md': '# 旧内容 sk-oldtoken1234567890', 'other.md': '他文件' }) // fixture 带哨兵（C-1 脱敏版往返锁定）
   const config = makeConfig(vault)
   const { share, password } = await createShare(vault, { target: 'hello.md', role: 'write', autoPassword: true })
   const q = `?password=${encodeURIComponent(password)}`
@@ -239,33 +239,43 @@ test('③ 笔记分享（写）=仅内容编辑：edit✓（乐观锁+diffUndo�
     const mtime = Number(page.headers.get('x-ob-mtime'))
     const etag = page.headers.get('x-ob-etag')
     assert.ok(Number.isFinite(mtime) && typeof etag === 'string' && etag !== '')
-    // edit ✓（成功 + diffUndo=undo 源）
+    // edit ✓（成功 + diffUndo=undo 源——C-1 翻正：对外 content 面一律脱敏版往返，原文零外泄）
     const saved = await get(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ op: 'edit', content: '# 新内容', expectedMtime: mtime }),
+      body: JSON.stringify({ op: 'edit', content: '# 新内容 sk-newtoken1234567890', expectedMtime: mtime }),
     })
     assert.equal(saved.status, 200)
     const savedBody = await saved.json()
     assert.equal(savedBody.data.ok, true)
     assert.equal(savedBody.data.subPath, '', 'guest 响应回 subPath 不回 vault 路径')
-    assert.equal(savedBody.data.diffUndo.before.content, '# 旧内容', 'diffUndo.before=保存前快照（undo 源）')
-    assert.equal(savedBody.data.diffUndo.after.content, '# 新内容')
-    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 新内容')
+    assert.equal(savedBody.data.diffUndo.before.content, '# 旧内容 <redacted>', 'diffUndo.before=脱敏版快照（undo 恢复脱敏版与 C5 自洽；guest 只见脱敏版）')
+    assert.equal(savedBody.data.diffUndo.after.content, '# 新内容 <redacted>', 'diffUndo.after=脱敏版快照')
+    assert.equal(savedBody.data.diffUndo.before.redactCount, 1, '计数如实（before 中和 1 处）')
+    assert.equal(savedBody.data.diffUndo.after.redactCount, 1, '计数如实（after 中和 1 处）')
+    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 新内容 sk-newtoken1234567890', '保存=全量覆盖（盘上原文；外泄面在响应已脱敏）')
     assert.ok(!JSON.stringify(savedBody).includes(vault), 'guest 响应零 vault 绝对路径')
     assert.ok(!JSON.stringify(savedBody).includes('hello.md'), 'guest 响应零 vault-rel 路径')
-    // 乐观锁冲突（stale mtime）→ conflict 形（对比面 before/incoming 三选数据基础）
+    for (const raw of ['sk-oldtoken1234567890', 'sk-newtoken1234567890']) {
+      assert.ok(!JSON.stringify(savedBody).includes(raw), `哨兵原文零外泄（C-1 负例：${raw}）`)
+    }
+    // 乐观锁冲突（stale mtime）→ conflict 形（对比面 before/incoming 三选数据基础；C-1 翻正：同脱敏版）
     const conflict = await get(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ op: 'edit', content: '竞争写', expectedMtime: mtime }),
+      body: JSON.stringify({ op: 'edit', content: '竞争写 sk-inctoken1234567890', expectedMtime: mtime }),
     })
     assert.equal(conflict.status, 200)
     const conflictBody = await conflict.json()
     assert.equal(conflictBody.data.conflict, true)
-    assert.equal(conflictBody.data.diffUndo.before.content, '# 新内容', '冲突 before=盘上现内容（重载/对比基线）')
-    assert.equal(conflictBody.data.diffUndo.incoming.content, '竞争写', '冲突 incoming=本次尝试（对比面）')
-    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 新内容', '冲突不落盘（OW-INV-3）')
+    assert.equal(conflictBody.data.diffUndo.before.content, '# 新内容 <redacted>', '冲突 before=盘上现内容脱敏版（重载/对比基线；原文零外泄）')
+    assert.equal(conflictBody.data.diffUndo.incoming.content, '竞争写 <redacted>', '冲突 incoming=本次尝试脱敏版（对比面）')
+    assert.equal(conflictBody.data.diffUndo.before.redactCount, 1, '计数如实（冲突 before 中和 1 处）')
+    assert.equal(conflictBody.data.diffUndo.incoming.redactCount, 1, '计数如实（冲突 incoming 中和 1 处）')
+    for (const raw of ['sk-newtoken1234567890', 'sk-inctoken1234567890']) {
+      assert.ok(!JSON.stringify(conflictBody).includes(raw), `冲突形哨兵原文零外泄（C-1 负例：${raw}）`)
+    }
+    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 新内容 sk-newtoken1234567890', '冲突不落盘（OW-INV-3）')
     // 无乐观锁不落盘 → 400 统一形（零内部 message 外泄）
     const noLock = await get(url, {
       method: 'POST',
@@ -306,7 +316,7 @@ test('③ 笔记分享（写）=仅内容编辑：edit✓（乐观锁+diffUndo�
     assert.equal(traversal.status, 404)
     assert.equal(await traversal.text(), NOT_FOUND_BODY)
     assert.equal(fs.readFileSync(path.join(vault, 'other.md'), 'utf8'), '他文件', '穿越零写入')
-    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 新内容', '穿越零副作用')
+    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 新内容 sk-newtoken1234567890', '穿越零副作用')
   })
 })
 
@@ -335,7 +345,7 @@ test('③ 只读分享：一切写操作 405（read 角色=仅读）', async () 
 
 // ── ③ guest 写矩阵：文件夹分享（写）=目录内新建/编辑/删除/改名 ─────────────────
 test('③ 文件夹分享（写）=目录内新建/编辑/删除/改名四操作✓（乐观锁/undo/trash/事务复用），本体改删名✗', async () => {
-  const vault = makeVault('dir-write', { 'notes/a.md': '内容A', 'notes/b.md': '内容B' })
+  const vault = makeVault('dir-write', { 'notes/a.md': '内容A sk-atoken1234567890', 'notes/b.md': '内容B' }) // a.md 带哨兵（C-1 脱敏版往返锁定）
   const config = makeConfig(vault)
   const { share, password } = await createShare(vault, { target: 'notes', role: 'write', autoPassword: true })
   const q = `?password=${encodeURIComponent(password)}`
@@ -383,7 +393,9 @@ test('③ 文件夹分享（写）=目录内新建/编辑/删除/改名四操作
     const editedBody = await edited.json()
     assert.equal(editedBody.data.ok, true)
     assert.equal(editedBody.data.subPath, 'a.md')
-    assert.equal(editedBody.data.diffUndo.before.content, '内容A')
+    assert.equal(editedBody.data.diffUndo.before.content, '内容A <redacted>', 'C-1 翻正：diffUndo.before=脱敏版快照（原文零外泄）')
+    assert.equal(editedBody.data.diffUndo.before.redactCount, 1, '计数如实')
+    assert.ok(!JSON.stringify(editedBody).includes('sk-atoken1234567890'), '哨兵原文零外泄（C-1 负例）')
     assert.equal(fs.readFileSync(path.join(vault, 'notes/a.md'), 'utf8'), '内容A2')
     // 改名 ✓（事务复用；guest 响应零 vault 路径）
     const renamed = await get(`${base}/ob_share/${share.token}/a.md${q}`, {
@@ -481,7 +493,7 @@ test('③ 未知 op/缺 op → 405 统一形（操作越权同形不外泄）', 
 })
 
 test('③ 表单写面（无 JS）：urlencoded POST 编辑往返成功 + 冲突页给重试形态（禁前端二次渲染不含 script）', async () => {
-  const vault = makeVault('form', { 'hello.md': '# 表单' })
+  const vault = makeVault('form', { 'hello.md': '# 表单 sk-formtoken1234567890' }) // fixture 带哨兵（I-1 预填脱敏版锁定）
   const config = makeConfig(vault)
   const { share, password } = await createShare(vault, { target: 'hello.md', role: 'write', autoPassword: true })
   const q = `?password=${encodeURIComponent(password)}`
@@ -490,17 +502,19 @@ test('③ 表单写面（无 JS）：urlencoded POST 编辑往返成功 + 冲突
     const html = await page.text()
     assert.ok(html.includes('<form method="POST"'), '写分享页带表单（无 JS 可用）')
     assert.ok(html.includes('name="expectedMtime"'), '表单携带乐观锁')
+    assert.ok(!html.includes('sk-formtoken1234567890'), '编辑框预填=脱敏版（:564 同口径，哨兵不因编辑面旁路）')
+    assert.ok(html.includes('&lt;redacted&gt;'), '预填脱敏占位符可见')
     const mtime = Number(page.headers.get('x-ob-mtime'))
     const posted = await get(`${base}/ob_share/${share.token}${q}`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ op: 'edit', content: '# 表单改', expectedMtime: String(mtime), password }).toString(),
+      body: new URLSearchParams({ op: 'edit', content: '# 表单改 sk-editedtoken12345678', expectedMtime: String(mtime), password }).toString(),
     })
     assert.equal(posted.status, 200)
     const postedHtml = await posted.text()
     assert.ok(!postedHtml.includes('<script'), '结果页零 script')
     assert.ok(postedHtml.includes('已保存') || postedHtml.includes('保存'), '结果页给保存反馈')
-    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 表单改')
+    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 表单改 sk-editedtoken12345678', '保存=全量覆盖（盘上原文；外泄面在响应已脱敏）')
     // 冲突（stale 锁）→ 结果页给冲突重试形态
     const conflict = await get(`${base}/ob_share/${share.token}${q}`, {
       method: 'POST',
@@ -512,7 +526,11 @@ test('③ 表单写面（无 JS）：urlencoded POST 编辑往返成功 + 冲突
     assert.ok(conflictHtml.includes('冲突'), '冲突显式可见（三选数据基础）')
     assert.ok(conflictHtml.includes('name="expectedMtime"'), '冲突页重试带新锁')
     assert.ok(!conflictHtml.includes('<script'))
-    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 表单改', '冲突不落盘')
+    // I-1 翻正：冲突重试表单预填=脱敏版（同页渲染脱敏、表单不得给原文——与 :564 同口径）
+    assert.ok(!conflictHtml.includes('sk-editedtoken12345678'), '冲突重试表单预填哨兵原文零外泄（I-1 负例）')
+    assert.ok(conflictHtml.includes('&lt;redacted&gt;'), '冲突表单预填=脱敏版')
+    assert.match(conflictHtml, /已中和 1 处/, '冲突页计数如实（预填内容中和 1 处）')
+    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 表单改 sk-editedtoken12345678', '冲突不落盘')
   })
 })
 
@@ -581,6 +599,66 @@ test('④ 分享内容过脱敏哨兵：sk-/PEM/ghp_/Bearer 中和+计数（rend
     const rawText = await raw.text()
     assert.ok(!rawText.includes('sk-abcdef1234567890'), '原始下载零哨兵残留')
     assert.equal(raw.headers.get('x-ob-redact-count'), '1', '下载面计数头')
+  })
+})
+
+// ── ④/C-1 diffUndo 写响应零哨兵原文外泄（fix r1：C-1/I-1 负例三面清扫）────────
+test('④/C-1 diffUndo 写响应哨兵原文零外泄：成功形/冲突形/表单冲突页=脱敏版往返+计数如实（Ruling 6 不回退）', async () => {
+  const PEM = ['-----BEGIN PRIVATE KEY-----', 'MIIEvQIBADANBgkqhkiG9w0BAQEF', '-----END PRIVATE KEY-----'].join('\n')
+  const secretNote = ['# 笔记', '', 'key1 sk-abcdef1234567890 end', '', PEM, '', 'token ghp_abcdef1234567890 end', '', 'auth Bearer abcdef1234567890 end'].join('\n')
+  // 脱敏版字面双锁（4 处中和的期望形，非 redact() 自证）
+  const SECRET_REDACTED = ['# 笔记', '', 'key1 <redacted> end', '', '<redacted>', '', 'token <redacted> end', '', 'auth <redacted> end'].join('\n')
+  const rawNeedles = ['sk-abcdef1234567890', 'ghp_abcdef1234567890', 'Bearer abcdef1234567890', 'BEGIN PRIVATE KEY', 'MIIEvQIBADANBgkqhkiG9w0BAQEF', 'sk-newsecret1234567890', 'sk-incsecret1234567890']
+  const vault = makeVault('redact-write', { 'hello.md': secretNote })
+  const config = makeConfig(vault)
+  const { share, password } = await createShare(vault, { target: 'hello.md', role: 'write', autoPassword: true })
+  const q = `?password=${encodeURIComponent(password)}`
+  await withServer(config, async (base) => {
+    const url = `${base}/ob_share/${share.token}${q}`
+    const page = await get(url)
+    const mtime = Number(page.headers.get('x-ob-mtime'))
+    // 冲突形（stale 锁先行——盘上仍为哨兵原文）：before=盘上脱敏版、incoming=本次脱敏版
+    const conflict = await get(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ op: 'edit', content: '竞争 sk-incsecret1234567890', expectedMtime: 1 }),
+    })
+    assert.equal(conflict.status, 200)
+    const conflictText = await conflict.text()
+    const conflictBody = JSON.parse(conflictText)
+    assert.equal(conflictBody.data.conflict, true)
+    assert.equal(conflictBody.data.diffUndo.before.content, SECRET_REDACTED, '冲突 before=盘上内容脱敏版（字面双锁）')
+    assert.equal(conflictBody.data.diffUndo.incoming.content, '竞争 <redacted>', '冲突 incoming=本次尝试脱敏版')
+    assert.equal(conflictBody.data.diffUndo.before.redactCount, 4, '计数如实（before 中和 4 处）')
+    assert.equal(conflictBody.data.diffUndo.incoming.redactCount, 1, '计数如实（incoming 中和 1 处）')
+    assert.equal(conflict.headers.get('x-ob-redact-count'), '5', '写响应计数头如实（4+1，x-ob-redact-count 等价通道）')
+    for (const raw of rawNeedles) assert.ok(!conflictText.includes(raw), `冲突形零外泄：${raw}`)
+    // 表单冲突形（I-1）：重试表单预填=盘上脱敏版 + 计数可见
+    const form = await get(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ op: 'edit', content: '竞争表单', expectedMtime: '1', password }).toString(),
+    })
+    assert.equal(form.status, 200)
+    const formHtml = await form.text()
+    for (const raw of rawNeedles) assert.ok(!formHtml.includes(raw), `表单冲突页零外泄：${raw}`)
+    assert.ok(formHtml.includes('&lt;redacted&gt;'), '冲突表单预填=脱敏版（I-1 同 :564 口径）')
+    assert.match(formHtml, /已中和 4 处/, '冲突页计数如实（预填内容中和 4 处）')
+    // 成功形：正常保存一次 → before/after 全脱敏版（undo 恢复脱敏版与 C5 自洽）
+    const saved = await get(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ op: 'edit', content: '# 覆盖 sk-newsecret1234567890', expectedMtime: mtime }),
+    })
+    assert.equal(saved.status, 200)
+    const savedText = await saved.text()
+    const savedBody = JSON.parse(savedText)
+    assert.equal(savedBody.data.diffUndo.before.content, SECRET_REDACTED, '成功 before=保存前脱敏版')
+    assert.equal(savedBody.data.diffUndo.after.content, '# 覆盖 <redacted>', '成功 after=保存后脱敏版')
+    assert.equal(savedBody.data.diffUndo.before.redactCount, 4, '计数如实')
+    assert.equal(savedBody.data.diffUndo.after.redactCount, 1, '计数如实')
+    assert.equal(saved.headers.get('x-ob-redact-count'), '5', '写响应计数头如实（4+1）')
+    for (const raw of rawNeedles) assert.ok(!savedText.includes(raw), `成功形零外泄：${raw}`)
   })
 })
 

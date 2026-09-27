@@ -17,7 +17,9 @@
 //     （永不静默覆盖 + 双确认 + .trash 可逆 + journal 事务）；范围外/穿越 → 同形 404（穿越防护）。
 //   - IP 口径（C2 钉死）：限流 IP = socket.remoteAddress only；仅显式 server.trustProxy 清单才解析
 //     X-Forwarded-For 最右可信跳（直连方必须是可信代理，否则 XFF 一律忽略）；IPv4-mapped (::ffff:) 归一。
-//   - guest 响应零 vault 路径外泄（path→subPath 映射；diffUndo 快照只含 content/mtime/etag/size）。
+//   - guest 响应零 vault 路径外泄（path→subPath 映射；diffUndo 快照只含 content/mtime/etag/size/redactCount）。
+//   - diffUndo/表单预填一切对外 content 面一律过脱敏哨兵（C-1/I-1 fix r1）：guest 只见脱敏版（Ruling 6
+//     不回退；undo 恢复脱敏版与 C5 自洽）；计数如实——每面 redactCount 随行 + 写响应 x-ob-redact-count 头。
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -111,9 +113,21 @@ function mapThrown(res, err, headOnly) {
   return notFound(res, headOnly) // 内部细节零外泄（C2 ①）
 }
 
-// ── guest 响应脱路径（vault 路径零外泄）───────────────────────────────────────
+// ── guest 响应脱路径（vault 路径零外泄）+ 对外 content 面一律脱敏（C-1/I-1）────
+/** 对外 content 面（diffUndo before/after/incoming）：一律过哨兵 + 计数如实随行 */
+function contentPublic(raw) {
+  const { text, count } = redact(raw) // guest 只见脱敏版（Ruling 6 不回退）
+  return { content: text, redactCount: count }
+}
+
 function snapPublic(s) {
-  return { content: s.content, mtime: s.mtime, etag: s.etag, size: s.size }
+  return { ...contentPublic(s.content), mtime: s.mtime, etag: s.etag, size: s.size }
+}
+
+/** diffUndo 计数如实：本响应 content 面中和总数（x-ob-redact-count 头等价通道） */
+function diffRedactTotal(pub) {
+  return [pub.diffUndo?.before, pub.diffUndo?.after, pub.diffUndo?.incoming]
+    .reduce((n, f) => n + (f?.redactCount ?? 0), 0)
 }
 
 function editResultPublic(subPath, result) {
@@ -121,7 +135,7 @@ function editResultPublic(subPath, result) {
     return {
       conflict: true,
       subPath,
-      diffUndo: { before: snapPublic(result.diffUndo.before), incoming: { content: result.diffUndo.incoming.content } },
+      diffUndo: { before: snapPublic(result.diffUndo.before), incoming: contentPublic(result.diffUndo.incoming.content) },
     }
   }
   return {
@@ -615,12 +629,13 @@ ${passwordField(password)}
       notAllowed(res, headOnly)
       return
     }
-    const respond = (data) => {
+    const respond = (data, extraHeaders = {}) => {
       if (wantsHtml) {
+        // 表单面计数以页内 redactNotice 可见通道如实呈现（同访客页口径），不叠 x-ob-redact-count 头
         sendHtml(res, 200, formResultPage(state, data, body), {}, headOnly)
         return
       }
-      sendJson(res, 200, { data }, {}, headOnly)
+      sendJson(res, 200, { data }, extraHeaders, headOnly)
     }
 
     try {
@@ -637,7 +652,8 @@ ${passwordField(password)}
         if (body.expectedMtime !== undefined) lock.expectedMtime = Number(body.expectedMtime)
         if (body.etag !== undefined) lock.etag = String(body.etag)
         const result = await saveNote(root, resolved.path, body.content, lock) // 无锁不落盘（抛 bad_request→400）
-        respond(editResultPublic(subRaw, result))
+        const pub = editResultPublic(subRaw, result)
+        respond(pub, { 'x-ob-redact-count': String(diffRedactTotal(pub)) }) // diffUndo 计数如实（等价通道）
         return
       }
       if (op === 'create') {
@@ -728,12 +744,17 @@ ${passwordField(password)}
     const back = `${FACE_PREFIX}${encodeURIComponent(state.share.token)}${subRaw ? `/${subRaw.split('/').filter(Boolean).map(encodeURIComponent).join('/')}` : ''}${password ? `?password=${encodeURIComponent(password)}` : ''}`
     if (data.conflict === true) {
       let retry = ''
+      let retryNotice = ''
       try {
         const fresh = readNote(root, resolved.path)
-        retry = editForm({ content: fresh.content, mtime: fresh.mtime, password })
+        // I-1：冲突表单预填同过哨兵（同页渲染脱敏、表单不得给原文——与访客页 :564 同口径）；计数如实可见
+        const { text: freshSafe, count: freshCount } = redact(fresh.content)
+        retry = editForm({ content: freshSafe, mtime: fresh.mtime, password })
+        retryNotice = redactNotice(freshCount)
       } catch { /* 读不到就不给重试形态（结果页本身已说明冲突） */ }
       return shell('保存冲突', `<header><h1>保存冲突</h1></header>
-<p>冲突：内容已被他人修改，本次未落盘。以下为盘上最新内容，请复核后重试（OW-INV-3 冲突显式三选的数据基础：盘上内容/本次内容都在）。</p>
+<p>冲突：内容已被他人修改，本次未落盘。以下为盘上最新内容（脱敏后），请复核后重试（OW-INV-3 冲突显式三选的数据基础：盘上内容/本次内容都在）。</p>
+${retryNotice}
 ${retry}
 <p><a href="${escapeHtml(back)}">返回</a></p>`)
     }
