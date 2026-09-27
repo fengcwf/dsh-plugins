@@ -160,12 +160,14 @@ export function createRateLimiter({ limit = RATE_LIMIT_PER_MINUTE, windowMs = RA
 }
 
 // ── 同形响应（OW-INV-2b：不泄露存在性）────────────────────────────────────
-function accessDenied() {
+// export（T9）：guest HTTP 面同形 404/429 响应体单一来源——share-server 构造响应必须复用此二形，
+// 与模型层逐字节同形（test/share-server.test.mjs 字面双锁防漂移）。
+export function accessDenied() {
   // 全失败形态（校验失败/过期/撤销/一次性已消耗/不存在/坏 token 形/配置禁用）共此一形：
   // 固定四键、常量消息、冻结——任何差异都是存在性泄露
   return Object.freeze({ ok: false, status: 404, code: 'not_found', message: '分享不存在或已失效' })
 }
-function rateLimited() {
+export function rateLimited() {
   // 限流响应=429 统一形：判在查表前、键只看 IP——存在/不存在 token 得到逐字节同响应
   return Object.freeze({ ok: false, status: 429, code: 'rate_limited', message: '请求过于频繁，请稍后重试' })
 }

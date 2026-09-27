@@ -5,6 +5,7 @@
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import { registerWebRoutes } from './web-routes.js'
+import { createShareServer } from './share-server.js'
 
 // /ob/ UI 静态构建物默认位（web/dist 随包分发，见 web/README.md）
 const DEFAULT_DIST_DIR = fileURLToPath(new URL('../web/dist', import.meta.url))
@@ -38,8 +39,13 @@ export const Config = z.object({
     pageSize: z.number().int().min(1).default(50),
   }).prefault({}),
   // 分享服务（T9 接）：独立 HTTP 入口（server.sharePort），生命周期独立、可单独关停（OW-INV-10）
+  // T9 扩展（load.test 契约锁同步，Ruling 见 task-9-report）：shareHost=绑定面（分享面=唯一公开放行
+  // 面，默认全接口；要收口 loopback 反代场景显式配 127.0.0.1）；trustProxy=显式可信代理清单（C2 IP
+  // 口径：缺省空=一切 XFF 忽略、限流键=socket.remoteAddress only）。
   server: z.object({
     sharePort: z.number().int().min(1).max(65535).default(3500),
+    shareHost: z.string().default('0.0.0.0'),
+    trustProxy: z.array(z.string()).default([]),
   }).prefault({}),
 }).prefault({}) // 顶层同样容忍 undefined（热改路径上 rawConfig 可缺省 → 全默认；非法类型仍拒）
 
@@ -92,6 +98,24 @@ export function apply(ctx, rawConfig) {
     }
     const dispose = registerWebRoutes(ctx, getConfig, { distDir: DEFAULT_DIST_DIR })
     if (typeof ctx.effect === 'function') ctx.effect(dispose)
+
+    // ── T9 接线：分享服务独立入口（OW-INV-10：独立 listener、生命周期独立可单独关停）────────
+    // 放行面恰 `/ob_share/<token>` 一处（OW-INV-2）；share.enabled=false → 面整体关（不绑定/自关）。
+    // 缺 ctx.effect 收敛缝 → 不开公开面（生命周期不可控 fail-closed）+ 留痕（INV-15 禁静默）。
+    if (typeof ctx.effect === 'function') {
+      const initial = parsed.success ? parsed.data : Config.parse({})
+      const shareServer = createShareServer({
+        getConfig,
+        port: initial.server.sharePort,
+        host: initial.server.shareHost,
+      })
+      ctx.effect(() => shareServer.close())
+      shareServer.start().catch((err) => {
+        warn(ctx, `[obsidian-web] 分享服务启动失败（server.sharePort=${initial.server.sharePort}）：${err?.message ?? err}`)
+      })
+    } else {
+      warn(ctx, '[obsidian-web] 缺 ctx.effect 收敛缝：分享服务未启动（公开面生命周期不可控，fail-closed）')
+    }
   }
 }
 

@@ -162,6 +162,46 @@ export async function saveNote(root, relPath, content, options = {}) {
   }, { waitMs: SAVE_LOCK_WAIT_MS })
 }
 
+// ── createNote：新建写侧（T9 文件夹分享（写）「新建」原语；OW-INV-5 永不静默覆盖在创建面）────────
+// 创建语义=独占创建（乐观条件=「目标不存在」，锁内 lstat 复核——OW-INV-3「无乐观锁不落盘」的创建面
+// 口径）；目标已存在一律域结果拒（文件/目录同拒），绝不覆盖既有内容。ARC-4 fs-safe 收尾同 saveNote
+// （原子写 + 文件 fsync + 目录 fsync）。
+/**
+ * 新建文件（目录内新建——OW-INV-2 文件夹分享（写）四操作之一）。
+ * @returns {Promise<
+ *   | {ok: true, path, mtime, etag, size}
+ *   | {ok: false, reason: 'target-exists' | 'parent-missing'}
+ * >}
+ *   域结果一律对象返回（不抛错）；仅形参/词法围栏非法 throw bad_request；IO 异常 throw io_error。
+ */
+export async function createNote(root, relPath, content = '') {
+  if (content === undefined) content = ''
+  if (typeof content !== 'string') throw fail('bad_request', 'content 必须是字符串')
+  const abs = resolveInRoot(root, relPath) // 词法围栏（单一来源）
+  try {
+    return await withFileLock(abs, async () => {
+      const existing = await fs.promises.lstat(abs).catch(() => null)
+      if (existing !== null) return { ok: false, reason: 'target-exists' } // 文件/目录同拒（永不静默覆盖）
+      await writeFileAtomic(abs, content, { mode: 0o644 })
+      fsyncPath(abs) // ARC-4：fsync 文件
+      fsyncPath(path.dirname(abs), { dir: true }) // ARC-4：目录 fsync
+      const stat = statOrThrow(abs, relPath)
+      return {
+        ok: true,
+        path: relPath,
+        mtime: stat.mtimeMs,
+        etag: `${Buffer.byteLength(content, 'utf8')}-${stat.mtimeMs}`,
+        size: Buffer.byteLength(content, 'utf8'),
+      }
+    }, { waitMs: SAVE_LOCK_WAIT_MS })
+  } catch (err) {
+    // 父目录缺失/父非目录：域结果（含取锁/写入两处 ENOENT——锁文件与目标同目录，同判）
+    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return { ok: false, reason: 'parent-missing' }
+    if (err.code === 'bad_request' || err.code === 'io_error') throw err
+    throw fail('io_error', `创建失败：${err.message}`)
+  }
+}
+
 // ── scanBacklinks：反链扫描（占位级全量扫，T11 索引三保险归位后换索引读）──────────────────────
 // 解析语义：wikilink [[t|alias]]/[[t#head]] 剥别名锚点 + basename 匹配；md 相对链接按源文件目录解析；
 //          同行多链只记一条（text=源行原文）；外链/纯锚点不计；目标不自指。

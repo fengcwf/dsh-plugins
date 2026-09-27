@@ -31,10 +31,14 @@ test('Config 全键默认值与契约精确一致（delta-specs §2）', async (
     vaultRoot: '/mnt/unraid_data/Obsidian',
     share: { enabled: true, defaultTtlDays: 7, requirePasswordForWrite: true },
     ui: { pageSize: 50 },
-    server: { sharePort: 3500 },
+    // T9 规格锁扩展（Ruling 见 task-9-report：server 组随分享服务接线扩 shareHost/trustProxy，
+    // 与 T1 server.sharePort 同款扩展先例；trustProxy 缺省空=C2 IP 口径 XFF 一律忽略）
+    server: { sharePort: 3500, shareHost: '0.0.0.0', trustProxy: [] },
   }
   assert.deepEqual(Config.parse({}), expected)
   assert.deepEqual(Config.parse(undefined), expected, '顶层 .prefault 容忍 undefined → 全默认（T1 教训）')
+  assert.deepEqual(Config.parse({}).server.trustProxy, [], 'trustProxy 缺省空数组（XFF 忽略口径）')
+  assert.notEqual(Config.parse({}).server.trustProxy, Config.parse({}).server.trustProxy, '数组默认值不得共享引用')
 })
 
 test('Config 部分覆盖只改触达键（热改语义）', async () => {
