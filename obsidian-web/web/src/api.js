@@ -80,3 +80,36 @@ export async function fetchDownload(path, origin = '') {
     contentType,
   }
 }
+
+// ── 分享管理（T10 / OW-US-10）+ 设置（OW-US-9）────────────────────────────────
+// 红线「禁止半路拼分享 URL」：前端零拼接——分享链接一律取服务端下发 data.share.links
+//（{path, internal, external}，内外网地址都显示），本文件与组件不含任何分享 URL 路径段拼接。
+export function fetchShares() {
+  return requestJson('/ob/api/shares')
+}
+
+export function postShareCreate(payload) {
+  return postJson('/ob/api/shares/create', payload)
+}
+
+export function postShareRevoke(token) {
+  return postJson('/ob/api/shares/revoke', { token })
+}
+
+// spec={password|null, autoPassword?}（改密三态；写权限清密码=服务端拒，OW-INV-1）
+export function postSharePassword(token, spec) {
+  return postJson('/ob/api/shares/password', { token, ...spec })
+}
+
+// payload={role, password?|autoPassword?}（升写强制密码——UI buildRolePayload + 服务端双保险）
+export function postShareRole(token, payload) {
+  return postJson('/ob/api/shares/role', { token, ...payload })
+}
+
+export function fetchShareSettings() {
+  return requestJson('/ob/api/share-settings')
+}
+
+export function postShareSettings(patch) {
+  return postJson('/ob/api/share-settings', patch)
+}

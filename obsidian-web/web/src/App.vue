@@ -19,9 +19,12 @@ import ConflictDialog from './components/ConflictDialog.vue'
 import DeleteConfirmDialog from './components/DeleteConfirmDialog.vue'
 import SearchPanel from './components/SearchPanel.vue'
 import BacklinksPanel from './components/BacklinksPanel.vue'
+import SharePanel from './components/SharePanel.vue'
+import SettingsPanel from './components/SettingsPanel.vue'
 import TocPanel from './components/TocPanel.vue'
 
-const PANELS = { read: ReadingPane, search: SearchPanel, backlinks: BacklinksPanel }
+// T10（OW-US-9/10）：分享管理 + 设置面板同页一格（OW-US-14），activePanel 随 prop 下发供面板激活即刷新
+const PANELS = { read: ReadingPane, search: SearchPanel, backlinks: BacklinksPanel, share: SharePanel, settings: SettingsPanel }
 
 const nodes = ref([])
 const state = ref({ selected: null, expanded: [] })
@@ -264,6 +267,7 @@ onBeforeUnmount(() => {
         :rendered="file?.rendered"
         :backlinks="backlinks"
         :busy="busy"
+        :active-panel="activePanel"
         @navigate="onNavigate"
       />
     </main>

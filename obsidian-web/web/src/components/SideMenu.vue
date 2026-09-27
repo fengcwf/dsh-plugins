@@ -8,6 +8,8 @@ const items = [
   { key: 'edit', label: '编辑' },
   { key: 'search', label: '搜索' },
   { key: 'backlinks', label: '反链' },
+  { key: 'share', label: '分享' },
+  { key: 'settings', label: '设置' },
 ]
 </script>
 

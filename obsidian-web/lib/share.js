@@ -28,6 +28,10 @@ import { resolveInRoot, writeAtomicFsync } from './vault-ops.js'
 
 // ── 显式常量（改值必须过 test/share*.test.mjs 锁形测试）────────────────────
 export const SHARE_DIR = '.ob-share'
+// 分享 URL 前缀（OW-US-9 根治 URL 拼接坑）：分享 URL 路径段的唯一字面来源——guest 面
+// （share-server FACE_PREFIX）与链接生成（share-links.buildShareLinks）同引此常量；前端零拼接
+// （红线「禁止半路拼分享 URL」，test/share-links.test.mjs 字面量恰一处 + web/src 零命中双锁）。
+export const SHARE_URL_PREFIX = '/ob_share/'
 export const TOKEN_BYTES = 32 // 256bit（≥128bit 下限，OW-INV-2b「不可枚举」）
 export const ROLES = Object.freeze(['read', 'write'])
 export const OPERATIONS = Object.freeze(['read', 'edit', 'create', 'delete', 'rename'])
@@ -43,7 +47,7 @@ export const SENSITIVE_GLOBS = Object.freeze([
 ])
 const SENSITIVE_RE = SENSITIVE_GLOBS.map((glob) => new RegExp(
   `^${glob.split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 'i'))
-const TOKEN_RE = /^[A-Za-z0-9_-]{22,64}$/ // base64url 形（32B→43 字符）；零 '.'/'/'/'\' = 文件名/围栏安全
+export const TOKEN_RE = /^[A-Za-z0-9_-]{22,64}$/ // base64url 形（32B→43 字符）；零 '.'/'/'/'\' = 文件名/围栏安全
 const INTERNAL_SEGMENTS = new Set(['.trash', SHARE_DIR]) // 恢复材料/自身存储永不可分享
 /** CIFS/SMB 别名归一（M-5 同款，单一来源）：剥前导空格+尾随 [. ]；前导 '.' 绝不剥（.env 保形） */
 function normalizeSegAlias(seg) {
@@ -196,7 +200,7 @@ function readEntrySync(file, token) {
 async function persistEntry(file, entry) {
   await writeAtomicFsync(file, JSON.stringify(entry, null, 2), 0o600)
 }
-async function ensureShareDir(root) {
+export async function ensureShareDir(root) {
   const dir = shareDirAbs(root)
   await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 })
   try {

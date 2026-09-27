@@ -9,6 +9,11 @@
 //   exact /ob/api/delete    POST → {data:删除结果}      删除可逆（T6/OW-US-6/OW-INV-5：双确认+.trash）
 //   exact /ob/api/download  GET  → 文本流|zip 流       下载导出（T7/OW-US-7、OW-INV-9：限额超限拒+提示）
 //   exact /ob/api/render    POST → {data:{html,toc}}   live 渲染（T4 分屏预览；ARC-1 前端零 markdown 解析）
+//   exact /ob/api/shares    GET  → {data:{shares,total,settings,effectiveLanHost,sharePort}, total}
+//                                        分享管理列表（T10/OW-US-10：计数/状态 + links 内外网双地址）
+//   exact /ob/api/shares/create|revoke|password|role   POST → 分享管理操作（T10/OW-US-10）
+//   exact /ob/api/share-settings GET|POST → {data:{externalBaseUrl,lanHost,effectiveLanHost,sharePort}}
+//                                        外网域名设置（T10/OW-US-9：链接生成内外网都显示，服务端单一来源）
 //   exact /ob               GET  → 302 /ob/                            尾斜杠规整
 //   prefix /ob              GET  → web/dist 静态构建物（index.html + assets）
 // API 形（沿历史 obsidian-workbench 惯例）：成功 {data, total?}；失败 {error:{code,message}}。
@@ -28,6 +33,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { deletePath, listTree, readNote, renameNote, scanBacklinks, saveNote } from './vault-ops.js'
+import {
+  createShare, listShares, revokeShare, updateSharePassword, updateShareRole,
+} from './share.js'
+import {
+  buildShareLinks, detectLanHost, readShareSettings, writeShareSettings, DEFAULT_SHARE_PORT,
+} from './share-links.js'
 import { planExport, MAX_FILES, MAX_BYTES, MAX_ENTRIES } from './export.js'
 import { writeZipTo } from './zip.js'
 import { renderMarkdown } from './render.js'
@@ -61,7 +72,9 @@ function sendJson(res, status, body) {
 }
 
 function errorStatus(code) {
-  if (code === 'bad_request') return 400
+  // 管理面可解释错误（C2① 与 guest 404 冻结形分流）：sensitive_name/password_required/share_disabled
+  // 细节只走 /ob/ 管理面（400 带码带消息）；guest 面（/ob_share/）一切失败仍是同形 404（share-server 锁形）
+  if (code === 'bad_request' || code === 'sensitive_name' || code === 'password_required' || code === 'share_disabled') return 400
   if (code === 'not_found') return 404
   return 500
 }
@@ -404,6 +417,127 @@ function staticHandler(distDir) {
   }
 }
 
+// ── 分享管理面（T10 / OW-US-10 + OW-US-9）──────────────────────────────────────
+// 列表/查看计数/撤销/密码与权限调整 + 外网域名设置 + 链接下发。鉴权=authGate（requestRejection 缝，
+// T1 惯例/OW-INV-8）；管理面错误=可解释（C2① 与 guest 404 冻结形分流：sensitive_name/password_required
+// 细节只走本面）。链接=服务端单一来源下发（share-links.buildShareLinks 唯一拼接点，前端零拼接——
+// 红线「禁止半路拼分享 URL」）。计数口径：管理页展示计数=每分享条目查看计数 accessCount（checkAccess
+// 成功次数）；对外脱敏计数恒=痕迹计数（<redacted> 出现处数，T9 分野）——本面无脱敏计数字段，有则照此。
+function shareManageContext(getConfig) {
+  const config = getConfig()
+  const settings = readShareSettings(config.vaultRoot)
+  return { config, root: config.vaultRoot, settings, lanHost: settings.lanHost ?? detectLanHost() }
+}
+
+function shareWithLinks(ctx, share) {
+  return { ...share, links: buildShareLinks({ token: share.token, config: ctx.config, settings: ctx.settings, lanHost: ctx.lanHost }) }
+}
+
+function sharePortOf(ctx) {
+  return ctx.config?.server?.sharePort ?? DEFAULT_SHARE_PORT
+}
+
+// GET /ob/api/shares → {data:{shares:[{...管理面形, links:{path,internal,external}}], total, settings,
+//   effectiveLanHost, sharePort}, total}（内外网地址都显示：internal=内网 host:sharePort、
+//   external=设置页配置的外网域名（未配置=null 显式占位）；密码 hash 零外泄=hasPassword 布尔）
+function sharesListHandler(getConfig) {
+  return async (req, res) => {
+    try {
+      const ctx = shareManageContext(getConfig)
+      const { shares, total } = await listShares(ctx.root)
+      sendJson(res, 200, {
+        data: {
+          shares: shares.map((s) => shareWithLinks(ctx, s)),
+          total,
+          settings: { externalBaseUrl: ctx.settings.externalBaseUrl, lanHost: ctx.settings.lanHost },
+          effectiveLanHost: ctx.lanHost,
+          sharePort: sharePortOf(ctx),
+        },
+        total,
+      })
+    } catch (err) {
+      failRequest(res, err)
+    }
+  }
+}
+
+// POST /ob/api/shares/create → {data:{share, password}}（autoPassword 明文恰一次返回，否则 null）
+function sharesCreateHandler(getConfig) {
+  return async (req, res) => {
+    try {
+      const ctx = shareManageContext(getConfig)
+      const body = await readJsonBody(req)
+      const result = await createShare(ctx.root, body, { config: ctx.config })
+      sendJson(res, 200, { data: { share: shareWithLinks(ctx, result.share), password: result.password } })
+    } catch (err) {
+      failRequest(res, err)
+    }
+  }
+}
+
+// POST /ob/api/shares/revoke → {data:{share}}（撤销即时失效=guest 面同形 404，OW-INV-2b）
+function sharesRevokeHandler(getConfig) {
+  return async (req, res) => {
+    try {
+      const ctx = shareManageContext(getConfig)
+      const body = await readJsonBody(req)
+      const result = await revokeShare(ctx.root, body?.token)
+      sendJson(res, 200, { data: { share: shareWithLinks(ctx, result.share) } })
+    } catch (err) {
+      failRequest(res, err)
+    }
+  }
+}
+
+// POST /ob/api/shares/password → {data:{share, password}}（password=null=清除，仅读角色；写必须保留）
+function sharesPasswordHandler(getConfig) {
+  return async (req, res) => {
+    try {
+      const ctx = shareManageContext(getConfig)
+      const body = await readJsonBody(req)
+      const result = await updateSharePassword(ctx.root, body?.token, { password: body?.password, autoPassword: body?.autoPassword })
+      sendJson(res, 200, { data: { share: shareWithLinks(ctx, result.share), password: result.password } })
+    } catch (err) {
+      failRequest(res, err)
+    }
+  }
+}
+
+// POST /ob/api/shares/role → {data:{share, password}}（升 write 强制密码=OW-INV-1 不变量 HTTP 面）
+function sharesRoleHandler(getConfig) {
+  return async (req, res) => {
+    try {
+      const ctx = shareManageContext(getConfig)
+      const body = await readJsonBody(req)
+      const result = await updateShareRole(ctx.root, body?.token, body?.role, { password: body?.password, autoPassword: body?.autoPassword })
+      sendJson(res, 200, { data: { share: shareWithLinks(ctx, result.share), password: result.password } })
+    } catch (err) {
+      failRequest(res, err)
+    }
+  }
+}
+
+// GET/POST /ob/api/share-settings → {data:{externalBaseUrl, lanHost, effectiveLanHost, sharePort}}
+// （OW-US-9 设置页：外网域名配置→分享链接生成；POST 补丁合并、归一落盘、非法值 400 零落盘）
+function shareSettingsHandler(getConfig) {
+  return async (req, res) => {
+    try {
+      const ctx = shareManageContext(getConfig)
+      if (req.method === 'POST') {
+        const body = await readJsonBody(req)
+        const saved = await writeShareSettings(ctx.root, { externalBaseUrl: body?.externalBaseUrl, lanHost: body?.lanHost })
+        sendJson(res, 200, {
+          data: { ...saved, effectiveLanHost: saved.lanHost ?? detectLanHost(), sharePort: sharePortOf(ctx) },
+        })
+        return
+      }
+      sendJson(res, 200, { data: { ...ctx.settings, effectiveLanHost: ctx.lanHost, sharePort: sharePortOf(ctx) } })
+    } catch (err) {
+      failRequest(res, err)
+    }
+  }
+}
+
 /**
  * 注册 /ob/ 全部路由，返回 dispose 全量注销。
  * @param ctx 宿主上下文（webServer.register + connection.requestRejection 缝）
@@ -430,6 +564,13 @@ export function registerWebRoutes(ctx, getConfig, { distDir, search }) {
   add('exact', '/ob/api/delete', wrap(deleteHandler(getConfig), ['POST']))
   add('exact', '/ob/api/download', wrap(downloadHandler(ctx, getConfig)))
   add('exact', '/ob/api/render', wrap(renderHandler(), ['POST']))
+  // T10 分享管理面（OW-US-10）+ 设置面（OW-US-9）：鉴权=authGate（T1 惯例）
+  add('exact', '/ob/api/shares', wrap(sharesListHandler(getConfig)))
+  add('exact', '/ob/api/shares/create', wrap(sharesCreateHandler(getConfig), ['POST']))
+  add('exact', '/ob/api/shares/revoke', wrap(sharesRevokeHandler(getConfig), ['POST']))
+  add('exact', '/ob/api/shares/password', wrap(sharesPasswordHandler(getConfig), ['POST']))
+  add('exact', '/ob/api/shares/role', wrap(sharesRoleHandler(getConfig), ['POST']))
+  add('exact', '/ob/api/share-settings', wrap(shareSettingsHandler(getConfig), ['GET', 'POST']))
   add('exact', '/ob', wrap(redirectHandler))
   add('prefix', '/ob', wrap(staticHandler(distDir)))
   return () => {

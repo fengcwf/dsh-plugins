@@ -28,13 +28,15 @@ import fs from 'node:fs'
 import path from 'node:path'
 import {
   checkAccess, createRateLimiter, resolveSharePath, shareAllowsOperation,
-  accessDenied, rateLimited, isSensitiveName,
+  accessDenied, rateLimited, isSensitiveName, SHARE_URL_PREFIX,
 } from './share.js'
 import { saveNote, createNote, deletePath, renameNote, readNote, resolveInRoot } from './vault-ops.js'
 import { renderMarkdown } from './render.js'
 import { redact, REDACTED } from './redact.js'
 
-const FACE_PREFIX = '/ob_share/'
+// 面前缀=分享 URL 前缀常量（share.js SHARE_URL_PREFIX 唯一字面来源，OW-US-9 根治 URL 拼接坑）：
+// 与链接生成（share-links.buildShareLinks）同源，路径段绝不二次定义/半路拼接。
+const FACE_PREFIX = SHARE_URL_PREFIX
 const ALLOWED_METHODS = ['GET', 'HEAD', 'POST']
 const MAX_BODY_BYTES = 5 * 1024 * 1024
 const DEFAULT_SYNC_INTERVAL_MS = 30_000

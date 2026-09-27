@@ -374,3 +374,48 @@ body {
 }
 
 .ob-prose .contains-task-list input { margin-right: 6px; }
+
+/* ── 分享管理 / 设置面板（T10，OW-US-9/10）：布局局部变量 --ow-* 豁免（ARC-5），色彩全走 dsw token ── */
+.ob-share-toolbar {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+
+.ob-share-target {
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  margin-right: 6px;
+  word-break: break-all;
+}
+
+.ob-share-links {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ob-share-link-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+
+.ob-share-link-kind {
+  flex: none;
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  color: var(--dsw-alias-label-secondary, GrayText);
+}
+
+.ob-share-link-url {
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  word-break: break-all;
+  color: var(--dsw-alias-link, LinkText);
+}
+
+.ob-share-once {
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2, ButtonBorder);
+  border-radius: var(--dsw-radius-sm, 4px);
+  background: var(--dsw-alias-bg-layer-1, Canvas);
+}
