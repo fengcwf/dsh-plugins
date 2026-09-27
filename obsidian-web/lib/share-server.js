@@ -33,6 +33,7 @@ import {
 import { saveNote, createNote, deletePath, renameNote, readNote, resolveInRoot, assertOpenedRealInRoot } from './vault-ops.js'
 import { renderMarkdown } from './render.js'
 import { redact, REDACTED } from './redact.js'
+import { shareCss } from './share-theme.js'
 
 // 面前缀=分享 URL 前缀常量（share.js SHARE_URL_PREFIX 唯一字面来源，OW-US-9 根治 URL 拼接坑）：
 // 与链接生成（share-links.buildShareLinks）同源，路径段绝不二次定义/半路拼接。
@@ -175,6 +176,8 @@ function renameResultPublic(subPath, to, result) {
 }
 
 // ── 页面模板（服务端直出；整页零 <script> = 禁前端二次渲染）────────────────────
+// 样式=shareCss()（ARC-5 分享页 token 快照导出：--dsw-* 快照内联，独立可离线零外链——
+// 规则区零色值字面量，主 UI/分享页同 token 名零漂移；锁形 test/share-theme.test.mjs）
 function shell(title, body) {
   return `<!doctype html>
 <html lang="zh-CN">
@@ -184,20 +187,7 @@ function shell(title, body) {
 <meta name="robots" content="noindex, nofollow">
 <title>${escapeHtml(title)}</title>
 <style>
-body{font-family:system-ui,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem;line-height:1.7;color:#222}
-main{overflow-wrap:break-word}
-pre{background:#f6f8fa;padding:.75rem;overflow:auto}
-code{background:#f6f8fa;padding:.1rem .3rem;border-radius:3px}
-table{border-collapse:collapse}
-th,td{border:1px solid #ddd;padding:.35rem .6rem}
-.ob-link-blocked{color:#999;text-decoration:line-through}
-.ob-redact{background:#fff6e0;border-left:4px solid #e0a800;padding:.5rem .75rem}
-form{border:1px solid #ddd;border-radius:6px;padding:.75rem;margin:1rem 0}
-textarea,input{width:100%;box-sizing:border-box;font:inherit}
-button{font:inherit;width:auto;padding:.35rem 1rem;margin:.5rem .5rem 0 0}
-ul.ob-list{list-style:none;padding:0}
-ul.ob-list li{padding:.25rem 0;border-bottom:1px dashed #eee}
-.meta{color:#666}
+${shareCss()}
 </style>
 </head>
 <body>

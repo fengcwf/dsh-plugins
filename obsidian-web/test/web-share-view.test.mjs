@@ -3,6 +3,9 @@
 // ⑤ UI 侧镜像：写权限强制密码（OW-INV-1）在表单载荷层同样强制（auto 兜底），服务端再复核（双保险）。
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   shareStatus,
   statusLabel,
@@ -10,9 +13,18 @@ import {
   linkRows,
   formatTime,
   buildCreatePayload,
-  buildPasswordSpec,
   buildRolePayload,
 } from '../web/src/lib/share-view.js'
+
+function walk(dir) {
+  const out = []
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const abs = path.join(dir, e.name)
+    if (e.isDirectory()) out.push(...walk(abs))
+    else out.push(abs)
+  }
+  return out
+}
 
 const NOW = 1_700_000_000_000
 
@@ -67,15 +79,28 @@ test('⑤ buildCreatePayload：写权限禁无密码（none 自动兜底 autoPas
   assert.deepEqual(custom, { target: 'notes', role: 'write', oneShot: false, password: 'pw123' })
 })
 
-test('buildPasswordSpec/buildRolePayload：改密三态 + 升写无密码拒（null 载荷=UI 阻止提交）', () => {
-  assert.deepEqual(buildPasswordSpec({ passwordMode: 'auto' }), { autoPassword: true })
-  assert.deepEqual(buildPasswordSpec({ passwordMode: 'custom', password: 'pw' }), { password: 'pw' })
-  assert.deepEqual(buildPasswordSpec({ passwordMode: 'clear' }), { password: null })
-  assert.equal(buildPasswordSpec({ passwordMode: 'custom', password: '' }), null, '自定义空密码不出载荷')
-  assert.equal(buildPasswordSpec({ passwordMode: 'none' }), null, '未选模式不出载荷')
+test('改密三态合流 buildRolePayload（T13：密码调整全走 postShareRole 载荷）+ 升写无密码拒', () => {
+  assert.deepEqual(buildRolePayload({ role: 'read', passwordMode: 'auto' }), { role: 'read', autoPassword: true })
+  assert.deepEqual(buildRolePayload({ role: 'read', passwordMode: 'custom', password: 'pw' }), { role: 'read', password: 'pw' })
+  assert.deepEqual(buildRolePayload({ role: 'read', passwordMode: 'clear', hasPassword: true }), { role: 'read', password: null }, '清除=载荷合流（服务端 updateShareRole 同调清）')
+  assert.equal(buildRolePayload({ role: 'read', passwordMode: 'custom', password: '' }), null, '自定义空密码不出载荷')
+  assert.equal(buildRolePayload({ role: 'bogus' }), null, '非法角色不出载荷')
+  assert.deepEqual(buildRolePayload({ role: 'read', passwordMode: 'none' }), { role: 'read' }, '不修改密码=role-only 载荷')
+  assert.equal(buildRolePayload({ role: 'write', passwordMode: 'clear', hasPassword: true }), null, '写不可清密码（OW-INV-1）')
   const up = buildRolePayload({ role: 'write', passwordMode: 'auto' })
   assert.deepEqual(up, { role: 'write', autoPassword: true })
   assert.equal(buildRolePayload({ role: 'write', passwordMode: 'none' }), null, '升写无密码=不出载荷（按钮禁用双保险）')
-  assert.deepEqual(buildRolePayload({ role: 'read', passwordMode: 'none' }), { role: 'read' }, '降读无需密码')
-  assert.deepEqual(buildRolePayload({ role: 'read', passwordMode: 'custom', password: 'pw' }), { role: 'read', password: 'pw' })
+})
+
+test('死导出清理（T13 处置）：postSharePassword/buildPasswordSpec 全树零残留（密码调整合流 postShareRole）', () => {
+  const roots = [fileURLToPath(new URL('../web/src', import.meta.url)), fileURLToPath(new URL('../lib', import.meta.url))]
+  const hits = []
+  for (const root of roots) {
+    for (const abs of walk(root)) {
+      if (!/\.(js|vue)$/.test(abs)) continue
+      const raw = fs.readFileSync(abs, 'utf8')
+      if (/\bpostSharePassword\b|\bbuildPasswordSpec\b/.test(raw)) hits.push(path.relative(process.cwd(), abs))
+    }
+  }
+  assert.deepEqual(hits, [], `死导出残留：${hits.join(', ')}`)
 })

@@ -14,7 +14,7 @@
   --el-bg-color: var(--dsw-alias-bg-layer-1, Canvas);
   --el-fill-color-blank: var(--dsw-alias-bg-layer-1, Canvas);
   --el-border-color: var(--dsw-alias-border-l2, ButtonBorder);
-  --el-border-radius-base: var(--dsw-radius-sm, 4px);
+  --el-border-radius-base: var(--dsw-radius-sm, 8px);
   --el-font-family: var(--dsw-font-family, sans-serif);
 }
 
@@ -27,7 +27,8 @@ html, body, #app {
 
 body {
   font-family: var(--dsw-font-family, sans-serif);
-  font-size: var(--dsw-font-base-16-font-size, 16px);
+  /* 阅读字号轴（TECH §3.9.2）：正文/标题派生 --dsh-content-font-size（用户设置即跟随）；UI chrome 固定档 */
+  font-size: var(--dsh-content-font-size, 16px);
   line-height: 1.6;
   color: var(--dsw-alias-label-primary, CanvasText);
   background: var(--dsw-alias-bg-base, Canvas);
@@ -59,7 +60,8 @@ body {
   white-space: nowrap;
 }
 
-/* 删除入口（T6）+ 下载入口（T7）：悬停/键盘聚焦显露，点击不触发选中（@click.stop） */
+/* 改名入口（T13）+ 删除入口（T6）+ 下载入口（T7）：悬停/键盘聚焦显露，点击不触发选中（@click.stop） */
+.ob-tree-rename,
 .ob-tree-del,
 .ob-tree-dl {
   margin-left: 6px;
@@ -74,6 +76,8 @@ body {
   opacity: 0;
 }
 
+.ob-tree-node:hover .ob-tree-rename,
+.ob-tree-rename:focus-visible,
 .ob-tree-node:hover .ob-tree-del,
 .ob-tree-del:focus-visible,
 .ob-tree-node:hover .ob-tree-dl,
@@ -165,6 +169,12 @@ body {
   max-width: 46rem;
   margin: 0 auto;
   padding: 24px 32px 64px;
+  font-size: var(--dsh-content-font-size, 16px); /* 阅读档 ×1（TECH §3.10.4） */
+}
+
+/* 字阶三档派生内容字号轴（TECH §3.10.4 定稿：display ×1.6 / 阅读 ×1 / caption ×0.75） */
+.ob-prose h1, .ob-prose h2 {
+  font-size: calc(var(--dsh-content-font-size, 16px) * 1.6);
 }
 
 .ob-prose h1, .ob-prose h2, .ob-prose h3,
@@ -182,7 +192,7 @@ body {
 }
 
 .ob-prose code {
-  font-family: var(--dsw-font-markdown-code-block, ui-monospace, monospace);
+  font-family: var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace);
   background: var(--dsw-alias-markdown-inline-code, ButtonFace);
   border-radius: var(--dsw-radius-xs, 2px);
   padding: 0 4px;
@@ -223,8 +233,8 @@ body {
 }
 
 .ob-snippet mark {
-  background: var(--dsw-alias-state-warning-bg, Mark);
-  color: var(--dsw-alias-state-warning-text, MarkText);
+  background: var(--dsw-alias-state-warn-tertiary, Mark);
+  color: var(--dsw-alias-state-warn-label, MarkText);
 }
 
 /* ── 分屏编辑（T4/OW-US-3）：源码+预览联动+工具栏保存；布局局部变量 --ow-* 豁免（ARC-5 管辖面裁定）── */
@@ -268,7 +278,7 @@ body {
   resize: none;
   border: 0;
   padding: 16px;
-  font-family: var(--dsw-font-markdown-code-block, ui-monospace, monospace);
+  font-family: var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace);
   font-size: var(--dsw-font-xs-13-font-size, 13px);
   line-height: 1.6;
   color: var(--dsw-alias-label-primary, CanvasText);
@@ -303,7 +313,7 @@ body {
 
 .ob-delete-error {
   margin: 8px 0 0;
-  color: var(--dsw-alias-text-danger, #c45656);
+  color: var(--dsw-alias-state-error-primary, CanvasText);
 }
 
 .ob-conflict-actions {
@@ -330,7 +340,7 @@ body {
   margin: 0;
   padding: 0;
   list-style: none;
-  font-family: var(--dsw-font-markdown-code-block, ui-monospace, monospace);
+  font-family: var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace);
   font-size: var(--dsw-font-xs-13-font-size, 13px);
 }
 
@@ -341,12 +351,12 @@ body {
 
 .ob-diff-del {
   color: var(--dsw-alias-state-error-primary, CanvasText);
-  background: var(--dsw-alias-state-error-bg, Canvas);
+  background: var(--dsw-alias-file-diff-deleted-bg, Canvas);
 }
 
 .ob-diff-add {
   color: var(--dsw-alias-state-success-primary, CanvasText);
-  background: var(--dsw-alias-state-success-bg, Canvas);
+  background: var(--dsw-alias-file-diff-added-bg, Canvas);
 }
 
 .ob-diff-same { color: var(--dsw-alias-label-secondary, GrayText); }
@@ -365,7 +375,7 @@ body {
 
 .ob-prose .footnotes {
   margin-top: 2em;
-  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  font-size: calc(var(--dsh-content-font-size, 16px) * 0.75); /* caption 档 ×0.75 */
 }
 
 .ob-prose .contains-task-list {
@@ -418,4 +428,108 @@ body {
   border: 1px solid var(--dsw-alias-border-l2, ButtonBorder);
   border-radius: var(--dsw-radius-sm, 4px);
   background: var(--dsw-alias-bg-layer-1, Canvas);
+}
+
+/* ── 改名/移动弹层（T13 rename UI 入口：树操作→/ob/api/rename；冲突/歧义留痕提示展示）── */
+.ob-rename-lead { margin: 0 0 8px; }
+
+.ob-rename-path {
+  font-family: var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace);
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  word-break: break-all;
+}
+
+.ob-rename-warnings {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--dsw-alias-state-warn-primary, ButtonBorder);
+  background: var(--dsw-alias-state-warn-tertiary, Canvas);
+  color: var(--dsw-alias-state-warn-label, CanvasText);
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  list-style: none;
+}
+
+.ob-rename-error {
+  margin: 8px 0 0;
+  color: var(--dsw-alias-state-error-primary, CanvasText);
+}
+
+/* ── 折叠抽屉开关（窄屏退化用；宽屏隐藏——TECH §3.9.4/§3.10.3 逐区块显式）── */
+.ob-drawer-toggle {
+  display: none;
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  border-radius: var(--dsw-radius-xs, 4px);
+  background: transparent;
+  color: inherit;
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ob-toc .ob-drawer-toggle { width: auto; }
+
+/* ── 响应式退化（窄屏 ≤960px）：逐区块显式——目录树→抽屉、TOC→抽屉、分屏→单栏、工具栏→compact ── */
+@media (max-width: 960px) {
+  .ob-shell {
+    grid-template-columns: var(--ow-menu-width) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .ob-menu { grid-row: 1 / span 2; }
+
+  .ob-tree {
+    grid-column: 2;
+    grid-row: 1;
+    max-height: 44px;
+    overflow: hidden;
+    border-right: 0;
+    border-bottom: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  }
+
+  .ob-tree[data-open='true'] {
+    max-height: 45vh;
+    overflow: auto;
+  }
+
+  .ob-center {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .ob-toc {
+    position: fixed;
+    right: 8px;
+    top: 45vh;
+    z-index: 20;
+    width: auto;
+    max-height: 44px;
+    overflow: hidden;
+    border: 1px solid var(--dsw-alias-border-l2, ButtonBorder);
+    border-radius: var(--dsw-radius-sm, 8px);
+    background: var(--dsw-alias-bg-layer-1, Canvas);
+  }
+
+  .ob-toc[data-open='true'] {
+    width: min(248px, 70vw);
+    max-height: 50vh;
+    overflow: auto;
+  }
+
+  .ob-drawer-toggle { display: block; }
+
+  .ob-editor-split { flex-direction: column; }
+
+  .ob-editor-source {
+    flex: 1 1 auto !important;
+    min-height: 40vh;
+  }
+
+  .ob-editor-divider { display: none; }
+
+  .ob-editor-toolbar {
+    flex-wrap: wrap;
+    overflow: auto;
+  }
 }

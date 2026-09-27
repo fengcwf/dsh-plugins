@@ -473,10 +473,17 @@ export async function updateSharePassword(root, token, spec) {
   })
 }
 
-/** 调权限：升 write 必须已有密码或同调给密码（OW-INV-1）；降 read 保留密码 */
+/** 调权限：升 write 必须已有密码或同调给密码（OW-INV-1）；降 read 保留密码
+ *  T13 载荷合流：密码三态同调承载（password=<口令>=改密 / autoPassword=true=重新生成 /
+ *  password=null=清除，仅非写角色）——管理 UI 密码调整全走本调用（旧改密端点客户端=死导出已摘），
+ *  单锁内 RMW 原子（不做「先调权再改密」两段式=免中窗状态分裂）；写+清=显式拒不冒充。 */
 export async function updateShareRole(root, token, role, options = {}) {
   if (!ROLES.includes(role)) throw fail('bad_request', `role 非法（${ROLES.join('/')}）`)
   return await mutateShare(root, token, async (entry) => {
+    const clearing = options.password === null && options.autoPassword !== true
+    if (role === 'write' && clearing) {
+      throw fail('password_required', '写权限必须保留访问密码（OW-INV-1），不可清除')
+    }
     if (role === 'write' && typeof entry.passwordHash !== 'string') {
       const given = options.password !== undefined && options.password !== null
       if (!given && options.autoPassword !== true) {
@@ -485,6 +492,7 @@ export async function updateShareRole(root, token, role, options = {}) {
     }
     const pw = resolvePasswordSpec(options, { required: false })
     if (pw.passwordHash) entry.passwordHash = pw.passwordHash
+    else if (clearing) delete entry.passwordHash
     entry.role = role
     return { share: toPublic(entry), password: pw.plaintext }
   })

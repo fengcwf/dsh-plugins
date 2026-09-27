@@ -3,6 +3,7 @@
 // 容器/展示分离：保存状态机/防抖全在 web/src/lib/save-client.js（App 编排），本组件只展示+搬运事件。
 // ARC-1：预览 HTML 全出自服务端 /ob/api/render（唯一渲染源），本组件零 markdown 解析。
 // ARC-6：单文件 ≤300 行；重交互面（textarea/预览/分隔条）一律 v-show 不 v-if（禁 v-if 重交互）。
+import { ElButton } from '../element-plus.js'
 import { onMounted, ref, watch } from 'vue'
 import { loadEditState, saveEditState } from '../lib/view-state.js'
 

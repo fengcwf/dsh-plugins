@@ -44,6 +44,8 @@ export function linkRows(links) {
   ]
 }
 
+/** 密码三态载荷片段（auto/custom/clear）——由 buildCreatePayload/buildRolePayload 合流承载，
+ *  不单独出面（T13 处置：密码调整全走 postShareRole 载荷合流，旧改密端点客户端与旧载荷函数=死导出已摘） */
 function passwordSpec(mode, form) {
   if (mode === 'auto') return { autoPassword: true }
   if (mode === 'custom') {
@@ -52,11 +54,6 @@ function passwordSpec(mode, form) {
   }
   if (mode === 'clear') return { password: null }
   return null // none 或非法形
-}
-
-/** 改密载荷复核：三态（auto/custom/clear）——空自定义密码/未选模式不出载荷 */
-export function buildPasswordSpec(form) {
-  return passwordSpec(form?.passwordMode, form)
 }
 
 /** 新建分享载荷复核：目标必填、角色锁定、写禁无密码（none 自动兜底 autoPassword）、ttlDays 整形化 */

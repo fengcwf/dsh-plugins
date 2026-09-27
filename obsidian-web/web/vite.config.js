@@ -12,5 +12,16 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     assetsDir: 'assets',
+    rollupOptions: {
+      output: {
+        // 显式分包边界（T13 分包选型）：element-plus（按需装配后的用到子集）独立 vendor chunk，
+        // 与 app/vue 入口分开——主入口 chunk ≤500KB 目标 + 边界可断言（test/web-bundle.test.mjs）
+        manualChunks(id) {
+          if (id.includes('node_modules/element-plus')) return 'element-plus'
+          if (id.includes('node_modules/vue') || id.includes('node_modules/@vue')) return 'vue'
+          return undefined
+        },
+      },
+    },
   },
 })

@@ -2,6 +2,7 @@
 // ShareLinksCell — 分享链接展示格（OW-US-9：内外网地址都显示）。
 // 红线「禁止半路拼分享 URL」：前端零拼接——只渲染服务端下发 links（path/internal/external），
 // 分享路径段只存在于服务端（test/share-links.test.mjs web/src 全树零命中锁形）。
+import { ElButton } from '../element-plus.js'
 import { ref } from 'vue'
 import { linkRows } from '../lib/share-view.js'
 

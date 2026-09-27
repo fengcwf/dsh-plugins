@@ -3,6 +3,7 @@
 //   ①点删除 ②复述目标相对路径（全等）才解锁「确认删除」；载荷经 buildDeletePayload 复核
 //   （web/src/lib/delete-confirm.js 纯函数锁形，组件零业务逻辑）；服务端再复核一道（缺省拒）。
 // 明示可逆：文案写清「移入 .trash，可取回」——删除=移动不是 rm（OW-INV-5 可逆本义）。
+import { ElButton, ElDialog, ElInput } from '../element-plus.js'
 import { computed, ref, watch } from 'vue'
 import { buildDeletePayload } from '../lib/delete-confirm.js'
 

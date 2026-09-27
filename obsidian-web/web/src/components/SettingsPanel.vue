@@ -4,6 +4,7 @@
 // 的域名——前端零拼接（红线「禁止半路拼分享 URL」）。设置持久化=服务端 .ob-share/settings.json
 //（Ruling 见 task-10-report）；端口恒取 server.sharePort 配置（本页只读展示，防双源漂移）。
 // 同页面板接口统一：App 容器统一传参，未用 props 仅吸收防落 DOM 属性。
+import { ElButton, ElForm, ElFormItem, ElInput } from '../element-plus.js'
 import { onMounted, ref, watch } from 'vue'
 import { fetchShareSettings, postShareSettings } from '../api.js'
 import VaultProfilesPanel from './VaultProfilesPanel.vue'

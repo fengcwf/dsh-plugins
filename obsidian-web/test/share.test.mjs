@@ -433,3 +433,33 @@ test('C-1 fix r2 正例不回退：中文名/点文件 target 照常可分享（
   const dot = await createShare(root, { target: '.hidden-note.md', role: 'read' })
   assert.equal(dot.share.target, '.hidden-note.md', '点文件 target 正常建出（非根族/非内部段）')
 })
+
+// ── T13 载荷合流：密码调整全走 updateShareRole（postSharePassword 死导出摘除前置）──────
+test('T13 载荷合流：updateShareRole 三态密码（auto/custom/clear）+ 写不可清 + role-only 保留密码', async (t) => {
+  const root = tmpVault(t)
+  const { share } = await createShare(root, { target: 'notes/a.md', role: 'read' })
+  // 自定义
+  const custom = await updateShareRole(root, share.token, 'read', { password: 'pw-1' })
+  assert.equal(custom.password, null, '自定义密码不回显明文')
+  assert.equal(custom.share.hasPassword, true)
+  assert.equal((await checkAccess(root, { token: share.token, password: 'pw-1' })).ok, true)
+  // 自动生成
+  const auto = await updateShareRole(root, share.token, 'read', { autoPassword: true })
+  assert.equal(typeof auto.password, 'string', '自动生成明文恰一次返回')
+  assert.equal((await checkAccess(root, { token: share.token, password: auto.password })).ok, true)
+  // role-only 不动密码（OW-INV-1「降 read 保留密码」口径同源）
+  const same = await updateShareRole(root, share.token, 'read')
+  assert.equal(same.share.hasPassword, true, 'role-only 调用保留密码')
+  assert.equal((await checkAccess(root, { token: share.token, password: auto.password })).ok, true)
+  // 清除（合流：password:null=清除，仅读角色）
+  const cleared = await updateShareRole(root, share.token, 'read', { password: null })
+  assert.equal(cleared.share.hasPassword, false, 'password:null=清除（载荷合流，UI 三态第三态不落空）')
+  assert.equal((await checkAccess(root, { token: share.token })).ok, true, '清除后可无密码访问')
+  // 写不可清（OW-INV-1 不变量：显式拒不冒充）
+  const { share: w } = await createShare(root, { target: 'notes/b.md', role: 'write', password: 'wpw' })
+  await assert.rejects(
+    () => updateShareRole(root, w.token, 'write', { password: null }),
+    (err) => err.code === 'password_required',
+    '写角色清密码=违不变量必拒（不静默忽略）',
+  )
+})

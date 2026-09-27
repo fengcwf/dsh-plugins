@@ -56,6 +56,13 @@ export function deleteFile(path, confirm) {
   return postJson('/ob/api/delete', { path, confirm })
 }
 
+// 改名/移动（T13 rename UI 入口 / T5 事务）：payload={from, to, overwrite?:true}（载荷复核
+// web/src/lib/rename-view.js buildRenamePayload——overwrite 仅显式 true 随行，OW-INV-5 永不静默覆盖）；
+// 返回 {data:{ok, from, to, reason, message, changed[], rolledBack, warnings[]}}（域结果 200 信封）
+export function postRename(payload) {
+  return postJson('/ob/api/rename', payload)
+}
+
 // 下载（T7/OW-US-7、OW-INV-9）：单 md=文本流、目录=zip 流；域拒（限额超限/回收站/门拒）走
 // 200 {data:{ok:false, reason, message}} 信封（T5/T6 惯例）——按 content-type 分流非信封流与信封拒。
 // origin：浏览器同源相对寻址留空；测试传宿主 base（Node 无 origin）。
@@ -94,11 +101,6 @@ export function postShareCreate(payload) {
 
 export function postShareRevoke(token) {
   return postJson('/ob/api/shares/revoke', { token })
-}
-
-// spec={password|null, autoPassword?}（改密三态；写权限清密码=服务端拒，OW-INV-1）
-export function postSharePassword(token, spec) {
-  return postJson('/ob/api/shares/password', { token, ...spec })
 }
 
 // payload={role, password?|autoPassword?}（升写强制密码——UI buildRolePayload + 服务端双保险）

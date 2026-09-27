@@ -2,6 +2,7 @@
 // ShareAccessDialog — 密码与权限调整弹层（OW-US-10）：载荷复核 buildRolePayload（组件零业务逻辑）。
 // ⑤ 不变量 UI 双保险：升写必须带密码（自定义/自动生成或已有密码），写不可清密码——服务端
 // updateShareRole/updateSharePassword（T8 OW-INV-1）再复核一道。
+import { ElButton, ElDialog, ElForm, ElFormItem, ElInput, ElRadio, ElRadioGroup } from '../element-plus.js'
 import { computed, ref, watch } from 'vue'
 import { buildRolePayload, describeRole } from '../lib/share-view.js'
 

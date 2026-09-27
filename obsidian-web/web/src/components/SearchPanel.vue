@@ -4,6 +4,7 @@
 // score 语义句常驻描述位（detpecca 教训）：score=排序权重（越大越优）非匹配概率/百分比；
 // 降级（超时 fail-open 部分结果）提示进界面（INV-15 风格留痕）。
 // 同页面板接口统一：App 容器统一传参，未用 props 仅吸收防落 DOM 属性。
+import { ElButton, ElInput } from '../element-plus.js'
 import { ref } from 'vue'
 import { fetchSearch } from '../api.js'
 import { SCORE_HINT, describeDegraded } from '../lib/search-view.js'

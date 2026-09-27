@@ -2,6 +2,7 @@
 // ShareCreateDialog — 新建分享弹层（OW-US-8 逐条显式生成流程落管理页；OW-INV-1 写必密码 UI 双保险）。
 // 载荷复核全在 web/src/lib/share-view.js buildCreatePayload（组件零业务逻辑，单测锁形）；
 // 写权限切「无密码」即自动兜底「自动生成」（服务端 createShare 不变量再复核一道）。
+import { ElButton, ElDialog, ElForm, ElFormItem, ElInput, ElInputNumber, ElRadio, ElRadioGroup, ElSwitch } from '../element-plus.js'
 import { computed, ref, watch } from 'vue'
 import { buildCreatePayload } from '../lib/share-view.js'
 

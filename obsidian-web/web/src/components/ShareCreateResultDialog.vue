@@ -1,6 +1,7 @@
 <script setup>
 // ShareCreateResultDialog — 创建成功展示：autoPassword 明文恰一次展示（关后服务端只存 hash）+ 内外网双地址
 //（OW-US-9：链接服务端下发、前端零拼接——ShareLinksCell 只渲染 links）。
+import { ElButton, ElDialog } from '../element-plus.js'
 import ShareLinksCell from './ShareLinksCell.vue'
 
 const props = defineProps({

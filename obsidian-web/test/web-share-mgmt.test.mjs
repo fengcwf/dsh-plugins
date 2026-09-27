@@ -346,3 +346,29 @@ test('设置端点：GET 默认形（含 sharePort/自动探测 host）；POST �
     assert.equal(cleared.body.data.lanHost, 'nas.local')
   })
 })
+
+// ── T13 载荷合流：/ob/api/shares/role 单调承载密码三态（postSharePassword 面不再需要）────
+test('⑤ T13 载荷合流：shares/role 单调承载改密三态（auto/custom/clear），写+clear=400 不冒充', async (t) => {
+  const root = makeVault('role-merge')
+  fs.writeFileSync(path.join(root, 'notes', 'b.md'), '# B\n') // 写分享靶（makeVault 只备 a.md）
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  await withApi(makeConfig(root), async (base) => {
+    const created = await postJson(base, '/ob/api/shares/create', { target: 'notes/a.md', role: 'read', password: 'pw-old' })
+    const token = created.body.data.share.token
+    const custom = await postJson(base, '/ob/api/shares/role', { token, role: 'read', password: 'pw-new' })
+    assert.equal(custom.status, 200)
+    assert.equal(custom.body.data.share.hasPassword, true)
+    const auto = await postJson(base, '/ob/api/shares/role', { token, role: 'read', autoPassword: true })
+    assert.equal(auto.status, 200)
+    assert.equal(typeof auto.body.data.password, 'string', '自动生成明文恰一次返回')
+    const clear = await postJson(base, '/ob/api/shares/role', { token, role: 'read', password: null })
+    assert.equal(clear.status, 200, '读角色清除密码（载荷合流三态闭合）')
+    assert.equal(clear.body.data.share.hasPassword, false)
+    // 写+清=不变量拒（显式可解释）
+    const w = await postJson(base, '/ob/api/shares/create', { target: 'notes/b.md', role: 'write', password: 'wpw-1' })
+    const wtok = w.body.data.share.token
+    const denied = await postJson(base, '/ob/api/shares/role', { token: wtok, role: 'write', password: null })
+    assert.equal(denied.status, 400)
+    assert.equal(denied.body.error.code, 'password_required')
+  })
+})

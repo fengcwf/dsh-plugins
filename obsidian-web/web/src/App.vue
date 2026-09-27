@@ -3,7 +3,7 @@
 // T4：分屏编辑（OW-US-3）+ 安全保存（OW-US-4/OW-INV-3）——保存状态机/防抖/对比全在
 //     web/src/lib/save-client.js 纯函数（单测锁形），本文件只编排 I/O 与面板。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { fetchTree, fetchFile, fetchBacklinks, fetchRender, saveFile, deleteFile, fetchDownload } from './api.js'
+import { fetchTree, fetchFile, fetchBacklinks, fetchRender, saveFile, deleteFile, fetchDownload, postRename } from './api.js'
 import { runDownload, saveBlob } from './lib/download.js'
 import { buildTreeModel, selectNode, resolveNotePath } from './lib/tree.js'
 import { extractToc } from './lib/toc.js'
@@ -11,12 +11,14 @@ import {
   createEditorSession, reduceSession, createSaveCoordinator, createDebouncer, PREVIEW_DEBOUNCE_MS,
 } from './lib/save-client.js'
 import { loadReadState, saveReadState } from './lib/view-state.js'
+import { createNodeActions } from './lib/node-actions.js'
 import SideMenu from './components/SideMenu.vue'
 import NoteTree from './components/NoteTree.vue'
 import ReadingPane from './components/ReadingPane.vue'
 import NoteEditor from './components/NoteEditor.vue'
 import ConflictDialog from './components/ConflictDialog.vue'
 import DeleteConfirmDialog from './components/DeleteConfirmDialog.vue'
+import RenameDialog from './components/RenameDialog.vue'
 import SearchPanel from './components/SearchPanel.vue'
 import BacklinksPanel from './components/BacklinksPanel.vue'
 import SharePanel from './components/SharePanel.vue'
@@ -148,62 +150,43 @@ function onJump(id) {
   requestAnimationFrame(() => centerRef.value?.scrollToHeading?.(id))
 }
 
-// ── 删除（T6）：双确认弹层（复述全等→载荷复核）→ /ob/api/delete；成功刷新树并收拢打开态 ──
-const deleteTarget = ref(null) // {path} | null
-const deleteBusy = ref(false)
-const deleteError = ref('')
-
-function onDeleteNode(node) {
-  deleteError.value = ''
-  deleteTarget.value = { path: node.key }
-}
-
-function onDeleteCancel() {
-  deleteTarget.value = null
-  deleteError.value = ''
-}
-
-async function onDeleteConfirm(payload) {
-  if (!payload || !deleteTarget.value) return // 双保险：无载荷不发请求（弹层复核 + 服务端缺省拒）
-  deleteBusy.value = true
-  deleteError.value = ''
-  try {
-    const { data } = await deleteFile(payload.path, payload.confirm)
-    if (!data.ok) {
-      deleteError.value = `删除未完成（${data.reason}）：${data.message}`
-      return
-    }
-    deleteTarget.value = null
-    await afterDeleted(data.path, data.warnings)
-  } catch (e) {
-    deleteError.value = e.message
-  } finally {
-    deleteBusy.value = false
-  }
-}
-
-async function afterDeleted(deletedPath, warnings) {
-  const prefix = `${deletedPath}/`
-  const openNow = file.value?.path ?? ''
-  if (openNow === deletedPath || openNow.startsWith(prefix)) {
-    file.value = null
-    backlinks.value = []
-    session.value = null
-    previewHtml.value = ''
-  }
-  const sel = state.value.selected ?? ''
-  state.value = {
-    selected: sel === deletedPath || sel.startsWith(prefix) ? null : sel,
-    expanded: state.value.expanded.filter((k) => k !== deletedPath && !k.startsWith(prefix)),
-  }
-  if (warnings?.length) error.value = warnings.join('；') // 落点改名/收尾故障留痕（INV-15 风格）
-  try {
+// ── 树节点操作（T6 删除 / T13 改名移动）：编排全在 lib/node-actions.js（载荷与结果决策=
+//    rename-view.js 纯函数锁形），本文件只接线 I/O 与弹层 ──────────────────────────
+const {
+  deleteTarget, deleteBusy, deleteError, onDeleteNode, onDeleteCancel, onDeleteConfirm,
+  renameTarget, renameBusy, renameError, renameWarnings, onRenameNode, onRenameCancel, onRenameSubmit,
+} = createNodeActions({
+  deleteFile,
+  renameFile: postRename, // /ob/api/rename 事务面（T5 交接：warnings/rolledBack 如实上抛）
+  refreshTree: async () => {
     const tree = await fetchTree()
     nodes.value = tree.data.nodes
-  } catch (e) {
-    error.value = e.message
-  }
-}
+  },
+  clearOpenPaths: (deletedPath) => {
+    const prefix = `${deletedPath}/`
+    const openNow = file.value?.path ?? ''
+    if (openNow === deletedPath || openNow.startsWith(prefix)) {
+      file.value = null
+      backlinks.value = []
+      session.value = null
+      previewHtml.value = ''
+    }
+    const sel = state.value.selected ?? ''
+    state.value = {
+      selected: sel === deletedPath || sel.startsWith(prefix) ? null : sel,
+      expanded: state.value.expanded.filter((k) => k !== deletedPath && !k.startsWith(prefix)),
+    }
+  },
+  onRenameApplied: (from, to) => {
+    if (file.value?.path === from) openPath(to) // 打开中的文件改名后跟到新路径
+    const sel = state.value.selected ?? ''
+    state.value = {
+      selected: sel === from ? to : sel,
+      expanded: state.value.expanded.map((k) => (k === from ? to : k)),
+    }
+  },
+  onNotice: (text) => { error.value = text }, // 留痕展示（T5 warnings 面 / INV-15 风格）
+})
 
 // ── 下载（T7/OW-US-7、OW-INV-9）：单 md 流/目录 zip——落盘与域拒分流全在 lib/download.js，这里只接线 ──
 function onDownloadNode(node) {
@@ -244,6 +227,7 @@ onBeforeUnmount(() => {
       @select="onSelect"
       @delete="onDeleteNode"
       @download="onDownloadNode"
+      @rename="onRenameNode"
     />
     <main class="ob-center">
       <p v-if="error" class="ob-empty" role="alert">{{ error }}</p>
@@ -285,6 +269,15 @@ onBeforeUnmount(() => {
       :error="deleteError"
       @confirm="onDeleteConfirm"
       @cancel="onDeleteCancel"
+    />
+    <RenameDialog
+      :visible="renameTarget !== null"
+      :target="renameTarget"
+      :busy="renameBusy"
+      :error="renameError"
+      :warnings="renameWarnings"
+      @submit="onRenameSubmit"
+      @cancel="onRenameCancel"
     />
   </div>
 </template>

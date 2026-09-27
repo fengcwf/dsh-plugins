@@ -1,4 +1,5 @@
 <script setup>
+import { ElMenu, ElMenuItem } from '../element-plus.js'
 // SideMenu — 侧栏菜单：中央列面板切换（OW-US-14 同页面板，不跳新页）
 defineProps({ active: { type: String, default: 'read' } })
 const emit = defineEmits(['select'])

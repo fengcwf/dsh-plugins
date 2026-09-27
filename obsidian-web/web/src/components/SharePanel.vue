@@ -4,6 +4,7 @@
 // 计数展示口径：查看计数=每分享条目访客访问成功次数（accessCount）；对外脱敏计数恒=痕迹计数
 //（T9 分野）——本面板无脱敏计数列。
 // 同页面板接口统一：App 容器统一传参，未用 props 仅吸收防落 DOM 属性。
+import { ElButton, ElPopconfirm, ElTable, ElTableColumn, ElTag } from '../element-plus.js'
 import { onMounted, ref, watch } from 'vue'
 import { fetchShares, postShareCreate, postShareRevoke, postShareRole } from '../api.js'
 import { describeRole, formatTime, statusLabel } from '../lib/share-view.js'

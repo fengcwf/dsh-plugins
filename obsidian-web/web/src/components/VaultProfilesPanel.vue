@@ -1,4 +1,5 @@
 <script setup>
+import { ElButton, ElForm, ElFormItem, ElInput, ElPopconfirm, ElTable, ElTableColumn, ElTag } from '../element-plus.js'
 // VaultProfilesPanel — 设置页 vault 目录档案（OW-US-13）：默认当前目录 + 任意已挂载 SMB/NFS
 // 路径 + 健康检查（可读/可写/延迟三探针）+ 切换（重启生效提示——T11 热改可解释拒不冒充）。
 // 换 vault 提示（T10）：switchHint() 纯函数锁形（外网域名等随 vault 各配）；载荷复核=
@@ -153,8 +154,9 @@ onMounted(load)
             :disabled="row.id === activeProfileId"
             @click="activate(row)"
           >切换</el-button>
+          <!-- ARC-6（T13 顺带）：el-popconfirm=重交互件，v-show 保挂载不随行重渲染销毁弹层态 -->
           <el-popconfirm
-            v-if="row.removable"
+            v-show="row.removable"
             :title="`删除档案「${row.name}」？`"
             @confirm="remove(row)"
           >
@@ -162,7 +164,7 @@ onMounted(load)
               <el-button size="small" type="danger" plain>删除</el-button>
             </template>
           </el-popconfirm>
-          <el-button v-else size="small" disabled>默认档案</el-button>
+          <el-button v-show="!row.removable" size="small" disabled>默认档案</el-button>
         </template>
       </el-table-column>
     </el-table>

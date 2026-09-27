@@ -2,6 +2,7 @@
 // ConflictDialog — 保存冲突三选弹层（OW-INV-3：覆盖/重载/对比，必须显式选择）
 // 强制显式选择：无关闭通道（不给「随手关掉静默丢稿」的机会）；选择全数上抛 App（save-client 状态机）。
 // 对比面=diffLines 行级 diff（盘上内容 vs 我方内容），组件零业务逻辑。
+import { ElButton, ElDialog } from '../element-plus.js'
 import { computed } from 'vue'
 import { diffLines } from '../lib/diff.js'
 
