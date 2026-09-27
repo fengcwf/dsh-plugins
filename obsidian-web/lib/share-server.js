@@ -20,6 +20,9 @@
 //   - guest 响应零 vault 路径外泄（path→subPath 映射；diffUndo 快照只含 content/mtime/etag/size/redactCount）。
 //   - diffUndo/表单预填一切对外 content 面一律过脱敏哨兵（C-1/I-1 fix r1）：guest 只见脱敏版（Ruling 6
 //     不回退；undo 恢复脱敏版与 C5 自洽）；计数如实——每面 redactCount 随行 + 写响应 x-ob-redact-count 头。
+//   - 写面中和（C-1 fix r2，C5 口径=guest 保存落盘=脱敏版覆盖）：edit/create 的 incoming 过 redact() 后
+//     落盘（盘上=脱敏版逐字节）；读/响应面 redact()=第二道（幂等零新增）。计数语义=面内容中和处数
+//     （痕迹计数：含写面与读面两道，同一处只计一次；redact().count=本次新中和次数，两义分野见报告 §4）。
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -29,7 +32,7 @@ import {
 } from './share.js'
 import { saveNote, createNote, deletePath, renameNote, readNote, resolveInRoot } from './vault-ops.js'
 import { renderMarkdown } from './render.js'
-import { redact } from './redact.js'
+import { redact, REDACTED } from './redact.js'
 
 const FACE_PREFIX = '/ob_share/'
 const ALLOWED_METHODS = ['GET', 'HEAD', 'POST']
@@ -113,11 +116,17 @@ function mapThrown(res, err, headOnly) {
   return notFound(res, headOnly) // 内部细节零外泄（C2 ①）
 }
 
-// ── guest 响应脱路径（vault 路径零外泄）+ 对外 content 面一律脱敏（C-1/I-1）────
+// ── guest 响应脱路径（vault 路径零外泄）+ 对外 content 面一律脱敏（C-1/I-1）+ 写面中和（C-1 fix r2）──
+/** 中和处数（痕迹计数）：面内容 `<redacted>` 计数——写面落盘前中和与读/响应面渲染前中和同一处只计一次
+ *（fix r2 计数口径，见报告 §4 计数头语义分野）；redact().count=本次新中和次数（幂等二过为 0），两义分野。 */
+function countMarks(text) {
+  return String(text).split(REDACTED).length - 1
+}
+
 /** 对外 content 面（diffUndo before/after/incoming）：一律过哨兵 + 计数如实随行 */
 function contentPublic(raw) {
-  const { text, count } = redact(raw) // guest 只见脱敏版（Ruling 6 不回退）
-  return { content: text, redactCount: count }
+  const { text } = redact(raw) // guest 只见脱敏版（Ruling 6 不回退；写面已中和内容幂等零新增）
+  return { content: text, redactCount: countMarks(text) }
 }
 
 function snapPublic(s) {
@@ -554,7 +563,8 @@ ${createForm}`
     }
     const note = readNote(root, resolved.path)
     const isMd = resolved.path.toLowerCase().endsWith('.md')
-    const { text: safeText, count } = redact(note.content) // 脱敏哨兵前置（宁可误伤不可漏放）
+    const { text: safeText } = redact(note.content) // 脱敏哨兵前置（宁可误伤不可漏放）
+    const count = countMarks(safeText) // 计数=面内容中和处数（痕迹计数，fix r2 口径）
     if (!isMd) {
       const ext = path.extname(resolved.path).toLowerCase()
       const isText = TEXT_RAW_EXT.has(ext)
@@ -651,7 +661,9 @@ ${passwordField(password)}
         const lock = {}
         if (body.expectedMtime !== undefined) lock.expectedMtime = Number(body.expectedMtime)
         if (body.etag !== undefined) lock.etag = String(body.etag)
-        const result = await saveNote(root, resolved.path, body.content, lock) // 无锁不落盘（抛 bad_request→400）
+        // 写面中和（C-1 fix r2，C5 口径）：incoming 过 redact() 后落盘=脱敏版覆盖（undo=脱敏版恢复=自洽）
+        const { text: safeContent } = redact(body.content)
+        const result = await saveNote(root, resolved.path, safeContent, lock) // 无锁不落盘（抛 bad_request→400）
         const pub = editResultPublic(subRaw, result)
         respond(pub, { 'x-ob-redact-count': String(diffRedactTotal(pub)) }) // diffUndo 计数如实（等价通道）
         return
@@ -677,7 +689,8 @@ ${passwordField(password)}
           badRequest(res, headOnly)
           return
         }
-        const result = await createNote(root, rNew.path, content) // 永不静默覆盖（target-exists 域结果）
+        // 写面中和（C-1 fix r2 同族）：create 的 body.content 同过 redact() 后落盘=脱敏版覆盖
+        const result = await createNote(root, rNew.path, redact(content).text) // 永不静默覆盖（target-exists 域结果）
         if (result.ok === true) {
           respond({ ok: true, subPath: newSub, mtime: result.mtime, etag: result.etag, size: result.size })
         } else {
@@ -748,9 +761,9 @@ ${passwordField(password)}
       try {
         const fresh = readNote(root, resolved.path)
         // I-1：冲突表单预填同过哨兵（同页渲染脱敏、表单不得给原文——与访客页 :564 同口径）；计数如实可见
-        const { text: freshSafe, count: freshCount } = redact(fresh.content)
+        const { text: freshSafe } = redact(fresh.content)
         retry = editForm({ content: freshSafe, mtime: fresh.mtime, password })
-        retryNotice = redactNotice(freshCount)
+        retryNotice = redactNotice(countMarks(freshSafe)) // 计数=面内容中和处数（痕迹计数，fix r2 口径）
       } catch { /* 读不到就不给重试形态（结果页本身已说明冲突） */ }
       return shell('保存冲突', `<header><h1>保存冲突</h1></header>
 <p>冲突：内容已被他人修改，本次未落盘。以下为盘上最新内容（脱敏后），请复核后重试（OW-INV-3 冲突显式三选的数据基础：盘上内容/本次内容都在）。</p>

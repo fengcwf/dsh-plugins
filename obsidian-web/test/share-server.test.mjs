@@ -38,6 +38,21 @@ function makeVault(tag, files = {}) {
   return root
 }
 
+/** 盘面清扫（C-1 fix r2）：vault 全树哨兵原文落点收集（写面中和判据：零落盘） */
+function diskNeedles(root, needles) {
+  const hits = []
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const abs = path.join(dir, e.name)
+      if (e.isDirectory()) { walk(abs); continue }
+      const t = fs.readFileSync(abs, 'utf8')
+      for (const n of needles) if (t.includes(n)) hits.push(`${path.relative(root, abs)} ⊃ ${n}`)
+    }
+  }
+  walk(root)
+  return hits
+}
+
 function makeConfig(vault, overrides = {}) {
   return {
     vaultRoot: vault,
@@ -253,7 +268,7 @@ test('③ 笔记分享（写）=仅内容编辑：edit✓（乐观锁+diffUndo�
     assert.equal(savedBody.data.diffUndo.after.content, '# 新内容 <redacted>', 'diffUndo.after=脱敏版快照')
     assert.equal(savedBody.data.diffUndo.before.redactCount, 1, '计数如实（before 中和 1 处）')
     assert.equal(savedBody.data.diffUndo.after.redactCount, 1, '计数如实（after 中和 1 处）')
-    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 新内容 sk-newtoken1234567890', '保存=全量覆盖（盘上原文；外泄面在响应已脱敏）')
+    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 新内容 <redacted>', '保存=脱敏版覆盖落盘（C5 写面中和，盘上=脱敏版逐字节；fix r2）')
     assert.ok(!JSON.stringify(savedBody).includes(vault), 'guest 响应零 vault 绝对路径')
     assert.ok(!JSON.stringify(savedBody).includes('hello.md'), 'guest 响应零 vault-rel 路径')
     for (const raw of ['sk-oldtoken1234567890', 'sk-newtoken1234567890']) {
@@ -275,7 +290,7 @@ test('③ 笔记分享（写）=仅内容编辑：edit✓（乐观锁+diffUndo�
     for (const raw of ['sk-newtoken1234567890', 'sk-inctoken1234567890']) {
       assert.ok(!JSON.stringify(conflictBody).includes(raw), `冲突形哨兵原文零外泄（C-1 负例：${raw}）`)
     }
-    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 新内容 sk-newtoken1234567890', '冲突不落盘（OW-INV-3）')
+    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 新内容 <redacted>', '冲突不落盘（OW-INV-3；盘上=脱敏版逐字节）')
     // 无乐观锁不落盘 → 400 统一形（零内部 message 外泄）
     const noLock = await get(url, {
       method: 'POST',
@@ -316,7 +331,18 @@ test('③ 笔记分享（写）=仅内容编辑：edit✓（乐观锁+diffUndo�
     assert.equal(traversal.status, 404)
     assert.equal(await traversal.text(), NOT_FOUND_BODY)
     assert.equal(fs.readFileSync(path.join(vault, 'other.md'), 'utf8'), '他文件', '穿越零写入')
-    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 新内容 sk-newtoken1234567890', '穿越零副作用')
+    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 新内容 <redacted>', '穿越零副作用（盘上=脱敏版逐字节）')
+    // undo 往返（C-1 fix r2）：undo 源=diffUndo.before.content（脱敏版）→ 回写即恢复脱敏版（口径自洽，零数据自伤）
+    const undoPage = await get(url)
+    const undoMtime = Number(undoPage.headers.get('x-ob-mtime'))
+    const undone = await get(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ op: 'edit', content: savedBody.data.diffUndo.before.content, expectedMtime: undoMtime }),
+    })
+    assert.equal(undone.status, 200)
+    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), savedBody.data.diffUndo.before.content, 'undo 恢复=undo 源逐字节（脱敏版恢复=C5 口径自洽）')
+    assert.deepEqual(diskNeedles(vault, ['sk-oldtoken1234567890', 'sk-newtoken1234567890', 'sk-inctoken1234567890']), [], '盘面清扫：哨兵原文零落盘（写面中和）')
   })
 })
 
@@ -362,6 +388,15 @@ test('③ 文件夹分享（写）=目录内新建/编辑/删除/改名四操作
     assert.equal(createdBody.data.ok, true)
     assert.equal(createdBody.data.subPath, 'new.md')
     assert.equal(fs.readFileSync(path.join(vault, 'notes/new.md'), 'utf8'), '# 新建')
+    // create 同族写面中和（C-1 fix r2）：body.content 同过 redact() 落盘=脱敏版逐字节
+    const createdSecret = await get(rootUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ op: 'create', name: 'secret.md', content: '# 新建 sk-newsecret1234567890' }),
+    })
+    assert.equal(createdSecret.status, 200)
+    assert.equal(fs.readFileSync(path.join(vault, 'notes/secret.md'), 'utf8'), '# 新建 <redacted>', 'create 落盘=脱敏版逐字节（写面中和，fix r2）')
+    assert.deepEqual(diskNeedles(vault, ['sk-newsecret1234567890']), [], 'create 盘面清扫：哨兵原文零落盘')
     // 新建重名 → target-exists 域结果 + 零覆盖
     const again = await get(rootUrl, {
       method: 'POST',
@@ -514,7 +549,7 @@ test('③ 表单写面（无 JS）：urlencoded POST 编辑往返成功 + 冲突
     const postedHtml = await posted.text()
     assert.ok(!postedHtml.includes('<script'), '结果页零 script')
     assert.ok(postedHtml.includes('已保存') || postedHtml.includes('保存'), '结果页给保存反馈')
-    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 表单改 sk-editedtoken12345678', '保存=全量覆盖（盘上原文；外泄面在响应已脱敏）')
+    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 表单改 <redacted>', '保存=脱敏版覆盖落盘（C5 写面中和，盘上=脱敏版逐字节；fix r2）')
     // 冲突（stale 锁）→ 结果页给冲突重试形态
     const conflict = await get(`${base}/ob_share/${share.token}${q}`, {
       method: 'POST',
@@ -530,7 +565,7 @@ test('③ 表单写面（无 JS）：urlencoded POST 编辑往返成功 + 冲突
     assert.ok(!conflictHtml.includes('sk-editedtoken12345678'), '冲突重试表单预填哨兵原文零外泄（I-1 负例）')
     assert.ok(conflictHtml.includes('&lt;redacted&gt;'), '冲突表单预填=脱敏版')
     assert.match(conflictHtml, /已中和 1 处/, '冲突页计数如实（预填内容中和 1 处）')
-    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 表单改 sk-editedtoken12345678', '冲突不落盘')
+    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 表单改 <redacted>', '冲突不落盘（盘上=脱敏版逐字节）')
   })
 })
 
@@ -659,6 +694,9 @@ test('④/C-1 diffUndo 写响应哨兵原文零外泄：成功形/冲突形/表�
     assert.equal(savedBody.data.diffUndo.after.redactCount, 1, '计数如实')
     assert.equal(saved.headers.get('x-ob-redact-count'), '5', '写响应计数头如实（4+1）')
     for (const raw of rawNeedles) assert.ok(!savedText.includes(raw), `成功形零外泄：${raw}`)
+    // 盘面（C-1 fix r2）：写面落盘=脱敏版逐字节 + 哨兵原文零落盘清扫（undo 恢复脱敏版=C5 口径自洽前提）
+    assert.equal(fs.readFileSync(path.join(vault, 'hello.md'), 'utf8'), '# 覆盖 <redacted>', '盘上=脱敏版逐字节（写面中和，fix r2）')
+    assert.deepEqual(diskNeedles(vault, rawNeedles), [], '盘面清扫：哨兵原文零落盘（写面中和）')
   })
 })
 
