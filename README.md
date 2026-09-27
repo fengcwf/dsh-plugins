@@ -9,6 +9,7 @@ fengcwf 的 dsh 插件 monorepo。每个子目录一个可安装的 dsh 组合�
 | [dsh-login-gate](dsh-login-gate/) | 0.2.0 | 登录门禁：表单登录（scrypt + HMAC 会话）+ 认证反代 + 原生 DSH 会话 + WS tunnel 修复 |
 | [kb-context](kb-context/) | 0.2.0 | 知识库上下文：vault 增量索引（FTS5）+ 检索（BM25/LIKE 兜底+deadline 守卫）+ 会话注入（触发/脱敏/截断）+ wiki_read/wiki_search/kb_diagnose 工具 |
 | [wiki-steward](wiki-steward/) | 0.2.0 | wiki 管家：会话捕获入 raw/ + kb_validate 六规则校验 + kb_mark sha256 原子回写 + wiki CRUD（.trash 可逆/journal 事务/wikilink 重写）+ 入队告警 + tools/pre-execute 写入拦截 |
+| [obsidian-web](obsidian-web/) | 0.1.0 | Obsidian vault Web 管理：查看/编辑/下载/分享 + 目录维护（OW-US-1..14；已发版 obsidian-web-v0.1.0） |
 
 ## 版本纪律（强制，缺一不可）
 

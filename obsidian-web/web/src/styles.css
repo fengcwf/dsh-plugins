@@ -1,0 +1,538 @@
+/* styles — 构图与 token 跟随（ARC-5：token 全走 --dsw-* 体系，禁自造色板；
+   色彩一律 var(--dsw-…, 系统色兜底)，零自定义色值）。字号基线 16px、行高 1.6。 */
+
+:root {
+  --ow-menu-width: 72px;
+  --ow-tree-width: 300px;
+  --ow-toc-width: 248px;
+
+  /* element-plus 主题桥接 → dsw token（唯一色板来源） */
+  --el-color-primary: var(--dsw-alias-state-business-primary, Highlight);
+  --el-color-danger: var(--dsw-alias-state-error-primary, CanvasText);
+  --el-color-warning: var(--dsw-alias-state-warn-primary, ButtonBorder);
+  --el-color-success: var(--dsw-alias-state-success-primary, CanvasText);
+  --el-text-color-primary: var(--dsw-alias-label-primary, CanvasText);
+  --el-text-color-regular: var(--dsw-alias-label-primary, CanvasText);
+  --el-text-color-secondary: var(--dsw-alias-label-secondary, GrayText);
+  --el-bg-color: var(--dsw-alias-bg-layer-1, Canvas);
+  --el-fill-color-blank: var(--dsw-alias-bg-layer-1, Canvas);
+  --el-border-color: var(--dsw-alias-border-l2, ButtonBorder);
+  --el-border-radius-base: var(--dsw-radius-sm, 8px);
+  --el-font-family: var(--dsw-font-family, sans-serif);
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--dsw-font-family, sans-serif);
+  /* 阅读字号轴（TECH §3.9.2）：正文/标题派生 --dsh-content-font-size（用户设置即跟随）；UI chrome 固定档 */
+  font-size: var(--dsh-content-font-size, 16px);
+  line-height: 1.6;
+  color: var(--dsw-alias-label-primary, CanvasText);
+  background: var(--dsw-alias-bg-base, Canvas);
+}
+
+/* ── 三栏构图：菜单轨 + 树 300px + 中央列（阅读/反链面板） + TOC 248px（终态归 T13）── */
+.ob-shell {
+  display: grid;
+  grid-template-columns: var(--ow-menu-width) var(--ow-tree-width) minmax(0, 1fr) var(--ow-toc-width);
+  height: 100vh;
+  overflow: hidden;
+}
+
+.ob-menu {
+  border-right: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  background: var(--dsw-alias-bg-layer-1, Canvas);
+}
+
+.ob-tree {
+  border-right: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  overflow: auto;
+  padding: 8px 4px;
+  background: var(--dsw-alias-bg-layer-1, Canvas);
+}
+
+.ob-tree-node {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 改名入口（T13）+ 删除入口（T6）+ 下载入口（T7）：悬停/键盘聚焦显露，点击不触发选中（@click.stop） */
+.ob-tree-rename,
+.ob-tree-del,
+.ob-tree-dl {
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.ob-tree-node:hover .ob-tree-rename,
+.ob-tree-rename:focus-visible,
+.ob-tree-node:hover .ob-tree-del,
+.ob-tree-del:focus-visible,
+.ob-tree-node:hover .ob-tree-dl,
+.ob-tree-dl:focus-visible {
+  opacity: 1;
+}
+
+.ob-center {
+  min-width: 0;
+  overflow: auto;
+}
+
+.ob-toc {
+  border-left: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  overflow: auto;
+  padding: 12px 8px;
+  background: var(--dsw-alias-bg-layer-1, Canvas);
+}
+
+.ob-toc-title {
+  margin: 0 0 8px;
+  font-size: var(--dsw-font-m-18-font-size, 18px);
+  font-weight: 600;
+}
+
+.ob-toc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ob-toc-link {
+  display: block;
+  width: 100%;
+  padding: 2px 4px;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-label-secondary, CanvasText);
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ob-toc-link:hover {
+  color: var(--dsw-alias-link, LinkText);
+  background: var(--dsw-alias-interactive-bg-hover, ButtonFace);
+}
+
+.ob-empty {
+  color: var(--dsw-alias-label-tertiary, GrayText);
+  padding: 16px;
+}
+
+.ob-backlinks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ob-backlink {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ob-backlink:hover { background: var(--dsw-alias-interactive-bg-hover, ButtonFace); }
+
+.ob-backlink-path {
+  display: block;
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  color: var(--dsw-alias-link, LinkText);
+}
+
+.ob-backlink-text {
+  display: block;
+  color: var(--dsw-alias-label-secondary, CanvasText);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Markdown 阅读面（服务端渲染 HTML 的样式承接，零前端解析）── */
+.ob-prose {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 24px 32px 64px;
+  font-size: var(--dsh-content-font-size, 16px); /* 阅读档 ×1（TECH §3.10.4） */
+}
+
+/* 字阶三档派生内容字号轴（TECH §3.10.4 定稿：display ×1.6 / 阅读 ×1 / caption ×0.75） */
+.ob-prose h1, .ob-prose h2 {
+  font-size: calc(var(--dsh-content-font-size, 16px) * 1.6);
+}
+
+.ob-prose h1, .ob-prose h2, .ob-prose h3,
+.ob-prose h4, .ob-prose h5, .ob-prose h6 {
+  line-height: 1.4;
+  margin: 1.2em 0 0.5em;
+}
+
+.ob-prose pre {
+  padding: 12px;
+  overflow: auto;
+  background: var(--dsw-alias-markdown-code-block, ButtonFace);
+  border: 1px solid var(--dsw-alias-border-l2, ButtonBorder);
+  border-radius: var(--dsw-radius-sm, 4px);
+}
+
+.ob-prose code {
+  font-family: var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace);
+  background: var(--dsw-alias-markdown-inline-code, ButtonFace);
+  border-radius: var(--dsw-radius-xs, 2px);
+  padding: 0 4px;
+}
+
+.ob-prose pre code {
+  background: none;
+  padding: 0;
+}
+
+.ob-prose blockquote {
+  margin: 1em 0;
+  padding: 4px 16px;
+  border-left: 3px solid var(--dsw-alias-border-l3, ButtonBorder);
+  color: var(--dsw-alias-label-secondary, CanvasText);
+}
+
+.ob-prose a {
+  color: var(--dsw-alias-link, LinkText);
+}
+
+.ob-link-blocked {
+  text-decoration: line-through;
+  color: var(--dsw-alias-state-error-primary, CanvasText);
+}
+
+/* ── 搜索面板（T3）：查询条 + score 语义句描述位 + snippet 高亮承接（服务端 <mark>）── */
+.ob-search-bar {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+
+.ob-hint {
+  margin: 4px 0 8px;
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  color: var(--dsw-alias-label-secondary, GrayText);
+}
+
+.ob-snippet mark {
+  background: var(--dsw-alias-state-warn-tertiary, Mark);
+  color: var(--dsw-alias-state-warn-label, MarkText);
+}
+
+/* ── 分屏编辑（T4/OW-US-3）：源码+预览联动+工具栏保存；布局局部变量 --ow-* 豁免（ARC-5 管辖面裁定）── */
+.ob-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.ob-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+}
+
+.ob-editor-path {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ob-editor-status {
+  margin-right: auto;
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  color: var(--dsw-alias-label-secondary, GrayText);
+}
+
+.ob-editor-split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.ob-editor-source {
+  flex: 0 0 auto;
+  min-width: 0;
+  resize: none;
+  border: 0;
+  padding: 16px;
+  font-family: var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace);
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  line-height: 1.6;
+  color: var(--dsw-alias-label-primary, CanvasText);
+  background: var(--dsw-alias-bg-layer-1, Canvas);
+}
+
+.ob-editor-divider {
+  flex: 0 0 4px;
+  cursor: col-resize;
+  background: var(--dsw-alias-border-l1, ButtonBorder);
+}
+
+.ob-editor-divider:hover { background: var(--dsw-alias-link, LinkText); }
+
+.ob-editor-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+
+/* ── 冲突三选弹层（T4/OW-INV-3）与 diff 对比面（盘上 vs 我方）── */
+.ob-conflict-lead { margin: 0 0 12px; }
+
+.ob-delete-lead {
+  margin: 0 0 8px;
+}
+
+.ob-delete-path {
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.ob-delete-error {
+  margin: 8px 0 0;
+  color: var(--dsw-alias-state-error-primary, CanvasText);
+}
+
+.ob-conflict-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ob-conflict-diff {
+  margin-top: 12px;
+  max-height: 40vh;
+  overflow: auto;
+  border: 1px solid var(--dsw-alias-border-l2, ButtonBorder);
+  border-radius: var(--dsw-radius-sm, 4px);
+}
+
+.ob-conflict-legend {
+  margin: 8px 12px;
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  color: var(--dsw-alias-label-secondary, GrayText);
+}
+
+.ob-diff-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace);
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+}
+
+.ob-diff-list li {
+  padding: 2px 12px;
+  white-space: pre-wrap;
+}
+
+.ob-diff-del {
+  color: var(--dsw-alias-state-error-primary, CanvasText);
+  background: var(--dsw-alias-file-diff-deleted-bg, Canvas);
+}
+
+.ob-diff-add {
+  color: var(--dsw-alias-state-success-primary, CanvasText);
+  background: var(--dsw-alias-file-diff-added-bg, Canvas);
+}
+
+.ob-diff-same { color: var(--dsw-alias-label-secondary, GrayText); }
+
+/* ── 表格/脚注/任务清单承接（T4 复杂语法面，服务端渲染 HTML 的样式承接）── */
+.ob-prose table {
+  border-collapse: collapse;
+  margin: 1em 0;
+}
+
+.ob-prose th,
+.ob-prose td {
+  border: 1px solid var(--dsw-alias-border-l2, ButtonBorder);
+  padding: 4px 10px;
+}
+
+.ob-prose .footnotes {
+  margin-top: 2em;
+  font-size: calc(var(--dsh-content-font-size, 16px) * 0.75); /* caption 档 ×0.75 */
+}
+
+.ob-prose .contains-task-list {
+  list-style: none;
+  padding-left: 4px;
+}
+
+.ob-prose .contains-task-list input { margin-right: 6px; }
+
+/* ── 分享管理 / 设置面板（T10，OW-US-9/10）：布局局部变量 --ow-* 豁免（ARC-5），色彩全走 dsw token ── */
+.ob-share-toolbar {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+
+.ob-share-target {
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  margin-right: 6px;
+  word-break: break-all;
+}
+
+.ob-share-links {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ob-share-link-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+
+.ob-share-link-kind {
+  flex: none;
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  color: var(--dsw-alias-label-secondary, GrayText);
+}
+
+.ob-share-link-url {
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  word-break: break-all;
+  color: var(--dsw-alias-link, LinkText);
+}
+
+.ob-share-once {
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2, ButtonBorder);
+  border-radius: var(--dsw-radius-sm, 4px);
+  background: var(--dsw-alias-bg-layer-1, Canvas);
+}
+
+/* ── 改名/移动弹层（T13 rename UI 入口：树操作→/ob/api/rename；冲突/歧义留痕提示展示）── */
+.ob-rename-lead { margin: 0 0 8px; }
+
+.ob-rename-path {
+  font-family: var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace);
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  word-break: break-all;
+}
+
+.ob-rename-warnings {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--dsw-alias-state-warn-primary, ButtonBorder);
+  background: var(--dsw-alias-state-warn-tertiary, Canvas);
+  color: var(--dsw-alias-state-warn-label, CanvasText);
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  list-style: none;
+}
+
+.ob-rename-error {
+  margin: 8px 0 0;
+  color: var(--dsw-alias-state-error-primary, CanvasText);
+}
+
+/* ── 折叠抽屉开关（窄屏退化用；宽屏隐藏——TECH §3.9.4/§3.10.3 逐区块显式）── */
+.ob-drawer-toggle {
+  display: none;
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  border-radius: var(--dsw-radius-xs, 4px);
+  background: transparent;
+  color: inherit;
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ob-toc .ob-drawer-toggle { width: auto; }
+
+/* ── 响应式退化（窄屏 ≤960px）：逐区块显式——目录树→抽屉、TOC→抽屉、分屏→单栏、工具栏→compact ── */
+@media (max-width: 960px) {
+  .ob-shell {
+    grid-template-columns: var(--ow-menu-width) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .ob-menu { grid-row: 1 / span 2; }
+
+  .ob-tree {
+    grid-column: 2;
+    grid-row: 1;
+    max-height: 44px;
+    overflow: hidden;
+    border-right: 0;
+    border-bottom: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  }
+
+  .ob-tree[data-open='true'] {
+    max-height: 45vh;
+    overflow: auto;
+  }
+
+  .ob-center {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .ob-toc {
+    position: fixed;
+    right: 8px;
+    top: 45vh;
+    z-index: 20;
+    width: auto;
+    max-height: 44px;
+    overflow: hidden;
+    border: 1px solid var(--dsw-alias-border-l2, ButtonBorder);
+    border-radius: var(--dsw-radius-sm, 8px);
+    background: var(--dsw-alias-bg-layer-1, Canvas);
+  }
+
+  .ob-toc[data-open='true'] {
+    width: min(248px, 70vw);
+    max-height: 50vh;
+    overflow: auto;
+  }
+
+  .ob-drawer-toggle { display: block; }
+
+  .ob-editor-split { flex-direction: column; }
+
+  .ob-editor-source {
+    flex: 1 1 auto !important;
+    min-height: 40vh;
+  }
+
+  .ob-editor-divider { display: none; }
+
+  .ob-editor-toolbar {
+    flex-wrap: wrap;
+    overflow: auto;
+  }
+}

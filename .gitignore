@@ -1,3 +1,6 @@
 node_modules/
 pnpm-lock.yaml
 *.log
+
+# obsidian-web 测试临时目录（真 fs 测试副本，跑完自动清）
+obsidian-web/test/.tmp-*/
