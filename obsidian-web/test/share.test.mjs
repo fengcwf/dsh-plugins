@@ -23,7 +23,6 @@ import {
   listShares,
   getShare,
   revokeShare,
-  updateSharePassword,
   updateShareRole,
   updateShareExpiry,
   checkAccess,
@@ -309,26 +308,27 @@ test('管理面计数：初始 accessCount=0/lastAccessAt=null；成功访问后
   assert.equal(typeof got.lastAccessAt, 'number')
 })
 
-test('管理面改密：显式/auto/清除（清除仅读角色）；旧密码失效、新密码可用', async (t) => {
+test('管理面改密（T13 concern④ 收口后单一来源=updateShareRole 载荷合流）：显式/auto/清除（清除仅读角色）；旧密码失效、新密码可用', async (t) => {
   const root = tmpVault(t)
   const { share, password } = await createShare(root, { target: 'notes/a.md', role: 'read', autoPassword: true })
   const old = await checkAccess(root, { token: share.token, password })
   assert.equal(old.ok, true, '初始密码可用')
-  const changed = await updateSharePassword(root, share.token, { password: 'new-pw-1' })
+  const changed = await updateShareRole(root, share.token, 'read', { password: 'new-pw-1' })
   assert.equal(changed.password, null, '显式密码不回显')
   assert.equal((await checkAccess(root, { token: share.token, password })).ok, false, '旧密码即时失效（404 形）')
   assert.equal((await checkAccess(root, { token: share.token, password: 'new-pw-1' })).ok, true, '新密码可用')
-  const auto = await updateSharePassword(root, share.token, { autoPassword: true })
+  const auto = await updateShareRole(root, share.token, 'read', { autoPassword: true })
   assert.equal(typeof auto.password, 'string', 'auto 改密返回新明文一次')
   assert.equal((await checkAccess(root, { token: share.token, password: 'new-pw-1' })).ok, false, 'auto 改密后旧密码失效')
   assert.equal((await checkAccess(root, { token: share.token, password: auto.password })).ok, true)
-  const cleared = await updateSharePassword(root, share.token, { password: null })
+  const cleared = await updateShareRole(root, share.token, 'read', { password: null })
   assert.equal(cleared.share.hasPassword, false)
   assert.equal((await checkAccess(root, { token: share.token })).ok, true, '清除后可无密码访问')
   // 写角色不可清除密码（OW-INV-1）
   const { share: w } = await createShare(root, { target: 'notes/b.md', role: 'write', password: 'wpw' })
-  await assert.rejects(() => updateSharePassword(root, w.token, { password: null }), (err) => err.code === 'password_required', '写角色清密码=违不变量必拒')
-  await assert.rejects(() => updateSharePassword(root, w.token, {}), (err) => err.code === 'bad_request', '空操作拒')
+  await assert.rejects(() => updateShareRole(root, w.token, 'write', { password: null }), (err) => err.code === 'password_required', '写角色清密码=违不变量必拒')
+  // （updateSharePassword 已随 /ob/api/shares/password 服务端面一并摘除——「空操作拒」语义随函数下线，
+  //   密码调整单一来源=updateShareRole 载荷合流三态；零残留锁见 web-share-mgmt.test.mjs）
 })
 
 test('管理面调权：read→write 无密码拒 password_required+可解释；带 auto 成功；write→read 允许', async (t) => {

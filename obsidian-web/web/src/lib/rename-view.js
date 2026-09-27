@@ -23,7 +23,9 @@ export function buildRenamePayload(form) {
 }
 
 /** 结果分类（UI 按 kind 决策；warnings/rolledBack 如实展示，绝不冒充成功）：
- *  renamed=成功 | target-exists=冲突（可显式覆盖途径 canOverwrite） | rolled-back=事务回滚 | failed=可解释拒 */
+ *  renamed=成功 | target-exists=冲突（可显式覆盖途径 canOverwrite） | rolled-back=事务回滚 | failed=可解释拒
+ *  M1（T14 随行收口）：rolledBack 全分支如实透传服务端标记（成功/冲突/失败形均不吞，
+ *  ok:true 混形下也不虚构 false） */
 export function renameOutcome(result) {
   const base = {
     kind: 'failed', ok: false, canOverwrite: false, rolledBack: false,
@@ -35,15 +37,15 @@ export function renameOutcome(result) {
   const rolledBack = result.rolledBack === true
   const message = typeof result.message === 'string' ? result.message : ''
   if (result.ok === true) {
-    return { ...base, kind: 'renamed', ok: true, warnings, changedCount, message }
+    return { ...base, kind: 'renamed', ok: true, rolledBack, warnings, changedCount, message }
   }
   if (result.reason === 'target-exists') {
-    return { ...base, kind: 'target-exists', canOverwrite: true, warnings, changedCount, message }
+    return { ...base, kind: 'target-exists', canOverwrite: true, rolledBack, warnings, changedCount, message }
   }
   if (rolledBack) {
     return { ...base, kind: 'rolled-back', rolledBack: true, warnings, changedCount, message }
   }
-  return { ...base, warnings, changedCount, message }
+  return { ...base, rolledBack, warnings, changedCount, message }
 }
 
 /** 留痕文案（T5 warnings 面：歧义不动/降级/事务中止逐条如实展示；空=空串） */

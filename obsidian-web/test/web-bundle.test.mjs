@@ -85,3 +85,13 @@ test('依赖白名单不变：package.json 零新增依赖（element-plus 按需
   }
   assert.ok(deps.includes('element-plus'), 'element-plus 仍在白名单（同包分模块）')
 })
+
+// ── M2（T13 review 随行收口）：vendor ≤500KB 独立断言——不搭车「全 chunk」集合断言，专块自证 + 余量如实 ──
+test('M2 vendor≤500KB 独立断言：element-plus 专块恰一且独立过上限（余量随消息如实）', () => {
+  const assets = jsAssets()
+  const vendor = assets.filter((a) => a.name.includes('element-plus'))
+  assert.equal(vendor.length, 1, `element-plus vendor 专块应恰一个（现有：${vendor.map((a) => a.name).join(', ')}）`)
+  const v = vendor[0]
+  const margin = MAX_CHUNK - v.size
+  assert.ok(v.size <= MAX_CHUNK, `element-plus vendor ${v.size}B > 500KB（余量 ${margin}B）——按需装配膨胀，按 Ruling 2 预留路径启用异步分包`)
+})

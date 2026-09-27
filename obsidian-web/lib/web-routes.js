@@ -13,7 +13,9 @@
 //                                        未接索引服务 → 503 index_unavailable（可解释，不装死）
 //   exact /ob/api/shares    GET  → {data:{shares,total,settings,effectiveLanHost,sharePort}, total}
 //                                        分享管理列表（T10/OW-US-10：计数/状态 + links 内外网双地址）
-//   exact /ob/api/shares/create|revoke|password|role   POST → 分享管理操作（T10/OW-US-10）
+//   exact /ob/api/shares/create|revoke|role   POST → 分享管理操作（T10/OW-US-10；
+//                                        T13 concern④ 收口：独立 password 面已下线——密码调整
+//                                        单一来源=role 载荷合流三态 password:null=清除）
 //   exact /ob/api/share-settings GET|POST → {data:{externalBaseUrl,lanHost,effectiveLanHost,sharePort}}
 //                                        外网域名设置（T10/OW-US-9：链接生成内外网都显示，服务端单一来源）
 //   exact /ob/api/vault-profiles  GET  → {data:{profiles,activeProfileId}, total}
@@ -43,7 +45,7 @@ import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { deletePath, listTree, readNote, renameNote, scanBacklinks, saveNote } from './vault-ops.js'
 import {
-  createShare, listShares, revokeShare, updateSharePassword, updateShareRole,
+  createShare, listShares, revokeShare, updateShareRole,
 } from './share.js'
 import {
   buildShareLinks, detectLanHost, readShareSettings, writeShareSettings, DEFAULT_SHARE_PORT,
@@ -86,7 +88,8 @@ function sendJson(res, status, body) {
 function errorStatus(code) {
   // 管理面可解释错误（C2① 与 guest 404 冻结形分流）：sensitive_name/password_required/share_disabled
   // 细节只走 /ob/ 管理面（400 带码带消息）；guest 面（/ob_share/）一切失败仍是同形 404（share-server 锁形）
-  if (code === 'bad_request' || code === 'sensitive_name' || code === 'password_required' || code === 'share_disabled') return 400
+  // not-a-file=写面类型拒（T14 写面 lstat 门：最终分量 symlink——与 export/share lstat 门同向词表）
+  if (code === 'bad_request' || code === 'sensitive_name' || code === 'password_required' || code === 'share_disabled' || code === 'not-a-file') return 400
   if (code === 'not_found') return 404
   return 500
 }
@@ -501,20 +504,6 @@ function sharesRevokeHandler(getConfig) {
   }
 }
 
-// POST /ob/api/shares/password → {data:{share, password}}（password=null=清除，仅读角色；写必须保留）
-function sharesPasswordHandler(getConfig) {
-  return async (req, res) => {
-    try {
-      const ctx = shareManageContext(getConfig)
-      const body = await readJsonBody(req)
-      const result = await updateSharePassword(ctx.root, body?.token, { password: body?.password, autoPassword: body?.autoPassword })
-      sendJson(res, 200, { data: { share: shareWithLinks(ctx, result.share), password: result.password } })
-    } catch (err) {
-      failRequest(res, err)
-    }
-  }
-}
-
 // POST /ob/api/shares/role → {data:{share, password}}（升 write 强制密码=OW-INV-1 不变量 HTTP 面）
 function sharesRoleHandler(getConfig) {
   return async (req, res) => {
@@ -677,7 +666,6 @@ export function registerWebRoutes(ctx, getConfig, { distDir, search, index }) {
   add('exact', '/ob/api/shares', wrap(sharesListHandler(getConfig)))
   add('exact', '/ob/api/shares/create', wrap(sharesCreateHandler(getConfig), ['POST']))
   add('exact', '/ob/api/shares/revoke', wrap(sharesRevokeHandler(getConfig), ['POST']))
-  add('exact', '/ob/api/shares/password', wrap(sharesPasswordHandler(getConfig), ['POST']))
   add('exact', '/ob/api/shares/role', wrap(sharesRoleHandler(getConfig), ['POST']))
   add('exact', '/ob/api/share-settings', wrap(shareSettingsHandler(getConfig), ['GET', 'POST']))
   // T12 设置页 vault 目录档案面（OW-US-13）：鉴权=authGate（T1 惯例）

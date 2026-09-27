@@ -159,6 +159,11 @@ export async function writeZipTo(out, entries, options = {}) {
   const central = []
   const totals = { files: 0, dirs: 0, uncompressedBytes: 0, compressedBytes: 0 }
   let offset = 0
+  // M6 噪声清理（T13 review 随行）：逐条目 pipeline(..., out, {end:false}) 经 eos+pipe 内部各给
+  // 同一 sink 挂 2 组 error/close 监听器（node:stream/promises/Readable.pipe 实现细节，探针实测
+  // 2 组/条目/事件、finish 后不摘除），>默认 10 即 MaxListenersExceededWarning 噪声。显式声明
+  // 上界=2×条目数+余量（有界于本次导出条目数，非跨请求泄漏），消 warning 不掩盖真泄漏。
+  out.setMaxListeners?.(Math.max(10, entries.length * 2 + 4))
   for (const entry of entries) {
     const isDir = entry.type === 'dir'
     // fix r1/I2 条目名消毒（writer 后备，与 export.js 组名处同款幂等）：'\' → '_'（Windows zip-slip 向量）

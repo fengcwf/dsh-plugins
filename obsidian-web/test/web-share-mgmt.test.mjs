@@ -112,7 +112,6 @@ const MGMT_ROUTES = [
   ['GET', '/ob/api/shares'],
   ['POST', '/ob/api/shares/create'],
   ['POST', '/ob/api/shares/revoke'],
-  ['POST', '/ob/api/shares/password'],
   ['POST', '/ob/api/shares/role'],
   ['GET', '/ob/api/share-settings'],
   ['POST', '/ob/api/share-settings'],
@@ -278,8 +277,8 @@ test('⑤ 权限调整：read→write 无密码 400 password_required（不变�
     assert.equal(upgraded.body.data.share.role, 'write')
     assert.equal(upgraded.body.data.share.hasPassword, true, '升写必带密码')
     assert.equal(typeof upgraded.body.data.password, 'string', '自动生成明文恰一次返回')
-    // 写权限清密码必拒（OW-INV-1）
-    const clearDenied = await postJson(base, '/ob/api/shares/password', { token, password: null })
+    // 写权限清密码必拒（OW-INV-1；T13 concern④ 收口后单一来源=role 载荷合流三态）
+    const clearDenied = await postJson(base, '/ob/api/shares/role', { token, role: 'write', password: null })
     assert.equal(clearDenied.status, 400)
     assert.equal(clearDenied.body.error.code, 'password_required')
     // 降 read 后允许清密码
@@ -287,7 +286,7 @@ test('⑤ 权限调整：read→write 无密码 400 password_required（不变�
     assert.equal(down.status, 200)
     assert.equal(down.body.data.share.role, 'read')
     assert.equal(down.body.data.share.hasPassword, true, '降级保留密码')
-    const cleared = await postJson(base, '/ob/api/shares/password', { token, password: null })
+    const cleared = await postJson(base, '/ob/api/shares/role', { token, role: 'read', password: null })
     assert.equal(cleared.status, 200, '读角色允许清密码')
     assert.equal(cleared.body.data.share.hasPassword, false)
   })
@@ -305,11 +304,11 @@ test('⑤ 密码调整：自定义/自动生成/清除三态 + 创建面写权�
     const token = created.body.data.share.token
     assert.equal(created.body.data.share.hasPassword, true)
     assert.equal(created.body.data.password, null, '自定义密码不回显明文')
-    const custom = await postJson(base, '/ob/api/shares/password', { token, password: 'new-pass-456' })
+    const custom = await postJson(base, '/ob/api/shares/role', { token, role: 'write', password: 'new-pass-456' })
     assert.equal(custom.status, 200)
     assert.equal(custom.body.data.share.hasPassword, true)
     assert.equal(custom.body.data.password, null, '自定义改密不回显')
-    const auto = await postJson(base, '/ob/api/shares/password', { token, autoPassword: true })
+    const auto = await postJson(base, '/ob/api/shares/role', { token, role: 'write', autoPassword: true })
     assert.equal(auto.status, 200)
     assert.equal(typeof auto.body.data.password, 'string')
     assert.equal(auto.body.data.password.length, 16, 'autoPassword=16 位（PW_LENGTH）')
@@ -320,6 +319,36 @@ test('⑤ 密码调整：自定义/自动生成/清除三态 + 创建面写权�
     const missing = await postJson(base, '/ob/api/shares/create', { target: 'nope.md', role: 'read' })
     assert.equal(missing.status, 404)
     assert.equal(missing.body.error.code, 'not_found')
+  })
+})
+
+// ── T13 concern④ 收口：/ob/api/shares/password 服务端面下线（密码调整单一来源=role 载荷合流）────
+test('⑤ password 服务端面已下线：POST /ob/api/shares/password → 404 + lib/·web/src 全树零残留（路由字面与 updateSharePassword）', async (t) => {
+  const root = makeVault('pw-offline')
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  await withApi(makeConfig(root), async (base) => {
+    const created = await postJson(base, '/ob/api/shares/create', { target: 'notes/a.md', role: 'read', password: 'pw-1' })
+    const token = created.body.data.share.token
+    const gone = await postJson(base, '/ob/api/shares/password', { token, password: 'pw-2' })
+    // 未注册 exact 路由落到 prefix /ob 静态面的方法门（405）——语义=面已下线、零业务处理
+    assert.ok([404, 405].includes(gone.status), `服务端面下线（未注册路由应 404/405 拒），实际 ${gone.status}——外部调用方零冒充`)
+    assert.equal((await checkAccess(root, { token, password: 'pw-1' })).ok, true, '下线面零副作用（密码未被改）')
+    // 零残留锁（T13「真死摘除」同款）：路由字面/模型导出全树零命中
+    const offenders = []
+    for (const dir of [fileURLToPath(new URL('../lib', import.meta.url)), fileURLToPath(new URL('../web/src', import.meta.url))]) {
+      const walk = (d) => {
+        for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+          const abs = path.join(d, e.name)
+          if (e.isDirectory()) { walk(abs); continue }
+          if (!/\.(js|vue|css)$/.test(abs)) continue
+          const raw = fs.readFileSync(abs, 'utf8')
+          if (/shares\/password/.test(raw)) offenders.push(`${abs}: shares/password 路由字面残留`)
+          if (/\bupdateSharePassword\b/.test(raw)) offenders.push(`${abs}: updateSharePassword 死导出残留`)
+        }
+      }
+      walk(dir)
+    }
+    assert.deepEqual(offenders, [], `password 面下线不彻底：\n${offenders.join('\n')}`)
   })
 })
 

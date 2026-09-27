@@ -94,3 +94,22 @@ test('调用链字面锁：/ob/api/rename 字面全树恰一处（api.js）+ 前
   const app = fs.readFileSync(path.join(WEB_SRC, 'App.vue'), 'utf8')
   assert.match(app, /renameFile|postRename/, 'App 编排走 api.renameFile')
 })
+
+// ── M1（T13 review 随行收口）：rolledBack 全分支透传——服务端回滚标记如实进 UI 决策，绝不吞 ──
+test('M1 rolledBack 透传：成功/冲突/失败全分支如实带服务端 rolledBack（含 ok:true 混形不冒充）', () => {
+  const okRolled = renameOutcome({ ok: true, rolledBack: true, changed: ['notes/a.md'] })
+  assert.equal(okRolled.kind, 'renamed')
+  assert.equal(okRolled.rolledBack, true, 'ok 混形下 rolledBack 仍须如实透传（不因成功分支被吞）')
+  const okPlain = renameOutcome({ ok: true, rolledBack: false, changed: [] })
+  assert.equal(okPlain.rolledBack, false)
+  const clash = renameOutcome({ ok: false, reason: 'target-exists', rolledBack: true, message: 'm' })
+  assert.equal(clash.kind, 'target-exists')
+  assert.equal(clash.rolledBack, true, '冲突分支 rolledBack 透传')
+  const failed = renameOutcome({ ok: false, reason: 'transaction-failed', rolledBack: true, message: 'm' })
+  assert.equal(failed.kind, 'rolled-back')
+  assert.equal(failed.rolledBack, true)
+  const plainFail = renameOutcome({ ok: false, reason: 'not-a-file', rolledBack: false, message: 'm' })
+  assert.equal(plainFail.rolledBack, false, '无回滚如实 false（缺省/显式 false 同判）')
+  const absent = renameOutcome({ ok: false, reason: 'not-found', message: 'm' })
+  assert.equal(absent.rolledBack, false, '缺省形不虚构回滚')
+})

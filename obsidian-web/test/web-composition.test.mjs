@@ -188,3 +188,15 @@ test('ARC-6：重交互件（el-dialog/el-popconfirm/el-tree-v2/el-table/textare
   }
   assert.deepEqual(offenders, [], `重交互件 v-if 残留（应 v-show 保挂载）：\n${offenders.join('\n')}`)
 })
+
+// ── M5（T13 review 随行收口）：语义色桥接——element-plus danger/warning/success 归一到 dsw state token ──
+test('M5 语义色桥接：--el-color-danger/warning/success → state token（真 token 零自造，与桥接块同纪律）', () => {
+  const bridge = stylesCss.match(/:root\s*\{[\s\S]*?\}/)?.[0] ?? ''
+  for (const [varName, token] of [
+    ['--el-color-danger', '--dsw-alias-state-error-primary'],
+    ['--el-color-warning', '--dsw-alias-state-warn-primary'],
+    ['--el-color-success', '--dsw-alias-state-success-primary'],
+  ]) {
+    assert.match(bridge, new RegExp(`${varName}:\\s*var\\(${token.replace(/-/g, '\\-')},`), `${varName} 必须桥接到 ${token}（语义色不得走 element-plus 原生色板）`)
+  }
+})

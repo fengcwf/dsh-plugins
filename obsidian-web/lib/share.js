@@ -456,26 +456,10 @@ async function mutateShare(root, token, mutate) {
   }, { waitMs: LOCK_WAIT_MS })
 }
 
-/** 改密（可改）：{password:string|null, autoPassword?:true}——null=清除（仅读角色） */
-export async function updateSharePassword(root, token, spec) {
-  const s = spec ?? {}
-  if (s.password === undefined && s.autoPassword !== true) throw fail('bad_request', '需给 password 或 autoPassword=true')
-  if (s.password !== undefined && s.password !== null && typeof s.password !== 'string') throw fail('bad_request', 'password 非法')
-  return await mutateShare(root, token, async (entry) => {
-    if (s.password === null && s.autoPassword !== true) {
-      if (entry.role === 'write') throw fail('password_required', '写权限必须保留访问密码（OW-INV-1），不可清除')
-      delete entry.passwordHash
-      return { share: toPublic(entry), password: null }
-    }
-    const pw = resolvePasswordSpec(s, { required: false })
-    if (pw.passwordHash) entry.passwordHash = pw.passwordHash
-    return { share: toPublic(entry), password: pw.plaintext }
-  })
-}
-
 /** 调权限：升 write 必须已有密码或同调给密码（OW-INV-1）；降 read 保留密码
  *  T13 载荷合流：密码三态同调承载（password=<口令>=改密 / autoPassword=true=重新生成 /
- *  password=null=清除，仅非写角色）——管理 UI 密码调整全走本调用（旧改密端点客户端=死导出已摘），
+ *  password=null=清除，仅非写角色）——管理 UI 密码调整全走本调用；T13 concern④ 收口（T14）：
+ *  独立改密端点与模型函数已整体下线（未发版零外部调用方），本调用=密码调整单一来源，
  *  单锁内 RMW 原子（不做「先调权再改密」两段式=免中窗状态分裂）；写+清=显式拒不冒充。 */
 export async function updateShareRole(root, token, role, options = {}) {
   if (!ROLES.includes(role)) throw fail('bad_request', `role 非法（${ROLES.join('/')}）`)

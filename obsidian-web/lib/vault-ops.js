@@ -309,7 +309,8 @@ function snapshot(content, stat) {
  * >}
  *   diffUndo.before = 保存前内容快照（成功=一键还原源；冲突=盘上现内容，重载/对比基线）
  *   diffUndo.incoming = 冲突时本次尝试写入内容（对比面）
- * 边界：仅覆盖已存在文件（新建=createNote）；realpath/symlink 围栏已归位（T12 终态）。
+ * 边界：仅覆盖已存在文件（新建=createNote）；realpath/symlink 围栏已归位（T12 终态）；
+ * 最终分量 symlink 显式拒 not-a-file（T14 写面 lstat 门，与 export/share 同向）。
  */
 export async function saveNote(root, relPath, content, options = {}) {
   const opts = options ?? {}
@@ -327,6 +328,11 @@ export async function saveNote(root, relPath, content, options = {}) {
   const abs = resolveInRoot(root, relPath) // realpath 围栏（T12 终态）
   return withFileLock(abs, async () => {
     resolveInRoot(root, relPath) // TOCTOU 口径②：锁内 realpath 复核（入口→写之间换入即拒）
+    // T14 收口（T12 review Issue 1(b)）：写面显式拒最终分量 symlink（lstat 门与 export/share 同向，
+    // 不解引用）——文件级别名写语义裁定=写面拒：别名节点不被 rename 顶替、别名目标不被静默写穿
+    // （同物不变量保真）；中间段目录别名解引用语义不变（OW-INV-7⑨ 正例）。
+    const node = await fs.promises.lstat(abs).catch(() => null)
+    if (node?.isSymbolicLink()) throw fail('not-a-file', `仅普通文件支持保存（拒 symlink/目录/其他）：${relPath}`)
     const stat = statOrThrow(abs, relPath)
     if (!stat.isFile()) throw fail('not_found', `不是文件：${relPath}`)
     const beforeContent = fs.readFileSync(abs, 'utf8')
@@ -358,13 +364,14 @@ export async function saveNote(root, relPath, content, options = {}) {
 
 // ── createNote：新建写侧（T9 文件夹分享（写）「新建」原语；OW-INV-5 永不静默覆盖在创建面）────────
 // 创建语义=独占创建（乐观条件=「目标不存在」，锁内 lstat 复核——OW-INV-3「无乐观锁不落盘」的创建面
-// 口径）；目标已存在一律域结果拒（文件/目录同拒），绝不覆盖既有内容。ARC-4 fs-safe 收尾同 saveNote
+// 口径）；目标已存在一律域结果拒（文件/目录同拒），绝不覆盖既有内容；最终分量 symlink=类型拒
+// not-a-file（T14 写面 lstat 门，与 export/share 同向）。ARC-4 fs-safe 收尾同 saveNote
 // （原子写 + 文件 fsync + 目录 fsync）。
 /**
  * 新建文件（目录内新建——OW-INV-2 文件夹分享（写）四操作之一）。
  * @returns {Promise<
  *   | {ok: true, path, mtime, etag, size}
- *   | {ok: false, reason: 'target-exists' | 'parent-missing'}
+ *   | {ok: false, reason: 'target-exists' | 'parent-missing' | 'not-a-file'}
  * >}
  *   域结果一律对象返回（不抛错）；仅形参/围栏非法 throw bad_request；IO 异常 throw io_error。
  */
@@ -376,6 +383,9 @@ export async function createNote(root, relPath, content = '') {
     return await withFileLock(abs, async () => {
       resolveInRoot(root, relPath) // TOCTOU 口径②：锁内 realpath 复核
       const existing = await fs.promises.lstat(abs).catch(() => null)
+      // T14 收口（T12 review Issue 1(b)）：最终分量 symlink=类型显式拒 not-a-file（与 export/share
+      // lstat 门同向；非 target-exists 冒充占用）——不顶替别名节点、不写穿别名目标（同物不变量保真）
+      if (existing?.isSymbolicLink()) return { ok: false, reason: 'not-a-file' }
       if (existing !== null) return { ok: false, reason: 'target-exists' } // 文件/目录同拒（永不静默覆盖）
       await writeFileAtomic(abs, content, { mode: 0o644 })
       fsyncPath(abs) // ARC-4：fsync 文件

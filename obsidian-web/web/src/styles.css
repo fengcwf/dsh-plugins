@@ -8,6 +8,9 @@
 
   /* element-plus 主题桥接 → dsw token（唯一色板来源） */
   --el-color-primary: var(--dsw-alias-state-business-primary, Highlight);
+  --el-color-danger: var(--dsw-alias-state-error-primary, CanvasText);
+  --el-color-warning: var(--dsw-alias-state-warn-primary, ButtonBorder);
+  --el-color-success: var(--dsw-alias-state-success-primary, CanvasText);
   --el-text-color-primary: var(--dsw-alias-label-primary, CanvasText);
   --el-text-color-regular: var(--dsw-alias-label-primary, CanvasText);
   --el-text-color-secondary: var(--dsw-alias-label-secondary, GrayText);
