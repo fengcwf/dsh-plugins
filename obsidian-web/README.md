@@ -39,5 +39,5 @@ dsh plugin --profile web remove obsidian-web
 ## 发版检查清单（dsh-plugin-ops 版本纪律）
 
 1. **版本纪律五步缺一不可**：bump `package.json` version → 本 CHANGELOG `## <ver> — <日期>` → 根 README 版本表同步 → `bash ../scripts/check-release.sh obsidian-web` PASS → commit + tag `obsidian-web-v<ver>` + push + `gh release create`。
-2. **dist 与源码同 commit**（T2 交接检查项）：`web/src`/`web/vite.config.js` 变更必须**同一 commit** 重构建入库 `web/dist`（快照安装零构建=线上即产物）；提交前 `npm run build` 并复核 `git diff --stat` 里 dist 与源码同批出现。
+2. **dist 与源码同 commit**（T2 交接检查项｜发版级机械锁：src/dist 同批由 check-release 把关）：`web/src`/`web/index.html`/`web/vite.config.js` 变更必须**同一 commit** 重构建入库 `web/dist`（快照安装零构建=线上即产物）；`scripts/check-release.sh` **commit 级校验**把关（基线=上个插件 tag，无 tag=未发版窗口全历史；构建输入变更未伴 `web/dist` 变更即 FAIL「重建 dist 同 commit」）；提交前 `npm run build` 并复核 `git diff --stat` 里 dist 与源码同批出现。
 3. **token 快照刷新义务**（T13）：dsh 色板（dsh-client-ui-theme）升版后重跑 `node tools/extract-token-snapshot.mjs --write` 刷新分享页快照（缺定义 fail-loud）。
