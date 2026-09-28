@@ -205,8 +205,10 @@ export function apply(ctx, rawConfig) {
   if ((wsProbe === null) !== (connProbe === null)) {
     warn(ctx, '[kb-context] webServer/connection 服务缝半缺，设置面数据（/api/kb-context/settings）未注册（fail-open：检索/注入面照常）')
   }
-  // 子插件承载设置面数据注册（B2 修复，T8-D1 §4）：注册动作在 effect 执行体内当场跑、返回值=拆除器；
-  // 注册中途抛错先收敛已注册资源再上抛（label 留痕）；拆除器覆盖全部已注册资源且幂等。
+  // 子插件承载设置面数据注册（B2 修复，T8-D1 §4）：注册动作在 effect 执行体内当场跑、返回值=拆除器（label 留痕）；
+  // 边界如实（复审 W-1 降格承诺）：当前 registerSettingsRoutes 为单次 register 形、无"注册一半"半拉状态；
+  // 下方 catch 收敛环只覆盖已返回的 disposers——registerSettingsRoutes 内部若多资源中途 throw，内层资源不由外层收敛
+  // （disposers 仅在成功 return 时交出），真收敛待多路由化时再做；拆除器覆盖全部已注册资源且幂等。
   try {
     if (typeof ctx?.plugin === 'function') {
       ctx.plugin({
@@ -224,7 +226,7 @@ export function apply(ctx, rawConfig) {
                 warn: (line) => warn(ctx, line),
               }))
             } catch (e) {
-              for (const d of disposers) { try { d() } catch { /* 收敛不抛 */ } } // 先收敛已注册资源
+              for (const d of disposers) { try { d() } catch { /* 收敛不抛 */ } } // 收敛已返回的 disposers（多资源中途抛错不达，边界见上注）
               throw e // 再上抛（宿主 fiber 兜底收集；绝不吞错）
             }
             let disposed = false
