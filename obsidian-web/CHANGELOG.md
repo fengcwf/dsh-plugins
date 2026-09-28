@@ -1,5 +1,13 @@
 # Changelog — obsidian-web
 
+## 0.2.1 — 2026-09-28
+- **B2 修复（功能面全 404 根因）**：`ctx.effect` 工厂语义误用——五位点（`lib/index.js` ×4 + `lib/client.js`）改「注册在执行体内当场跑、返回值=拆除器」形 + 注册抛错先收敛已注册资源再上抛 + 拆除幂等；修前路由注册完即自拆（`/ob/*` 全 404/405）、独立分享面 close 在 start 前空跑 + 拆除期泄漏监听。宿主契约对照 cordis `_execute`（立即执行、返回函数=拆除器）。
+- **测试契约同源化**：6 测试文件伪 ctx `effect` 改真语义（含 `TypeError('Invalid effect')` 分支，6/6 逐副本 `assert.throws` 锁死、删行变异必红）+ 新增 `test/apply-integration.test.mjs` 两轴 integration 测试（注册面在场 / 拆除面正确 / 真 handler 双向 / 独立 listener 真关）；482→492 全绿。
+- **包内配置缺省归位**：`cordis.patch.yml` `server.sharePort` 缺省 3500→`null`（同域 prefix 零自有端口，根治与 login-gate 3500 的缺省冲突）。⚠️ 行为提示：config 整行替换语义下**profile 覆盖者不受影响**（生产 profile 现配 3501 照旧）；仅全新缺省安装的行为从「独立 3500 listener」变为「webServer 同域 /ob_share」。
+- **依赖归位**：`zod` 从 `peerDependencies` 迁 `dependencies ^4.6.5`（git 快照自动代装，干净 profile 单装不再 `ERR_MODULE_NOT_FOUND`）；`@deepseek-ai/*` 三件 peer+dev 双声明不变。
+- 验证：`.testenv` 钉 sha 真安装复验 boot 冒烟四关 + 功能探针全绿（修前 404/405 → 修后 `/ob/`、`/ob/api/tree`、`/ob/api/file`、`POST /ob/api/render`、`/ob_share/<token>` 两模式全在场）；tester PASS / 终审 PASS / Phase 8 F1 闭环（492/0）。
+
+
 ## 0.2.0 — 2026-09-28
 - **问题 A：分享面 3500 与 login-gate 冲突 + watchdog 掉 dsh 服务 → 双模式（照 dsh-better-sidebar 路线）**：
   - **默认不再开自有端口**：分享面挂 `ctx.webServer.register({kind:'prefix', path:'/ob_share', handler})`（dsh web 3080 同域）——`server.sharePort` 契约改 `number|null`：`null`（默认）=挂 webServer、`number`=独立 listener（可选模式，照旧可单独关停）。**对外契约 `3500 /ob_share/<token>` 语义不变**（PATH 契约非端口契约）：由 login-gate/nginx 直通反代保持（OW-INV-2 批注修订）；链接生成端口缺省恒 3500（`share-links` 回落单一来源不变）。

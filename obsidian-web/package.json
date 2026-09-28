@@ -1,6 +1,6 @@
 {
   "name": "obsidian-web",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "DeepSeek Harness 的 Obsidian vault Web 管理插件：Web UI 查看/编辑/下载/分享 + vault 目录维护（宿主半包 REST + client 面板 + 分享面 webServer/独立 listener 双模式）",
   "type": "module",
   "main": "lib/index.js",
