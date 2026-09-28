@@ -1,12 +1,12 @@
 # dsh-plugins —— fengcwf 的 dsh 自研插件集（monorepo）
 
-> **布局说明（2026-09-27 扁平化）**：本仓库根 = `~/.dsh/plugins/`，每个插件一目录并列居下（`dsh-plugins/` 嵌套层已撤销）。目标 dsh：`>=0.1.0-rc.6 <0.2.0-0`；插件均零构建纯 ESM JS。
+> **布局说明（2026-09-27 扁平化）**：本仓库根 = `~/.dsh/plugins/`，每个插件一目录并列居下（`dsh-plugins/` 嵌套层已撤销）。目标 dsh：`>=0.1.0-rc.6 <0.3.0-0`（0.2.x 支持自 2026-09-29 的 rtk-kit/github-ops 0.2.1 起）；插件均零构建纯 ESM JS。
 > **位置语义**（官方 docs/user/develop/basic/publish.zh.md）：**源码位**=`~/.dsh/plugins/<插件名>/`（本仓子目录）；**安装落地**=`~/.dsh/profiles/<profile>/node_modules/<pkg>`（`dsh plugin` = profile 内 pnpm，钉版本 git 快照；link: 模式废弃——2026-09-23 缺依赖事故教训）。
 
 | 插件 | 版本 | 职责 |
 |---|---|---|
-| [dsh-rtk-kit](dsh-rtk-kit/) | 0.2.0 | RTK 集成：bash 命令自动改写走 rtk 压缩（resolve 缝、fail-open）+ 会话 awareness + rtk_doctor 诊断 |
-| [dsh-github-ops](dsh-github-ops/) | 0.2.0 | GitHub 集成：GitHub 命令强制 token 模式 + web_fetch 匿名 API 门禁 + 11 个仓库管理工具（gh 后端） |
+| [dsh-rtk-kit](dsh-rtk-kit/) | 0.2.1 | RTK 集成：bash 命令自动改写走 rtk 压缩（resolve 缝、fail-open）+ 会话 awareness + rtk_doctor 诊断（0.2.1=peer/engines 上界放宽至 <0.3.0-0，放行 dsh 0.2.x） |
+| [dsh-github-ops](dsh-github-ops/) | 0.2.1 | GitHub 集成：GitHub 命令强制 token 模式 + web_fetch 匿名 API 门禁 + 11 个仓库管理工具（gh 后端）（0.2.1=peer/engines 上界放宽至 <0.3.0-0，放行 dsh 0.2.x） |
 | [dsh-login-gate](dsh-login-gate/) | 0.2.0 | 登录门禁：表单登录（scrypt + HMAC 会话）+ 认证反代 + 原生 DSH 会话 + WS tunnel 修复 |
 | [kb-context](kb-context/) | 0.3.1 | 知识库上下文：vault 增量索引（FTS5）+ 检索（BM25/LIKE 兜底+deadline 守卫）+ 会话注入（触发/脱敏/截断）+ wiki_read/wiki_search/kb_diagnose 工具 + 设置菜单配置面 |
 | [wiki-steward](wiki-steward/) | 0.4.1 | wiki 管家：会话捕获入 raw/ + kb_validate 六规则校验 + kb_mark sha256 原子回写 + wiki CRUD（.trash 可逆/journal 事务/wikilink 重写）+ 入队告警 + tools/pre-execute 写入拦截 + 设置菜单配置面 + 侧栏 ingest 面板（日志拼接/手动触发） |

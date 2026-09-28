@@ -1,6 +1,6 @@
 {
   "name": "dsh-github-ops",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "DeepSeek Harness 的 GitHub 集成：GitHub 相关命令强制走 token 模式（curl 自动注入 $(gh auth token)、git clone 走 gh）+ web_fetch 匿名抓 API 门禁 + 10 个仓库管理工具（gh 后端）",
   "type": "module",
   "main": "lib/index.js",
@@ -19,8 +19,8 @@
     "zod": "^4.3.6"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.1 <0.2.0-0",
-    "@deepseek-ai/dsh-llm": ">=0.1.0-rc.1 <0.2.0-0"
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-llm": ">=0.1.0-rc.1 <0.3.0-0"
   },
   "devDependencies": {
     "@deepseek-ai/dsh-tools": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-tools",

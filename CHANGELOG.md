@@ -2,6 +2,9 @@
 
 > 纪律：每次更新 = 版本号 + 更新记录（本文件 + 各插件 `CHANGELOG.md` + tag `<插件名>-v<版本>`）。
 
+## 2026-09-29
+- `dsh-rtk-kit` / `dsh-github-ops` **0.2.1（兼容面，随 dsh 0.2.0-rc.1 升级发版）**：`peerDependencies`（`@deepseek-ai/dsh-tools`/`dsh-llm`）与 `dsh.plugin.json` engines 上界 `<0.2.0-0` → `<0.3.0-0`，放行 dsh 0.2.x；行为零变更。背景=0.2.0-rc.1 版本门禁拒载（`docs/test-env-upgrade-020-2026-09-29.md` §2 + `dsh-research/31-dsh升级0.2.0-rc.1分析.md`）；两插件 checkout 测试绿（rtk-kit 9/9、github-ops 16/16）。
+
 ## 2026-09-28
 - `kb-context` **0.3.1（Phase 8 修复波，未发版）**：B1 服务缝取得修复（softService 软取得 → 双层子插件 `ctx.plugin` 硬 inject + configEditor 惰性求值，`/api/kb-context/settings` 真运行时可注册；修前"测试全绿但线上 404"）+ B2 effect 工厂语义修复（注册放执行体、返回值=拆除器、拆除期全撤零泄露；修前注册当场自拆）+ zod 依赖归类（peer→`dependencies`，第三方统一进 dependencies 裁定）；来源报告 `docs/test-env-deploy-3plugins-2026-09-28.md`；详见 `kb-context/CHANGELOG.md`；tag `kb-context-v0.3.1` 归发版波。
 - `obsidian-web` **0.2.0（能力增强，未发版）**：问题 A 分享面双模式（照 dsh-better-sidebar 路线）——默认零自有端口挂 `ctx.webServer`（`/ob_share` 同域 3080），`server.sharePort:number|null`（number=独立 listener 可选），对外契约 `3500 /ob_share/<token>` 由 login-gate/nginx 直通反代保持（PATH 契约，OW-INV-2 批注）；独立模式 listener 失败 fail-open（绝不炸装载/宿主=watchdog 掉服务根因回归，start/syncState/handle 全路径零 unhandledRejection + 自愈重试）；问题 B 客户端面板菜单（照 skill-explorer 模块契约）——`dsh.client` 声明 + 零构建 `lib/client.js`（`sidebar.panellist` 行「Obsidian vault」+ main 槽页 iframe 指 `/ob/` 三栏 UI）。详见 `obsidian-web/CHANGELOG.md`；tag `obsidian-web-v0.2.0` 归发版波。

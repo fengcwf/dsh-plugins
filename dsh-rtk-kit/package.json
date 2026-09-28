@@ -1,6 +1,6 @@
 {
   "name": "dsh-rtk-kit",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "DeepSeek Harness 的 RTK（Rust Token Killer）集成：bash 命令自动改写走 rtk 压缩输出（resolve 缝、fail-open）+ 会话 awareness 注入 + rtk_doctor 诊断工具",
   "type": "module",
   "main": "lib/index.js",
@@ -18,8 +18,8 @@
     "zod": "^4.3.6"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.1 <0.2.0-0",
-    "@deepseek-ai/dsh-llm": ">=0.1.0-rc.1 <0.2.0-0"
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-llm": ">=0.1.0-rc.1 <0.3.0-0"
   },
   "devDependencies": {
     "@deepseek-ai/dsh-tools": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-tools",
