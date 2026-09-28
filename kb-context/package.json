@@ -1,12 +1,13 @@
 {
   "name": "kb-context",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "DeepSeek Harness 的 Obsidian vault 上下文插件：触发词/实体命中后把 wiki 片段以 pre-step recall 注入会话，并提供 wiki_search / wiki_read 检索工具（FTS5 + grep 兜底，fail-open）",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./client": "./lib/client.js"
   },
   "files": [
     "lib",
@@ -15,7 +16,7 @@
   ],
   "scripts": {
     "test": "node --test",
-    "check": "node --check lib/index.js && node --check lib/tools.js && node --check lib/diagnose.js && node --test"
+    "check": "node --check lib/index.js && node --check lib/tools.js && node --check lib/diagnose.js && node --check lib/settings-routes.js && node --check lib/settings-write.js && node --check lib/client.js && node --test"
   },
   "peerDependencies": {
     "zod": "^4.6.5",
@@ -30,6 +31,14 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-layout"
+      ]
     }
   },
   "keywords": [

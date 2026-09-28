@@ -32,6 +32,7 @@ import { createWriteGate } from './gate.js'
 import { defaultLogSources } from './ingest-log.js'
 import { createIngestTrigger } from './ingest-trigger.js'
 import { registerIngestRoutes } from './ingest-routes.js'
+import { createApplyPatch } from './settings-write.js'
 
 export const name = 'wiki-steward'
 export const inject = ['tools']
@@ -566,10 +567,13 @@ export function apply(ctx, rawConfig, opts = {}) {
     }
   })
 
-  // ---- 设置页签数据面（ingest 面板：/wiki-steward/api/* + web/dist 静态）----
-  // webServer/connection 软取得（T13 timer 同款姿势）：inject 维持 ['tools'] 不加服务（load.test 钉住），
+  // ---- 数据面（设置面 + ingest 面板：/api/wiki-steward/* + web/dist 静态，官方路由形）----
+  // webServer/connection/configEditor 软取得（T13 timer 同款姿势）：inject 维持 ['tools'] 不加服务（load.test 钉住），
   // cordis 未 inject 取服务属性会抛 → try/catch 兜底。缺缝=非 web 部署面，fail-open 留痕（INV-15）：
-  // 捕获/工具面照常，只是设置页签数据面不注册。页签注册在客户端面（lib/client.js settings.plugins.tab）。
+  // 捕获/工具面照常，只是数据面不注册。设置菜单注册在客户端面（lib/client.js settings.section，
+  // better-sidebar 路线）；ingest 面板=sidebar.panellist+main 槽页（skill-explorer 形）。
+  // 设置写缝=host configEditor（@deepseek-ai/dsh-config-editor——dsh-settings 服务同款持久化缝）：
+  // 可改白名单（lib/settings-write.js）→ 校验 → profile patch 落盘 → reconcile 热生效；缺缝=写端点 503 如实。
   const softService = (name, probe) => {
     try {
       if (typeof ctx?.get === 'function') {
@@ -586,6 +590,8 @@ export function apply(ctx, rawConfig, opts = {}) {
   }
   const webServerSvc = softService('webServer', (s) => typeof s?.register === 'function')
   const connSvc = softService('connection', (s) => typeof s?.requestRejection === 'function')
+  const configEditorSvc = softService('configEditor', (s) => typeof s?.edit === 'function' && typeof s?.entries === 'function')
+  const applyPatch = configEditorSvc === null ? null : createApplyPatch({ configEditor: configEditorSvc, entryId: 'wiki-steward', Config })
   if (webServerSvc !== null && connSvc !== null) {
     const webOpts = opts.web ?? {}
     const ingestHome = webOpts.home ?? os.homedir()
@@ -600,6 +606,7 @@ export function apply(ctx, rawConfig, opts = {}) {
       trigger,
       sources,
       distDir,
+      applyPatch, // 设置写缝（缺=null → 写端点 503 如实，展示面照常）
       warn: (line) => warn(ctx, `[wiki-steward] ${line}`),
     })
     if (typeof ctx.effect === 'function') {
@@ -610,7 +617,7 @@ export function apply(ctx, rawConfig, opts = {}) {
       })
     }
   } else {
-    warn(ctx, '[wiki-steward] webServer/connection 服务缝缺失，设置页签数据面（/wiki-steward/api/*）未注册（fail-open：捕获/工具面照常）')
+    warn(ctx, '[wiki-steward] webServer/connection 服务缝缺失，数据面（/api/wiki-steward/*）未注册（fail-open：捕获/工具面照常）')
   }
 }
 
