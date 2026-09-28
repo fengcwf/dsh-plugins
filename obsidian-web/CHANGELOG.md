@@ -1,5 +1,17 @@
 # Changelog — obsidian-web
 
+## 0.2.0 — 2026-09-28
+- **问题 A：分享面 3500 与 login-gate 冲突 + watchdog 掉 dsh 服务 → 双模式（照 dsh-better-sidebar 路线）**：
+  - **默认不再开自有端口**：分享面挂 `ctx.webServer.register({kind:'prefix', path:'/ob_share', handler})`（dsh web 3080 同域）——`server.sharePort` 契约改 `number|null`：`null`（默认）=挂 webServer、`number`=独立 listener（可选模式，照旧可单独关停）。**对外契约 `3500 /ob_share/<token>` 语义不变**（PATH 契约非端口契约）：由 login-gate/nginx 直通反代保持（OW-INV-2 批注修订）；链接生成端口缺省恒 3500（`share-links` 回落单一来源不变）。
+  - **watchdog 安全（掉服务根因回归）**：独立模式端口占用/任何 listener 失败 → **fail-open**——该次 boot 分享面不启 + degraded 留痕（INV-15），**绝不抛出让插件装载失败/拖垮 dsh**。机制：`start()` API 级绝不 reject（绑定失败 resolve `{listening:false, reason:'listen_failed'}`）；`syncState` 自愈重试（同口同面）全路径零 unhandledRejection；listener `error` 永久监听（非 once，防 unhandled 'error' 炸进程）；`handle()` 全路径 fail-closed 网兜（统一 404/400 形 + 留痕）。根因分析（为何 better-sidebar 不掉服务）：零自有 listener + 全走 `ctx.webServer` + `ctx.effect` 收敛——本插件旧独立 listener 的绑定失败回路（`syncState` 定时重试 `void syncState()` 未接 catch → unhandledRejection 杀宿主进程 → watchdog 判死重启）即掉服务根因链，现全链封死。
+  - **面口径零分叉**：webServer 模式与独立模式共用同一 `createShareServer.handle` 实现（新增 `createShareHandler` 薄导出），精确前缀/统一 404 形/限流/鉴权/脱敏契约逐字不变；`share.enabled=false` 关停语义照旧（webServer 模式=handler 统一 404 面消失）。模式绑定=启动时配置值（热改 restartRequired）。
+  - **回归测试** `test/share-wiring.test.mjs` 6 项真验零 mock：默认 webServer 模式恰一处注册+真 HTTP 面契约原样；热禁用统一 404；端口占用 fail-open（apply 不抛+主 UI 照挂+留痕+零 unhandledRejection）；`start()` API 级绝不抛出；watchdog 回归（syncState 重试/热禁用自关/再启用全路径零 unhandledRejection）；释放端口后自愈真起面（同口同面）。
+- **问题 B：菜单未展示 → 客户端面板入口（照 @linxin666/dsh-client-ui-skill-explorer 模块契约）**：
+  - `package.json` 加 `dsh.client`（inject 三件 `@deepseek-ai/dsh-client-locale`/`dsh-client-ui-renderer`/`dsh-client-ui-layout`，`platform:"web"`）+ `exports["./client"]`（宿主按 `exports["./client"]` 定位 client bundle）；`files` 含 `lib`（client.js 进安装快照）。
+  - `lib/client.js` **零构建手写**（无 JSX/无打包器/零新增依赖）：`window.__ModuleLoader__.load({id:'obsidian-web', factory:(require)=>exports.apply/exports.inject})`；`ctx.slots.inject('sidebar.panellist', ...)` 注册行（id=`obsidian-web`、order=35、label=`Obsidian vault`）+ `ctx.slots.inject('main', ...)` 注册 main 槽页（iframe 指既有 `/ob/` 静态面——选型=复用 web-routes 已服务的三栏 UI，零重复实现；路径绝对形与本插件面既有约定一致）；两座经 `slots.inject` 等宿主声明（壳未声明=面板缺席不炸装载），注册交 `ctx.effect` 收敛。
+  - **回归测试** `test/client-module.test.mjs` 4 项：真 import 加载（`__ModuleLoader__.load` 定义真捕获）、工厂产物形（`exports.apply/inject` 在）、面板注册契约（行/页注册形 + iframe `src=/ob/` + dispose 全撤）、manifest 声明（dsh.client 三件+platform+exports+files 含 lib）。
+- **发版三件**：bump 0.2.0（能力=minor）+ 本 CHANGELOG + 根 README 版本表/根 CHANGELOG 同步 + README 配置表/安装钉版本更新；契约锁同步（`load.test.mjs` sharePort 双模式、`manifest.test.mjs` 0.2.0）。delta-spec 批注：OW-INV-2「3500 /ob_share」=外部契约（反代达成），内部面挂 webServer。不 tag 不 push（归发版波）。
+
 ## 0.1.1 — 2026-09-28
 - **Bug 修复：boot 因索引库打开失败而装载失败（`database is locked`）→ fail-open**（生产日志 304/324 两轮 boot 必现，`1 entry did not activate`，插件装载失败）：
   - **根因（复现/strace/库文件态实证，详见 `.superpowers/sdd/tasks/fix-boot-lock-report.md`）**：vault 落 CIFS（`vers=3.1.1,nounix,mapposix,noperm,soft`）挂载，SMB per-handle 字节锁语义把 SQLite 同 fd 锁升级（`F_WRLCK [0x40000002,510)` 覆盖同 fd 已持 `F_RDLCK` 同区间）判为自身冲突 `EACCES`→SQLITE_BUSY→`database is locked`——该挂载上任何 SQLite 写（含建库 SCHEMA）恒失败（全新文件/零进程持有必挂、`index.db` 停在 0 字节、本地盘同代码整条锁序列全绿）。候选①锁残留/②双实例双开/③IMMEDIATE 并发事务均被实证排除。

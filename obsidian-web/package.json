@@ -1,11 +1,12 @@
 {
   "name": "obsidian-web",
-  "version": "0.1.1",
-  "description": "DeepSeek Harness 的 Obsidian vault Web 管理插件：Web UI 查看/编辑/下载/分享 + vault 目录维护（宿主半包 REST + client 面板 + 独立分享服务）",
+  "version": "0.2.0",
+  "description": "DeepSeek Harness 的 Obsidian vault Web 管理插件：Web UI 查看/编辑/下载/分享 + vault 目录维护（宿主半包 REST + client 面板 + 分享面 webServer/独立 listener 双模式）",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
+    "./client": "./lib/client.js",
     "./package.json": "./package.json"
   },
   "files": [
@@ -17,7 +18,7 @@
   ],
   "scripts": {
     "test": "node --test",
-    "check": "node --check lib/index.js && node --check lib/vault-ops.js && node --check lib/path-alias.js && node --check lib/vault-profiles.js && node --check lib/export.js && node --check lib/zip.js && node --check lib/wikilink-rewrite.js && node --check lib/share.js && node --check lib/share-theme.js && node --check lib/share-links.js && node --check lib/render.js && node --check lib/render-flavor.js && node --check lib/render-inline.js && node --check lib/search.js && node --check lib/index-store.js && node --check lib/index-service.js && node --check lib/web-routes.js && node --check lib/share-server.js && node --check lib/redact.js && node --test",
+    "check": "node --check lib/index.js && node --check lib/client.js && node --check lib/vault-ops.js && node --check lib/path-alias.js && node --check lib/vault-profiles.js && node --check lib/export.js && node --check lib/zip.js && node --check lib/wikilink-rewrite.js && node --check lib/share.js && node --check lib/share-theme.js && node --check lib/share-links.js && node --check lib/render.js && node --check lib/render-flavor.js && node --check lib/render-inline.js && node --check lib/search.js && node --check lib/index-store.js && node --check lib/index-service.js && node --check lib/web-routes.js && node --check lib/share-server.js && node --check lib/redact.js && node --test",
     "build": "vite build --config web/vite.config.js",
     "dev": "vite --config web/vite.config.js"
   },
@@ -40,6 +41,14 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-layout"
+      ],
+      "platform": "web"
     }
   },
   "keywords": [
