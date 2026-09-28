@@ -174,53 +174,70 @@ export function apply(ctx, rawConfig) {
   ctx.on('agent/pre-step', handler, { prepend: true })
 
   // ---- 设置面数据面（/api/kb-context/settings，官方路由形，沿 wiki-steward 同款）----
-  // webServer/connection/configEditor 软取得（wiki-steward 同款姿势）：inject 维持 ['tools'] 不加服务，
-  // cordis 未 inject 取服务属性会抛 → try/catch 兜底。缺缝=非 web 部署面 fail-open 留痕（INV-15）：
-  // 检索/注入面照常，只是设置面数据不注册。设置菜单注册在客户端面（lib/client.js settings.section，
-  // better-sidebar 路线）。设置写缝=host configEditor（dsh-settings 服务同款持久化缝）：
-  // 可改白名单（lib/settings-write.js）→ 校验 → profile patch 落盘 → reconcile 热生效（per-call 读即刻可见）。
-  const softService = (name, probe) => {
-    try {
-      if (typeof ctx?.get === 'function') {
-        const a = ctx.get(name)
-        if (probe(a)) return a
-        const b = ctx.get(name, false) // 非严格：提供者未激活也认（懒补接面）
-        if (probe(b)) return b
-      }
-    } catch { /* cordis 代理在服务缺位时抛——走兜底 */ }
-    try {
-      if (probe(ctx?.[name])) return ctx[name]
-    } catch { /* 同上 */ }
-    return null
-  }
+  // B1 修复（R-4，T8-D1 §2/§3）双层子插件形（替代 softService 单次快照——apply 时序窗口结构性不可靠）：
+  //  - 外层 inject=['tools'] 不动：工具面 + pre-step 在 headless/acp/sdk/web 全部署面照常；
+  //  - 设置面数据改内层子插件硬 inject ['webServer','connection'] 承载：provider 缺位=延迟激活不炸装载、
+  //    provider 到达自动补激活（宿主代管 fiber 生命周期，消灭「apply 时快照 null → 整段跳过」）；
+  //  - configEditor 不进硬 inject（保持可缺位=只读部署如实）：per-request 惰性 ctx.get 求值——
+  //    缺位=POST 503 write_unavailable、GET writable:false 如实，后到可见；
+  //  - 半缺缝留痕（INV-15 不弱化）：告警专用 best-effort 探测（仅 warn，不参与注册决策；探测不抛）。
+  // 双缺=非 web 部署面正常形态，数据面本就无处可注册，不告警（既有告警计数契约零改动）。
   const readCfg = () => {
     const p = Config.safeParse(rawConfig)
     return p.success ? p.data : Config.safeParse({}).data // 非法回退全默认（与 apply 告警面一致）
   }
-  const webServerSvc = softService('webServer', (s) => typeof s?.register === 'function')
-  const connSvc = softService('connection', (s) => typeof s?.requestRejection === 'function')
-  const configEditorSvc = softService('configEditor', (s) => typeof s?.edit === 'function' && typeof s?.entries === 'function')
-  const applyPatch = configEditorSvc === null ? null : createApplyPatch({ configEditor: configEditorSvc, entryId: 'kb-context', Config })
-  if (webServerSvc !== null && connSvc !== null) {
-    const disposers = registerSettingsRoutes({
-      register: (spec) => webServerSvc.register(spec),
-      connection: connSvc,
-      getConfig: readCfg, // 热改现读（per-call 读语义）
-      applyPatch, // 设置写缝（缺=null → 写端点 503 如实，展示面照常）
-      warn: (line) => warn(ctx, line),
-    })
-    if (typeof ctx.effect === 'function') {
-      ctx.effect(() => {
-        for (const d of disposers) {
-          try { d() } catch { /* 收敛不抛 */ }
-        }
-      })
-    }
-  } else if (webServerSvc !== null || connSvc !== null) {
-    // 半缺缝（webServer/connection 只到其一）=接线异常，留痕（INV-15）；
-    // 双缺=非 web 部署面正常形态，数据面本就无处可注册，不告警（既有告警计数契约零改动）
+  // 服务 best-effort 探测（只读、不抛、不参与注册决策）：cordis 代理在服务缺位/未 inject 时可能抛 → 收敛 null
+  const probeService = (name) => {
+    try {
+      if (typeof ctx?.get === 'function') return ctx.get(name) ?? ctx.get(name, false) ?? null
+    } catch { /* 探针收敛不抛 */ }
+    return null
+  }
+  // configEditor 惰性求值（per-request，绝不做启动期单次快照）：取到=可写缝，缺位=null（写端点 503 如实）
+  const lazyApplyPatch = () => {
+    const svc = probeService('configEditor')
+    if (svc === null || typeof svc.edit !== 'function' || typeof svc.entries !== 'function') return null
+    return createApplyPatch({ configEditor: svc, entryId: 'kb-context', Config })
+  }
+  // 半缺缝（webServer/connection 只到其一）=接线异常，留痕（INV-15）；双缺不告警
+  const wsProbe = probeService('webServer')
+  const connProbe = probeService('connection')
+  if ((wsProbe === null) !== (connProbe === null)) {
     warn(ctx, '[kb-context] webServer/connection 服务缝半缺，设置面数据（/api/kb-context/settings）未注册（fail-open：检索/注入面照常）')
   }
+  // 子插件承载设置面数据注册（B2 修复，T8-D1 §4）：注册动作在 effect 执行体内当场跑、返回值=拆除器；
+  // 注册中途抛错先收敛已注册资源再上抛（label 留痕）；拆除器覆盖全部已注册资源且幂等。
+  try {
+    if (typeof ctx?.plugin === 'function') {
+      ctx.plugin({
+        inject: ['webServer', 'connection'],
+        apply(c) {
+          if (typeof c?.effect !== 'function') return // 假 ctx 缺 effect 缝=跳过注册不告警（告警计数契约零弱化）
+          c.effect(() => {
+            const disposers = []
+            try {
+              disposers.push(...registerSettingsRoutes({
+                register: (spec) => c.webServer.register(spec),
+                connection: c.connection,
+                getConfig: readCfg, // 热改现读（per-call 读语义）
+                getApplyPatch: lazyApplyPatch, // configEditor 惰性（后到可见）
+                warn: (line) => warn(ctx, line),
+              }))
+            } catch (e) {
+              for (const d of disposers) { try { d() } catch { /* 收敛不抛 */ } } // 先收敛已注册资源
+              throw e // 再上抛（宿主 fiber 兜底收集；绝不吞错）
+            }
+            let disposed = false
+            return () => {
+              if (disposed) return
+              disposed = true
+              for (const d of disposers) { try { d() } catch { /* 收敛不抛 */ } }
+            }
+          }, 'kb-context: settings-routes')
+        },
+      })
+    }
+  } catch { /* ctx.plugin 缺位/异常 fail-open：装载不炸（等价宿主 _reload 兜底语义） */ }
 }
 
 // ⚠️ default 必须是对象（R13）：宿主读 default.inject / default.apply

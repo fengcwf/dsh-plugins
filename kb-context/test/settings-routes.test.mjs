@@ -48,6 +48,7 @@ function mkSetup(opts = {}) {
     connection: host.connection,
     getConfig: () => ({ triggers: { words: ['OA'], entityPaths: [] }, budget: { maxSnippets: 3, maxTokens: 2000 }, timeoutMs: 1500, scope: { indexAll: ['wiki'], grepOnDemand: [] }, hotMap: { enabled: false, maxChars: 600 }, vaultRoot: '/mnt/unraid_data/Obsidian' }),
     ...(opts.applyPatch ? { applyPatch: opts.applyPatch } : {}),
+    ...(opts.getApplyPatch ? { getApplyPatch: opts.getApplyPatch } : {}),
     warn: () => {},
   })
   return { host, disposers }
@@ -168,4 +169,39 @@ test('method guard：GET settings 不收 PUT（405 + allow 头）', async () => 
   assert.equal(res.status, 405)
   assert.equal(res.json().error.code, 'method_not_allowed')
   assert.equal(res.headers.allow, 'GET, POST')
+})
+
+test('getApplyPatch 惰性写缝（B1 时序窗口回归锁）：缺位 → GET writable:false + POST 503；后到 → 同 handler 转可写 200', async () => {
+  // configEditor 后到可见：per-request 求值，不做 apply 时单次快照（T8-D1 §2-d/§2-e）
+  let editor = null
+  const { host } = mkSetup({
+    getApplyPatch: () => (editor === null ? null : createApplyPatch({ configEditor: editor, entryId: 'kb-context', Config })),
+  })
+  // 缺位：展示面照常 + writable:false 如实；写端点 503 write_unavailable（不许 500/404）
+  let res = await call(host, { url: '/api/kb-context/settings' })
+  assert.equal(res.status, 200)
+  assert.equal(res.json().data.writable, false)
+  res = await call(host, { method: 'POST', url: '/api/kb-context/settings', body: { patch: { timeoutMs: 800 } } })
+  assert.equal(res.status, 503)
+  assert.equal(res.json().error.code, 'write_unavailable')
+  // 后到：同一 handler（不重注册）立即可见
+  const editCalls = []
+  editor = {
+    entries: () => [{ options: { id: 'kb-context' } }],
+    edit: async (entry, change) => { editCalls.push(change({ triggers: { words: [] } }, {})) },
+  }
+  res = await call(host, { url: '/api/kb-context/settings' })
+  assert.equal(res.status, 200)
+  assert.equal(res.json().data.writable, true)
+  res = await call(host, { method: 'POST', url: '/api/kb-context/settings', body: { patch: { timeoutMs: 800 } } })
+  assert.equal(res.status, 200)
+  assert.equal(res.json().data.ok, true)
+  assert.deepEqual(editCalls, [{ triggers: { words: [] }, timeoutMs: 800 }])
+})
+
+test('getApplyPatch 解析器抛错 → 按缺位收敛（503 write_unavailable，绝不抛穿）', async () => {
+  const { host } = mkSetup({ getApplyPatch: () => { throw new Error('proxy: cannot get property "configEditor" without inject') } })
+  const res = await call(host, { method: 'POST', url: '/api/kb-context/settings', body: { patch: { timeoutMs: 800 } } })
+  assert.equal(res.status, 503)
+  assert.equal(res.json().error.code, 'write_unavailable')
 })

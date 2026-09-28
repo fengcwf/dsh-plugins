@@ -1,5 +1,14 @@
 # CHANGELOG — kb-context
 
+## 0.3.1 — 2026-09-28
+
+Phase 8 修复波（B1/B2/S3，来源报告：`changes/2026-09-28-kb-context-b1b2-fix/reports/diagnostic-report.md`（T8-D1 诊断）、`fix-b1b2-report.md`（T8-F1）、`fix-deps-report.md`（T8-F2））：
+
+- **B1 服务缝取得修复**（`lib/index.js`）：设置面服务由 softService 软取得改为双层子插件形 `ctx.plugin({inject:['webServer','connection'], …})` 硬 inject 取得 + configEditor 惰性求值——`/api/kb-context/settings` 在真运行时可注册成功（修前"测试全绿但线上 404"）；缺缝 fail-open 留痕语义不弱化（INV-15：双缺=非 web 面不告警，半缺留痕）
+- **B2 effect 工厂语义修复**（`lib/index.js`）：`ctx.effect` 按宿主契约改形——注册动作放执行体、返回值=拆除器、注册抛错先收敛已注册资源再上抛（label `kb-context: settings-routes`）；修前注册当场自拆（路由随注册即拆除）
+- **zod 依赖归类**（S3，工作区裁定 2026-09-28）：zod 从 `peerDependencies` 迁入 `dependencies`（^4.6.5，git 快照安装自动代装），devDep `link:` 移除；`@deepseek-ai/dsh-llm`/`@deepseek-ai/dsh-tools` 保持 peer+dev 双声明不变——修前第三方 zod 在 peer（peer 不代装，autoInstallPeers:false），干净安装即 `ERR_MODULE_NOT_FOUND: zod`
+- **测试 179→189**（+10：integration 形补 B1/B2 回归锁——假 ctx 真 `apply()` + 真注册/handler 执行 + cordis 代理"未 inject 访问即抛"模拟；manifest.test.mjs 契约改形锁 `dependencies.zod`，断言只增不删）；双 umask 口径全绿、`npm run check` exit 0
+
 ## 0.3.0 — 2026-09-28
 
 设置菜单新增相关设置配置（用户反馈需求）：kb-context 以**客户端模块 + settings.section 设置命名空间**进设置菜单（better-sidebar 路线，navLabel 自动进设置页），配置展示/可改。

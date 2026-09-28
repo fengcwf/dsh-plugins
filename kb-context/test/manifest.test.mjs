@@ -1,7 +1,7 @@
-// manifest 契约回归（终审 fix-wave ②）：zod peer 下界 T1 Ruling 兑现。
-// 背景（task-8 报告「对齐⑤」）：wiki-steward 首建即 zod peer ^4.6.5（Ruling「下界提至实测版本」——
-// lib/index.js 嵌套对象 `.prefault({})` 语义在 zod 实测版 4.6.5 上验证，peer 下界不得低于实测版），
-// kb-context 存量 ^4.3.6 暂不同步，随终审 fix 波统一——本文件把该 Ruling 钉成契约回归。
+// manifest 契约回归（T8-F2 修复波 R-5 改形）：zod 归类锁 dependencies（工作区裁定 2026-09-28）。
+// 背景：初版锁 peerDependencies.zod ^4.6.5（T1 Ruling「下界提至实测版本」）；工作区裁定细化后
+// **仅 @deepseek-ai/* 走 peer+dev 双声明，zod 等第三方统一进 dependencies**（git 快照安装自动代装）——
+// peer 不代装（autoInstallPeers:false），第三方进 peer = 单装即 ERR_MODULE_NOT_FOUND（2026-09-28 e2e 实锤）。
 // 说明：只读 manifest（零运行时副作用）；wiki-steward/package.json 为同仓对齐面（测试不入发布 files）。
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -10,16 +10,21 @@ import { fileURLToPath } from 'node:url'
 
 const readJson = (rel) => JSON.parse(fs.readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8'))
 
-test('zod peer 钉 ^4.6.5（T1 Ruling 兑现：下界=实测 .prefault 语义版 4.6.5）', () => {
+test('zod 归类锁 dependencies ^4.6.5（工作区裁定 2026-09-28：第三方统一进 dependencies，下界=实测 .prefault 语义版 4.6.5）', () => {
   const pkg = readJson('../package.json')
-  assert.equal(pkg.peerDependencies?.zod, '^4.6.5', 'peer 下界提至实测版本（^4.3.6 低于 .prefault 实测版）')
+  assert.equal(pkg.dependencies?.zod, '^4.6.5', 'zod 必须在 dependencies（git 快照自动代装）')
+  assert.equal(pkg.peerDependencies?.zod, undefined, 'zod 不得留在 peerDependencies（peer 不代装 → 单装 ERR_MODULE_NOT_FOUND）')
 })
 
-test('zod peer 与 wiki-steward 对齐（双包同界）', () => {
+test('zod 版本界按包各判（R-5 波次解耦：wiki-steward 侧待其波修正）', () => {
   const mine = readJson('../package.json')
   const steward = readJson('../../wiki-steward/package.json')
-  assert.equal(mine.peerDependencies?.zod, steward.peerDependencies?.zod,
-    `两包 zod peer 同界（kb-context=${mine.peerDependencies?.zod} vs wiki-steward=${steward.peerDependencies?.zod}）`)
+  // kb-context 侧：本波已迁 dependencies（上方同形锁；此处按包各判留对齐面独立证据）
+  assert.equal(mine.dependencies?.zod, '^4.6.5', 'kb-context 侧锁 dependencies.zod ^4.6.5')
+  assert.equal(mine.peerDependencies?.zod, undefined, 'kb-context 侧 zod 已迁出 peerDependencies')
+  // wiki-steward 侧：断言保留其现状（zod 仍在 peer 即照旧断言）——**不删断言、不为绿绕过**。
+  // 待 wiki-steward 波修正：其 zod 迁入 dependencies 后，本断言随该波同步改为 dependencies.zod 锁形。
+  assert.equal(steward.peerDependencies?.zod, '^4.6.5', '待 wiki-steward 波修正：wiki-steward zod 仍在 peerDependencies，照旧断言现状')
 })
 
 test('文档契约（遗留清障⑪-d）：R2 注释撞号改（vaultRoot=Controller 裁定②，R-教训序列号不再复用）', () => {

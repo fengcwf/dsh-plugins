@@ -1,6 +1,6 @@
 {
   "name": "kb-context",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "DeepSeek Harness 的 Obsidian vault 上下文插件：触发词/实体命中后把 wiki 片段以 pre-step recall 注入会话，并提供 wiki_search / wiki_read 检索工具（FTS5 + grep 兜底，fail-open）",
   "type": "module",
   "main": "lib/index.js",
@@ -18,13 +18,14 @@
     "test": "node --test",
     "check": "node --check lib/index.js && node --check lib/tools.js && node --check lib/diagnose.js && node --check lib/settings-routes.js && node --check lib/settings-write.js && node --check lib/client.js && node --test"
   },
+  "dependencies": {
+    "zod": "^4.6.5"
+  },
   "peerDependencies": {
-    "zod": "^4.6.5",
     "@deepseek-ai/dsh-llm": ">=0.1.7-rc.1",
     "@deepseek-ai/dsh-tools": ">=0.1.7-rc.1"
   },
   "devDependencies": {
-    "zod": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/zod",
     "@deepseek-ai/dsh-llm": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm",
     "@deepseek-ai/dsh-tools": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-tools"
   },

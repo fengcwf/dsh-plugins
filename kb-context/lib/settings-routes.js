@@ -69,10 +69,22 @@ async function readJsonBody(req) {
  * @param {{requestRejection: Function}} deps.connection 鉴权缝
  * @param {()=>object} deps.getConfig 热改现读 config（Config.parse 产物形，per-call 读）
  * @param {(patch:object)=>Promise<object>} [deps.applyPatch] 设置写缝（settings-write createApplyPatch 形；缺=写端点 503 如实）
+ * @param {()=>((patch:object)=>Promise<object>|null)} [deps.getApplyPatch] 惰性写缝解析器（per-request 求值，B1 修复：
+ *   configEditor 后到可见——取到函数=当下可写、null=当下写端点 503 如实；传入时优先于 applyPatch）
  * @param {(line:string)=>void} [deps.warn]
  * @returns {Function[]} dispose 列表（交 ctx.effect 收敛）
  */
-export function registerSettingsRoutes({ register, connection, getConfig, applyPatch = null, warn = () => {} }) {
+export function registerSettingsRoutes({ register, connection, getConfig, applyPatch = null, getApplyPatch = null, warn = () => {} }) {
+  // 写缝求值：惰性解析器 per-request 现求（解析器抛错=按缺位收敛，绝不抛穿）；缺省回落静态 applyPatch（既有形零变化）
+  const resolveApplyPatch = typeof getApplyPatch === 'function'
+    ? () => {
+        try {
+          return getApplyPatch()
+        } catch {
+          return null
+        }
+      }
+    : () => applyPatch
   const disposers = []
 
   const settingsGet = async (req, res) => {
@@ -84,7 +96,7 @@ export function registerSettingsRoutes({ register, connection, getConfig, applyP
         data: {
           config: cfg,
           editable: EDITABLE_PATHS.map((p) => [...p]),
-          writable: typeof applyPatch === 'function',
+          writable: typeof resolveApplyPatch() === 'function',
         },
       })
     } catch (e) {
@@ -96,12 +108,13 @@ export function registerSettingsRoutes({ register, connection, getConfig, applyP
   const settingsPost = async (req, res) => {
     if (!authGate(connection, req, res)) return
     if (!methodGuard(req, res, ['POST'])) return
-    if (typeof applyPatch !== 'function') {
+    const write = resolveApplyPatch()
+    if (typeof write !== 'function') {
       return fail(res, 503, 'write_unavailable', '配置写入缝缺失（configEditor 服务未挂载；本部署暂只读）')
     }
     try {
       const body = await readJsonBody(req)
-      const r = await applyPatch(body?.patch)
+      const r = await write(body?.patch)
       if (!r?.ok) {
         const code = r?.code ?? 'internal'
         const status = code === 'not_editable' || code === 'bad_patch' || code === 'invalid' ? 400 : code === 'no_entry' ? 409 : 500
