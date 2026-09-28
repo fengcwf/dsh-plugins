@@ -568,12 +568,18 @@ export function apply(ctx, rawConfig, opts = {}) {
   })
 
   // ---- 数据面（设置面 + ingest 面板：/api/wiki-steward/* + web/dist 静态，官方路由形）----
-  // webServer/connection/configEditor 软取得（T13 timer 同款姿势）：inject 维持 ['tools'] 不加服务（load.test 钉住），
-  // cordis 未 inject 取服务属性会抛 → try/catch 兜底。缺缝=非 web 部署面，fail-open 留痕（INV-15）：
-  // 捕获/工具面照常，只是数据面不注册。设置菜单注册在客户端面（lib/client.js settings.section，
-  // better-sidebar 路线）；ingest 面板=sidebar.panellist+main 槽页（skill-explorer 形）。
-  // 设置写缝=host configEditor（@deepseek-ai/dsh-config-editor——dsh-settings 服务同款持久化缝）：
-  // 可改白名单（lib/settings-write.js）→ 校验 → profile patch 落盘 → reconcile 热生效；缺缝=写端点 503 如实。
+  // B1 修复（2026-09-28 b1b2 波 TECH.md D1，kb-context 0.3.1 同族姿势）双层子插件形
+  // （替代 softService 单次快照——apply 时序窗口结构性不可靠：服务后到不可见、宿主代理取未 inject
+  // 属性即抛，兜底收敛 null → 整段跳过）：
+  //  - 外层 inject=['tools'] 不动（load.test 钉住）：工具/捕获/队列/写入拦截面在全部署面照常（INV-4）；
+  //  - web 数据面迁入内层子插件硬 inject ['webServer','connection']：provider 缺位=延迟激活不炸装载、
+  //    provider 到达自动补激活（宿主代管 fiber 生命周期，INV-2 fail-open）；
+  //  - configEditor 保持可缺位=只读部署如实（不进硬 inject）：apply 期软取得（缺=null → 写端点 503
+  //    如实、展示面照常，诚实面=响应判据非额外告警）；
+  //  - B2 修复（TECH.md D2）：注册动作在 effect 执行体内当场跑、返回值=拆除器、拆除幂等；
+  //    注册中途抛错先收敛已注册资源再上抛（label 留痕，绝不吞错）；
+  //  - 半缺缝留痕（INV-15 不弱化）：告警专用 best-effort 探测（仅 warn，不参与注册决策；探测不抛）；
+  //    双缺=非 web 部署面正常形态，数据面本就无处可注册，不告警（既有告警计数契约零改动）。
   const softService = (name, probe) => {
     try {
       if (typeof ctx?.get === 'function') {
@@ -588,37 +594,61 @@ export function apply(ctx, rawConfig, opts = {}) {
     } catch { /* 同上 */ }
     return null
   }
-  const webServerSvc = softService('webServer', (s) => typeof s?.register === 'function')
-  const connSvc = softService('connection', (s) => typeof s?.requestRejection === 'function')
   const configEditorSvc = softService('configEditor', (s) => typeof s?.edit === 'function' && typeof s?.entries === 'function')
   const applyPatch = configEditorSvc === null ? null : createApplyPatch({ configEditor: configEditorSvc, entryId: 'wiki-steward', Config })
-  if (webServerSvc !== null && connSvc !== null) {
-    const webOpts = opts.web ?? {}
-    const ingestHome = webOpts.home ?? os.homedir()
-    const ingestLogDir = webOpts.logDir ?? path.join(ingestHome, '.dsh', 'logs', 'cron')
-    const distDir = webOpts.distDir ?? fileURLToPath(new URL('../web/dist', import.meta.url))
-    const trigger = webOpts.trigger ?? createIngestTrigger({ home: ingestHome, logDir: ingestLogDir, now: () => new Date(nowMs()) })
-    const sources = webOpts.sources ?? defaultLogSources({ home: ingestHome })
-    const disposers = registerIngestRoutes({
-      register: (spec) => webServerSvc.register(spec),
-      connection: connSvc,
-      getConfig: readCfg, // 热改现读（与工具层 write.readOnly 同源）
-      trigger,
-      sources,
-      distDir,
-      applyPatch, // 设置写缝（缺=null → 写端点 503 如实，展示面照常）
-      warn: (line) => warn(ctx, `[wiki-steward] ${line}`),
-    })
-    if (typeof ctx.effect === 'function') {
-      ctx.effect(() => {
-        for (const d of disposers) {
-          try { d() } catch { /* 收敛不抛 */ }
-        }
+  const wsProbe = softService('webServer', (s) => typeof s?.register === 'function')
+  const connProbe = softService('connection', (s) => typeof s?.requestRejection === 'function')
+  if ((wsProbe === null) !== (connProbe === null)) {
+    warn(ctx, '[wiki-steward] webServer/connection 服务缝半缺，数据面（/api/wiki-steward/*）未注册（fail-open：捕获/工具面照常）')
+  }
+  try {
+    if (typeof ctx?.plugin === 'function') {
+      ctx.plugin({
+        inject: ['webServer', 'connection'],
+        apply(c) {
+          if (typeof c?.effect !== 'function') return // 缺 effect 缝=无拆除器路径，跳过注册（INV-3 零残留；真宿主子插件 ctx 恒有 effect）
+          c.effect(() => {
+            // 注册即记账（register 返回的拆除器当场入账）：中途抛错也能收敛已注册资源
+            const disposers = []
+            const register = (spec) => {
+              const d = c.webServer.register(spec)
+              if (typeof d === 'function') disposers.push(d)
+              return d
+            }
+            try {
+              const webOpts = opts.web ?? {}
+              const ingestHome = webOpts.home ?? os.homedir()
+              const ingestLogDir = webOpts.logDir ?? path.join(ingestHome, '.dsh', 'logs', 'cron')
+              const distDir = webOpts.distDir ?? fileURLToPath(new URL('../web/dist', import.meta.url))
+              const trigger = webOpts.trigger ?? createIngestTrigger({ home: ingestHome, logDir: ingestLogDir, now: () => new Date(nowMs()) })
+              const sources = webOpts.sources ?? defaultLogSources({ home: ingestHome })
+              for (const d of registerIngestRoutes({
+                register,
+                connection: c.connection,
+                getConfig: readCfg, // 热改现读（与工具层 write.readOnly 同源）
+                trigger,
+                sources,
+                distDir,
+                applyPatch, // 设置写缝（缺=null → 写端点 503 如实，展示面照常）
+                warn: (line) => warn(ctx, `[wiki-steward] ${line}`),
+              })) {
+                if (typeof d === 'function' && !disposers.includes(d)) disposers.push(d) // 双记账去重（register 记账 + 返回值交账）
+              }
+            } catch (e) {
+              for (const d of disposers) { try { d() } catch { /* 收敛不抛 */ } } // 先收敛已注册资源
+              throw e // 再上抛（宿主 fiber 兜底收集；绝不吞错）
+            }
+            let disposed = false
+            return () => {
+              if (disposed) return // 拆除幂等：二次调用不得重复拆除
+              disposed = true
+              for (const d of disposers) { try { d() } catch { /* 收敛不抛 */ } }
+            }
+          }, 'wiki-steward: ingest-routes')
+        },
       })
     }
-  } else {
-    warn(ctx, '[wiki-steward] webServer/connection 服务缝缺失，数据面（/api/wiki-steward/*）未注册（fail-open：捕获/工具面照常）')
-  }
+  } catch { /* ctx.plugin 缺位/异常 fail-open：装载不炸（等价宿主 _reload 兜底语义） */ }
 }
 
 // ⚠️ default 必须是对象（R13）：宿主读 default.inject / default.apply

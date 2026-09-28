@@ -98,3 +98,44 @@ test('apply：无 logger 时回落 console.warn（行为不丢）', async () => 
   assert.equal(recorded.length, 1)
   assert.match(recorded[0], /secrets/)
 })
+
+test('B1/B2 服务缝契约（2026-09-28 b1b2 修复波）：数据面经子插件硬 inject [\'webServer\',\'connection\']；effect 收到执行体、返回值=拆除器', async () => {
+  const { apply } = await import('../lib/index.js')
+  const pluginCalls = []
+  const effects = []
+  const warnings = []
+  const registerCalls = []
+  let disposerCalls = 0
+  const ctx = {
+    logger: { warn: (l) => warnings.push(l) },
+    on: () => {},
+    tools: { register: () => {} },
+    get: (name) => (name === 'timer' ? { interval: () => () => {} } : undefined),
+    // 子插件缝（宿主 _refresh 模拟）：服务齐即激活；effect 真语义（execute 立即跑、返回值=拆除器）
+    plugin: (p) => {
+      pluginCalls.push(p)
+      p.apply({
+        webServer: { register: (spec) => { registerCalls.push(spec); return () => { disposerCalls += 1 } } },
+        connection: { requestRejection: () => undefined },
+        logger: ctx.logger,
+        get: ctx.get,
+        effect: (execute, label) => { const teardown = execute(); effects.push({ label, teardown }); return teardown },
+      })
+      return {}
+    },
+  }
+  apply(ctx, undefined)
+  // 【新增 D4①】子注入契约：数据面子插件硬 inject 恰 ['webServer','connection']（外层 inject=['tools'] 不动，见上方 26 行）
+  assert.equal(pluginCalls.length, 1)
+  assert.deepEqual(pluginCalls[0].inject, ['webServer', 'connection'])
+  // 【新增 D4②】拆除器契约：注册在 effect 执行体内当场发生、apply 返回后零自拆、返回值=拆除器（全撤、幂等）
+  assert.equal(registerCalls.length, 1)
+  assert.equal(disposerCalls, 0, '注册完即自拆=缺陷（B2 修复前必红）')
+  assert.equal(effects.length, 1)
+  assert.equal(typeof effects[0].teardown, 'function')
+  effects[0].teardown()
+  assert.equal(disposerCalls, 1, '拆除器全撤')
+  effects[0].teardown()
+  assert.equal(disposerCalls, 1, '拆除器幂等')
+  assert.equal(warnings.length, 0, '健康路径零告警（既有告警计数契约零改动）')
+})
