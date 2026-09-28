@@ -1,7 +1,11 @@
-// share-server — 分享服务独立入口（T9 / OW-INV-2/6/10、C2 交接契约）
-// 服务形态选型（T9 报告写明）：**宿主内独立 node:http listener**（server.sharePort，独立端口/独立
-// 生命周期）——OW-INV-10「可单独关停」达成：close()/share.enabled=false → 监听关闭=连接拒绝（面消失），
-// 主 UI 面（dsh web 3080 /ob/）零新增暴露；独立进程 kill 演练由 close() 等价覆盖（listener 形式）。
+// share-server — 分享服务入口（T9 / OW-INV-2/6/10、C2 交接契约；0.2.0 fix-ui-port 双模式）
+// 服务形态（0.2.0 修订，照 dsh-better-sidebar 路线）：**双模式共用同一面实现**——
+//   ① webServer 模式（server.sharePort=null，默认）：createShareHandler 挂 ctx.webServer.register
+//     （dsh web 3080 同域 /ob_share，零自有端口）——默认不再开自有端口（3500 与 login-gate 冲突根治）；
+//   ② 独立模式（server.sharePort:number，可选）：宿主内独立 node:http listener（独立端口/独立
+//   生命周期）——OW-INV-10「可单独关停」达成：close()/share.enabled=false → 监听关闭=连接拒绝。
+// 对外契约 3500 /ob_share/<token> = PATH 契约（非端口契约），由 login-gate/nginx 直通反代保持。
+// watchdog 安全：listener 任何失败 fail-open（面不启+degraded 留痕），全路径绝不抛出炸宿主。
 //
 // 面契约（test/share-server.test.mjs 字面双锁）：
 //   - 入口 `/ob_share/<token>` 精确前缀 fail-closed：大小写敏感、`/ob_share`（无尾斜杠）不算面内、
@@ -320,17 +324,29 @@ const REASON_TEXT = {
 }
 
 // ── createShareServer：独立 listener 生命周期（OW-INV-10 可单独关停）────────────
+// 0.2.0 fix-ui-port（照 dsh-better-sidebar 路线，问题 A 裁定）：双模式共用本实现——
+//   - webServer 模式（server.sharePort=null，默认）：createShareHandler 取面处理器挂
+//     ctx.webServer.register({kind:'prefix', path:'/ob_share', handler})（dsh web 3080 同域，零自有端口）；
+//   - 独立模式（server.sharePort:number，可选）：本工厂起自有 listener（照旧可单独关停）。
+//   watchdog 安全（掉服务根因回归）：端口占用/任何 listener 失败 → **fail-open**——该次 boot 面不启
+//   + degraded 留痕，start()/syncState()/handle() 全路径绝不 reject/绝不抛出（unhandledRejection
+//   杀宿主进程=watchdog 判死 dsh 掉服务的根因链）；syncState 定时自愈重试（同口同面）。
 /**
- * @param options {{getConfig: () => object, port?: number, host?: string, syncIntervalMs?: number}}
+ * @param options {{getConfig: () => object, port?: number, host?: string, syncIntervalMs?: number,
+ *                  warn?: (line: string) => void}}
  * @returns {{start: () => Promise<{listening: boolean, port?: number, reason?: string}>,
  *            syncState: () => Promise<{listening: boolean}>,
- *            close: () => Promise<void>, listening: () => boolean, address: () => {port: number, host: string} | null}}
+ *            close: () => Promise<void>, listening: () => boolean,
+ *            handle: (req, res) => Promise<void>,
+ *            address: () => {port: number, host: string} | null}}
  */
 export function createShareServer(options = {}) {
   const getConfig = typeof options.getConfig === 'function' ? options.getConfig : () => ({})
   const port = Number.isInteger(options.port) ? options.port : 0
   const host = typeof options.host === 'string' && options.host !== '' ? options.host : '127.0.0.1'
   const syncIntervalMs = options.syncIntervalMs === undefined ? DEFAULT_SYNC_INTERVAL_MS : options.syncIntervalMs
+  // 留痕出口（INV-15 禁静默）：缺省回落 console.warn（行为不丢、绝不静默）
+  const warn = typeof options.warn === 'function' ? options.warn : console.warn
   const limiter = createRateLimiter() // 120/min 滑窗（OW-INV-2b），判在查表前
   let server = null
   let timer = null
@@ -360,18 +376,31 @@ export function createShareServer(options = {}) {
   }
 
   function listen() {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const s = http.createServer((req, res) => {
         void handle(req, res)
       })
-      s.once('error', (err) => {
-        server = null
-        reject(err)
+      let settled = false
+      const settle = (value) => {
+        if (!settled) {
+          settled = true
+          resolve(value)
+        }
+      }
+      // 永久 error 监听（非 once）：绑定失败=端口占用（login-gate 3500 冲突面）与运行期错误
+      // 一律 fail-open——绝不 reject（API 级绝不抛出）+ 不留无监听 error 事件（unhandled 'error'
+      // 同样会炸宿主进程）。失败留痕 degraded（INV-15），syncState 定时自愈重试（同口同面）。
+      s.on('error', (err) => {
+        if (server === s) server = null
+        try {
+          warn(`[obsidian-web] 分享面监听失败（fail-open：该次不启面，syncState 自愈重试，绝不炸装载/宿主）：${err?.message ?? err}`)
+        } catch { /* 留痕失败不二阶炸 */ }
+        settle({ listening: false, reason: 'listen_failed' })
       })
       s.listen(boundPort ?? port, host, () => {
         server = s
         boundPort = s.address()?.port ?? boundPort
-        resolve({ listening: true, port: boundPort })
+        settle({ listening: true, port: boundPort })
       })
     })
   }
@@ -382,7 +411,11 @@ export function createShareServer(options = {}) {
     if (server) return { listening: true, port: server.address()?.port }
     if (syncIntervalMs > 0) {
       timer = setInterval(() => {
-        void syncState()
+        void syncState().catch((err) => {
+          try {
+            warn(`[obsidian-web] 分享面自愈重试异常（fail-open 不炸宿主）：${err?.message ?? err}`)
+          } catch { /* 留痕失败不二阶炸 */ }
+        })
       }, syncIntervalMs)
       timer.unref?.() // 不吊命（关停=面消失语义不被定时器干扰）
     }
@@ -409,13 +442,29 @@ export function createShareServer(options = {}) {
   }
 
   // ── 单请求处理（顺序敏感：热禁用 → 前缀 → 限流 → 校验 → 范围 → 方法 → 操作）────────
+  // handle=对外形：全路径 fail-closed 网兜——任何未预期异常绝不变成 unhandledRejection
+  //（watchdog 掉服务根因=未处理拒绝杀宿主进程），一律收敛统一 404/400 形 + 留痕。
   async function handle(req, res) {
+    try {
+      await handleInner(req, res)
+    } catch (err) {
+      try {
+        if (!res.headersSent) mapThrown(res, err, req.method === 'HEAD')
+        else res.destroy()
+      } catch { /* 尽力而为 */ }
+      try {
+        warn(`[obsidian-web] 分享面请求处理异常（fail-closed 统一形，不炸宿主）：${err?.message ?? err}`)
+      } catch { /* 留痕失败不二阶炸 */ }
+    }
+  }
+
+  async function handleInner(req, res) {
     const headOnly = req.method === 'HEAD'
     // 0. 热禁用：统一 404 + 面整体关（自关收敛）
     const cfg = safeConfig()
     if (cfg.share?.enabled === false) {
       notFound(res, headOnly)
-      void syncState()
+      void syncState().catch(() => {}) // 自关收敛 fail-open（绝不 unhandledRejection）
       return
     }
     const root = typeof cfg.vaultRoot === 'string' ? cfg.vaultRoot : ''
@@ -799,10 +848,24 @@ ${retry}
     start,
     syncState,
     close,
+    handle,
     listening: () => server !== null,
     address: () => {
       const a = server?.address()
       return a && typeof a === 'object' ? { port: a.port, host: a.address } : null
     },
   }
+}
+
+/**
+ * createShareHandler — 分享面单请求处理器（webServer 挂载模式，0.2.0 fix-ui-port 问题 A 裁定）。
+ * 零自有 listener：面契约与独立模式**同一实现**（createShareServer 的 handle，面口径零分叉），
+ * 由调用方挂 ctx.webServer.register({kind:'prefix', path:'/ob_share', handler})。
+ * 热禁用语义照旧由 share.enabled=false 承担（handler 首步统一 404=面消失）。
+ * @param options {{getConfig: () => object, warn?: (line: string) => void}}
+ * @returns {(req, res) => Promise<void>} node:http 风格请求处理器
+ */
+export function createShareHandler(options = {}) {
+  // syncIntervalMs=0：handler-only 无 listener 生命周期，不起自愈定时器（无面可起）
+  return createShareServer({ ...options, syncIntervalMs: 0 }).handle
 }

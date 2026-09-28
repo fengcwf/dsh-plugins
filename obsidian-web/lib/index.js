@@ -5,7 +5,8 @@
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import { registerWebRoutes } from './web-routes.js'
-import { createShareServer } from './share-server.js'
+import { createShareServer, createShareHandler } from './share-server.js'
+import { SHARE_URL_PREFIX } from './share.js'
 import { createIndexService } from './index-service.js'
 import { DEFAULT_INDEX_DIR_BASE } from './index-store.js'
 
@@ -44,12 +45,16 @@ export const Config = z.object({
   ui: z.object({
     pageSize: z.number().int().min(1).default(50),
   }).prefault({}),
-  // 分享服务（T9 接）：独立 HTTP 入口（server.sharePort），生命周期独立、可单独关停（OW-INV-10）
-  // T9 扩展（load.test 契约锁同步，Ruling 见 task-9-report）：shareHost=绑定面（分享面=唯一公开放行
-  // 面，默认全接口；要收口 loopback 反代场景显式配 127.0.0.1）；trustProxy=显式可信代理清单（C2 IP
-  // 口径：缺省空=一切 XFF 忽略、限流键=socket.remoteAddress only）。
+  // 分享服务（T9 接；0.2.0 fix-ui-port 双模式修订，照 dsh-better-sidebar 路线）：
+  //   sharePort=null（默认）→ 分享面挂 ctx.webServer.register（dsh web 3080 同域 /ob_share，零自有
+  //   端口——3500 与 login-gate 冲突根治）；sharePort:number → 独立 listener（可选模式，独立端口/
+  //   生命周期可单独关停 OW-INV-10）。对外契约 3500 /ob_share/<token>=PATH 契约（非端口契约），由
+  //   login-gate/nginx 直通反代保持（OW-INV-2 批注）。模式绑定=启动时配置值（热改 restartRequired）。
+  // T9 扩展（load.test 契约锁同步，Ruling 见 task-9-report）：shareHost=独立模式绑定面（分享面=唯一
+  // 公开放行面，默认全接口；要收口 loopback 反代场景显式配 127.0.0.1）；trustProxy=显式可信代理清单
+  // （C2 IP 口径：缺省空=一切 XFF 忽略、限流键=socket.remoteAddress only）。
   server: z.object({
-    sharePort: z.number().int().min(1).max(65535).default(3500),
+    sharePort: z.number().int().min(1).max(65535).nullable().default(null),
     shareHost: z.string().default('0.0.0.0'),
     trustProxy: z.array(z.string()).default([]),
   }).prefault({}),
@@ -88,10 +93,11 @@ export function apply(ctx, rawConfig) {
   //   → 401/403 直接回拒（Host/Origin 围栏 + 签名 cookie，防 DNS rebinding/跨站）。
   // secret 一律走 ctx.credentials（key 不进设置面）；对外签名场景另走 HMAC（先例 dsh-webhook-github）。
 
-  // ── OW-INV-10 暴露面（主 UI 面零新增暴露）────────────────────────────────────────────
+  // ── OW-INV-10 暴露面（主 UI 面零新增暴露；0.2.0 fix-ui-port 修订）─────────────────────
   // 主 UI 与 REST 一律 `ctx.webServer.register` 挂 dsh web 同域 3080（不自起端口、不加公开面、
-  // 复用宿主既有鉴权边界）；分享服务（server.sharePort=3500）是唯一独立入口，生命周期独立可
-  // 单独关停（T9 接线 + 关停演练），放行面恰 `/ob_share/<token>` 一处（PRODUCT OW-INV-2/6），
+  // 复用宿主既有鉴权边界）；分享面默认同款挂 webServer（sharePort=null → /ob_share 同域零自有端口，
+  // 照 better-sidebar 路线），可选独立 listener（sharePort:number）生命周期独立可单独关停（T9 接线
+  // + 关停演练），放行面恰 `/ob_share/<token>` 一处（PRODUCT OW-INV-2/6），
   // share.enabled=false 时全 404（fail-closed，PRODUCT OW-INV-1 默认不对外）。
 
   // ── T2 接线：/ob/ UI 静态面 + JSON 读接口（树/读+live 渲染/反链）────────────────────────
@@ -136,20 +142,47 @@ export function apply(ctx, rawConfig) {
     })
     if (typeof ctx.effect === 'function') ctx.effect(dispose)
 
-    // ── T9 接线：分享服务独立入口（OW-INV-10：独立 listener、生命周期独立可单独关停）────────
-    // 放行面恰 `/ob_share/<token>` 一处（OW-INV-2）；share.enabled=false → 面整体关（不绑定/自关）。
+    // ── T9→0.2.0 接线：分享面双模式（问题 A 裁定，照 dsh-better-sidebar 路线）──────────────
+    //   sharePort=null（默认）→ 挂 ctx.webServer.register({kind:'prefix', path:'/ob_share', handler})
+    //     （dsh web 3080 同域，零自有端口——3500/login-gate 端口冲突根治）；
+    //   sharePort:number → 独立 listener（可选模式，照旧可单独关停）。
+    // 放行面恰 `/ob_share/<token>` 一处（OW-INV-2）；share.enabled=false → 面整体关（统一 404/自关）。
     // 缺 ctx.effect 收敛缝 → 不开公开面（生命周期不可控 fail-closed）+ 留痕（INV-15 禁静默）。
+    // watchdog 安全（掉服务根因回归）：独立模式端口占用/任何 listener 失败 → fail-open（该次不启面
+    // + degraded 留痕），绝不抛出让插件装载失败/拖垮 dsh（分享面故障与插件装载解耦）。
     if (typeof ctx.effect === 'function') {
       const initial = parsed.success ? parsed.data : Config.parse({})
-      const shareServer = createShareServer({
-        getConfig,
-        port: initial.server.sharePort,
-        host: initial.server.shareHost,
-      })
-      ctx.effect(() => shareServer.close())
-      shareServer.start().catch((err) => {
-        warn(ctx, `[obsidian-web] 分享服务启动失败（server.sharePort=${initial.server.sharePort}）：${err?.message ?? err}`)
-      })
+      try {
+        if (initial.server.sharePort === null) {
+          // webServer 模式：零自有 listener，面处理器与独立模式同一实现（面口径零分叉）。
+          // 挂载面=SHARE_URL_PREFIX 去尾斜杠派生（URL 字面量单一来源锁：share.js 恰一处）
+          const disposeShare = ctx.webServer.register({
+            kind: 'prefix',
+            path: SHARE_URL_PREFIX.replace(/\/$/, ''),
+            handler: createShareHandler({ getConfig, warn: (line) => warn(ctx, line) }),
+          })
+          ctx.effect(disposeShare)
+        } else {
+          const shareServer = createShareServer({
+            getConfig,
+            port: initial.server.sharePort,
+            host: initial.server.shareHost,
+            warn: (line) => warn(ctx, line),
+          })
+          ctx.effect(() => shareServer.close())
+          // fail-open：start() API 级绝不 reject（listen 失败 resolve {listening:false}+留痕）；
+          // .catch 为双保险（绝不 unhandledRejection——watchdog 掉服务根因链）
+          shareServer.start().then((started) => {
+            if (started?.listening === false && started.reason !== 'share_disabled') {
+              warn(ctx, `[obsidian-web] 分享面未起（fail-open 该次不启面，syncState 自愈重试）：${started.reason ?? '未知原因'}`)
+            }
+          }).catch((err) => {
+            warn(ctx, `[obsidian-web] 分享服务启动失败（fail-open 该次不启面）：${err?.message ?? err}`)
+          })
+        }
+      } catch (err) {
+        warn(ctx, `[obsidian-web] 分享面接线失败（fail-open：插件继续装载，主 UI 面不受影响）：${err?.message ?? err}`)
+      }
     } else {
       warn(ctx, '[obsidian-web] 缺 ctx.effect 收敛缝：分享服务未启动（公开面生命周期不可控，fail-closed）')
     }

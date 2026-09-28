@@ -36,7 +36,10 @@ test('Config 全键默认值与契约精确一致（delta-specs §2）', async (
     ui: { pageSize: 50 },
     // T9 规格锁扩展（Ruling 见 task-9-report：server 组随分享服务接线扩 shareHost/trustProxy，
     // 与 T1 server.sharePort 同款扩展先例；trustProxy 缺省空=C2 IP 口径 XFF 一律忽略）
-    server: { sharePort: 3500, shareHost: '0.0.0.0', trustProxy: [] },
+    // 0.2.0 fix-ui-port 规格修订（照 better-sidebar 路线，OW-INV-2 批注）：默认不再开自有端口——
+    //   sharePort=null=分享面挂 ctx.webServer（dsh web 3080 同域 /ob_share）；number=独立 listener（可选）。
+    //   对外契约 3500 /ob_share/<token> 由 login-gate/nginx 直通反代保持（PATH 契约非端口契约）。
+    server: { sharePort: null, shareHost: '0.0.0.0', trustProxy: [] },
   }
   assert.deepEqual(Config.parse({}), expected)
   assert.deepEqual(Config.parse(undefined), expected, '顶层 .prefault 容忍 undefined → 全默认（T1 教训）')
@@ -54,7 +57,10 @@ test('Config 部分覆盖只改触达键（热改语义）', async () => {
   assert.equal(c.vaultRoot, '/mnt/unraid_data/Obsidian', '未触达键 vaultRoot 保持默认（字面锁定）')
   assert.equal(c.indexDir, '~/.dsh/cache/obsidian-web', '未触达键 indexDir 保持默认（字面锁定）')
   assert.equal(Config.parse({ indexDir: '/data/idx' }).indexDir, '/data/idx', 'indexDir 显式覆盖只改触达键')
-  assert.equal(c.server.sharePort, 3500)
+  // 0.2.0 fix-ui-port：sharePort 双模式契约（null=挂 webServer 默认 / number=独立 listener 可选）
+  assert.equal(c.server.sharePort, null, 'sharePort 默认 null=挂 webServer（默认不开自有端口）')
+  assert.equal(Config.parse({ server: { sharePort: 4501 } }).server.sharePort, 4501, 'number=独立 listener 可选模式')
+  assert.equal(Config.parse({ server: { sharePort: null } }).server.sharePort, null, '显式 null 合法（回 webServer 模式）')
 })
 
 test('Config 拒绝错误类型（schema 真校验，非透传）', async () => {
@@ -67,6 +73,8 @@ test('Config 拒绝错误类型（schema 真校验，非透传）', async () => 
   assert.throws(() => Config.parse({ ui: { pageSize: 'fifty' } }), 'pageSize 非数字必须拒')
   assert.throws(() => Config.parse({ server: { sharePort: '3500' } }), 'sharePort 非数字必须拒')
   assert.throws(() => Config.parse({ server: { sharePort: 70000 } }), 'sharePort 越界必须拒')
+  assert.throws(() => Config.parse({ server: { sharePort: true } }), 'sharePort 布尔必须拒（nullable number 不含布尔）')
+  assert.throws(() => Config.parse({ server: { sharePort: 0 } }), 'sharePort 下界必须拒')
 })
 
 test('Config 默认值无可变共享引用（多次 parse 互不污染）', async () => {
