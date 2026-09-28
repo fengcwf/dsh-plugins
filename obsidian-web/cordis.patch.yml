@@ -22,4 +22,5 @@
           pageSize: 50
         # 分享服务（T9 接）：唯一独立入口，可单独关停（OW-INV-10）
         server:
-          sharePort: 3500
+          # 缺省=null 同域 prefix 形（零自有端口）；独立 listener 需显式配 number 端口
+          sharePort: null

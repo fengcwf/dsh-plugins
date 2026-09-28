@@ -35,7 +35,7 @@ function makeVault(tag, files = {}) {
 
 /** 真实宿主缝记录器（webServer.register 形照 dsh-host-webserver：返回 disposer） */
 function makeCtx() {
-  const effects = []
+  const disposers = []
   const warnings = []
   const routes = new Map()
   return {
@@ -48,9 +48,14 @@ function makeCtx() {
         },
       },
       connection: { requestRejection: () => undefined },
-      effect: (fn) => effects.push(fn),
+      // 真 cordis effect 语义（S4 契约同源，B2 修复）：执行器立即执行、返回函数才是拆除器
+      //（cordis lib/index.js:1142-1143 实测）——旧伪「effects.push(fn)」不执行执行器=错误契约烤进测试（假绿），已废。
+      effect(fn) {
+        const d = fn()
+        if (typeof d === 'function') disposers.push(d)
+      },
     },
-    effects,
+    disposers,
     warnings,
     routes,
   }
@@ -88,8 +93,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 // ── ① 默认 webServer 模式：零自有端口，分享面挂 ctx.webServer（/ob_share 恰一处）────────
 test('① 默认（sharePort=null）挂 webServer：prefix:/ob_share 恰一处注册、零自有 listener、面契约原样', async () => {
   const vault = makeVault('webmode', { 'hello.md': '# hi' })
-  const { ctx, effects, routes } = makeCtx()
+  const { ctx, disposers, routes } = makeCtx()
   apply(ctx, { vaultRoot: vault, indexDir: IDX_BASE })
+  // 正向断言（B2 回归锁）：真语义 effect 下 apply 返回后注册面必须在场（挡失效模式「注册即自拆」）
+  assert.ok(routes.has('prefix:/ob') && routes.has('exact:/ob/api/tree'), 'apply 返回后主面注册面在场（B2 回归锁：挡「注册即自拆」）')
   const keys = [...routes.keys()]
   const shareKeys = keys.filter((k) => k.includes('ob_share'))
   assert.deepEqual(shareKeys, ['prefix:/ob_share'], '分享注册面恰一处（路径放行面语义不变）')
@@ -108,7 +115,7 @@ test('① 默认（sharePort=null）挂 webServer：prefix:/ob_share 恰一处�
     }
   } finally {
     await new Promise((r) => server.close(r))
-    for (const fn of effects) await fn() // 收敛（索引服务/分享面/路由 disposer）
+    for (const d of disposers) await d() // 收敛点连动（S4）：调用真语义收集的拆除器（索引服务/分享面/路由 disposer）
   }
 })
 
@@ -122,8 +129,10 @@ test('② webServer 模式热禁用：share.enabled=false → 面统一 404（�
     ui: { pageSize: 50 },
     server: { sharePort: null, shareHost: '0.0.0.0', trustProxy: [] },
   }
-  const { ctx, effects, routes } = makeCtx()
+  const { ctx, disposers, routes } = makeCtx()
   apply(ctx, config)
+  // 正向断言（B2 回归锁）：真语义 effect 下 apply 返回后注册面必须在场（挡失效模式「注册即自拆」）
+  assert.ok(routes.has('prefix:/ob') && routes.has('exact:/ob/api/tree'), 'apply 返回后主面注册面在场（B2 回归锁：挡「注册即自拆」）')
   const route = routes.get('prefix:/ob_share')
   const { server, base } = await mountHandler(route.handler)
   try {
@@ -135,7 +144,7 @@ test('② webServer 模式热禁用：share.enabled=false → 面统一 404（�
     assert.equal(await off.text(), NOT_FOUND_BODY, '热禁用统一 404 体逐字节同形')
   } finally {
     await new Promise((r) => server.close(r))
-    for (const fn of effects) await fn()
+    for (const d of disposers) await d() // 收敛点连动（S4）：调用真语义收集的拆除器
   }
 })
 
@@ -144,19 +153,20 @@ test('③ fail-open：独立模式 sharePort 被占用 → apply 不抛 + 分享
   const vault = makeVault('failopen', { 'hello.md': '# hi' })
   const busy = await occupyPort()
   const rec = rejectionRecorder()
-  const { ctx, effects, warnings, routes } = makeCtx()
+  const { ctx, disposers, warnings, routes } = makeCtx()
   try {
     assert.doesNotThrow(() => {
       apply(ctx, { vaultRoot: vault, indexDir: IDX_BASE, server: { sharePort: busy.port, shareHost: '127.0.0.1' } })
     }, '端口占用绝不抛出让插件装载失败（watchdog 掉服务根因）')
     // 主 UI 面照挂（插件装载不受分享面故障影响）
     assert.ok([...routes.keys()].some((k) => k.startsWith('prefix:/ob')), '主 UI 面照挂')
-    assert.ok(effects.length > 0, '收敛缝照旧')
+    // 假锁命名校准（S4）：真挡的是「拆除器未被 ctx.effect 收集→拆除缝形同虚设」
+    assert.ok(disposers.length > 0, '拆除器被 ctx.effect 收集（收敛缝真接线：真语义 effect 返回值=拆除器）')
     await sleep(150) // 真等 listen 失败链路落地（异步留痕，不抢跑断言）
     assert.ok(warnings.some((w) => w.includes('分享')), '分享面故障必须留痕（INV-15 禁静默）')
     assert.equal(rec.events.length, 0, `绝不产生 unhandledRejection（实际：${rec.events.map((e) => e?.message ?? e)}）`)
   } finally {
-    for (const fn of effects) await fn() // 失败路径也收敛（不留 ref'd 句柄挂进程）
+    for (const d of disposers) await d() // 失败路径也收敛（不留 ref'd 句柄挂进程）
     rec.stop()
     await busy.release()
   }

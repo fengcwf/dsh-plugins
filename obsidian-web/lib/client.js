@@ -67,24 +67,33 @@ window.__ModuleLoader__.load({
      */
     function apply(ctx) {
       const slots = ctx.slots
-      const disposers = []
-      try {
-        disposers.push(slots.inject('sidebar.panellist', () => slots.register({
-          name: 'sidebar.panellist',
-          id: PANEL_ID,
-          order: PANEL_ORDER,
-          label: () => ENTRY_LABEL,
-        }, ObsidianVaultIcon)))
-        disposers.push(slots.inject('main', () => slots.register({
-          name: 'main',
-          key: PANEL_ID,
-          inject: () => ({}),
-        }, ObsidianVaultPage)))
-      } catch (error) {
-        console.warn('[obsidian-web] panel registration failed:', error)
-      }
+      // B2 同形位点修复（FX-INV-1，S1 漏列、队长修订补列）：注册动作在 effect 执行体内当场跑、
+      //   返回值=拆除器（真 cordis 语义=执行器立即执行、返回函数才是拆除器）。面板注册失败留痕
+      //   放行语义零弱化（壳未声明=面板缺席不炸装载，skill-explorer 同款）；拆除器幂等（disposed
+      //   flag 同款双保险 + splice(0) 天然幂等）、零悬挂。
       ctx.effect(() => {
-        for (const dispose of disposers.splice(0)) dispose()
+        const disposers = []
+        try {
+          disposers.push(slots.inject('sidebar.panellist', () => slots.register({
+            name: 'sidebar.panellist',
+            id: PANEL_ID,
+            order: PANEL_ORDER,
+            label: () => ENTRY_LABEL,
+          }, ObsidianVaultIcon)))
+          disposers.push(slots.inject('main', () => slots.register({
+            name: 'main',
+            key: PANEL_ID,
+            inject: () => ({}),
+          }, ObsidianVaultPage)))
+        } catch (error) {
+          console.warn('[obsidian-web] panel registration failed:', error)
+        }
+        let disposed = false
+        return () => {
+          if (disposed) return
+          disposed = true
+          for (const dispose of disposers.splice(0)) dispose()
+        }
       }, 'obsidian-web: ui mounts')
     }
 

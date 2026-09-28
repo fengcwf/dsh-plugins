@@ -815,7 +815,7 @@ test('⑦ 显式 trustProxy 集成：可信代理链下 XFF 客户端各自独�
 test('T9 接线：apply 宿主缝+ctx.effect → 起独立分享 listener（server.sharePort）；dispose 关停面消失', async () => {
   const vault = makeVault('wire', { 'hello.md': '# hi' })
   const probe = await probePort()
-  const effects = []
+  const disposers = []
   const warnings = []
   const routes = new Map()
   const ctx = {
@@ -827,16 +827,24 @@ test('T9 接线：apply 宿主缝+ctx.effect → 起独立分享 listener（serv
       },
     },
     connection: { requestRejection: () => undefined },
-    effect: (fn) => effects.push(fn),
+    // 真 cordis effect 语义（S4 契约同源，B2 修复）：执行器立即执行、返回函数才是拆除器
+    //（cordis lib/index.js:1142-1143 实测）——旧伪「effects.push(fn)」不执行执行器=错误契约烤进测试（假绿），已废。
+    effect(fn) {
+      const d = fn()
+      if (typeof d === 'function') disposers.push(d)
+    },
   }
   apply(ctx, { vaultRoot: vault, indexDir: IDX_BASE, server: { sharePort: probe } })
+  // 正向断言（B2 回归锁）：真语义 effect 下 apply 返回后主 UI/REST 注册面必须在场
+  //（挡失效模式「effect 拆除器当执行器→注册即自拆」）
+  assert.ok(routes.has('prefix:/ob') && routes.has('exact:/ob/api/tree'), 'apply 返回后注册面在场（B2 回归锁：挡「注册即自拆」）')
   const base = `http://127.0.0.1:${probe}`
   const face = await waitForFace(`${base}/ob_share/`)
   assert.equal(face.status, 404, '分享面已监听（统一 404 体）')
   assert.equal(await face.text(), NOT_FOUND_BODY)
   // 主 UI 面零新增暴露：webServer 注册面不含任何分享路由
   for (const key of routes.keys()) assert.ok(!key.includes('ob_share'), `主面不得注册分享路由：${key}`)
-  for (const fn of effects) await fn() // dispose 全量（含分享面 close）
+  for (const d of disposers) await d() // 收敛点连动（S4）：调用真语义收集的拆除器（含分享面 close，可等待）
   await assert.rejects(() => get(`${base}/ob_share/`), 'dispose 后分享面消失（可单独关停）')
 })
 

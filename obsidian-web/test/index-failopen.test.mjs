@@ -76,7 +76,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 function makeHost() {
   const routes = new Map()
   const warnings = []
-  const effects = []
+  const disposers = []
   const ctx = {
     logger: { warn: (line) => warnings.push(String(line)) },
     webServer: {
@@ -86,11 +86,14 @@ function makeHost() {
       },
     },
     connection: { requestRejection: () => undefined },
+    // 真 cordis effect 语义（S4 契约同源，B2 修复）：执行器立即执行、返回函数才是拆除器
+    //（cordis lib/index.js:1142-1143 实测）——旧伪「effects.push(fn)」不执行执行器=错误契约烤进测试（假绿），已废。
     effect(fn) {
-      effects.push(fn)
+      const d = fn()
+      if (typeof d === 'function') disposers.push(d)
     },
   }
-  return { routes, warnings, effects, ctx }
+  return { routes, warnings, disposers, ctx }
 }
 
 async function post(routes, pathname) {
@@ -127,11 +130,14 @@ const RUN_KEYS = ['counts', 'cursor', 'degraded', 'finishedAt', 'resumedFrom', '
 test('① 真锁下 apply 必成功（fail-open）+ degraded 留痕（INV-15）+ refresh 503 index_unavailable', async () => {
   const vault = makeVault({ 'a.md': 'alpha note\n', 'sub/b.md': 'beta note\n', 'c.txt': 'not md\n' })
   const lock = lockDb(vault)
-  const { routes, warnings, effects, ctx } = makeHost()
+  const { routes, warnings, disposers, ctx } = makeHost()
   const port = await freePort()
   try {
     assert.doesNotThrow(() => apply(ctx, { vaultRoot: vault, indexDir: IDX_BASE, server: { sharePort: port } }), 'apply 期建库/开库失败绝不炸插件装载')
     assert.ok(routes.has('exact:/ob/api/index/refresh'), '索引刷新路由照挂（索引面 degraded ≠ 路由缺席）')
+    // 正向断言（B2 回归锁）：真语义 effect 下 apply 返回后主 UI/REST 注册面必须在场
+    //（挡失效模式「effect 拆除器当执行器→注册即自拆」）
+    assert.ok(routes.has('prefix:/ob') && routes.has('exact:/ob/api/tree'), 'apply 返回后注册面在场（B2 回归锁：挡「注册即自拆」）')
     assert.ok(
       warnings.some((l) => l.includes('fail-open') && l.includes('degraded')),
       `degraded 留痕（warn 线）必须在场：${JSON.stringify(warnings)}`,
@@ -159,9 +165,10 @@ test('① 真锁下 apply 必成功（fail-open）+ degraded 留痕（INV-15）+
     assert.equal(healed.body.data.counts.degraded, 0)
   } finally {
     lock.release()
-    for (const fn of effects.reverse()) {
+    // 收敛点连动（S4）：调用真语义收集的拆除器（原「执行 effects 里的执行器」错误契约已废）
+    for (const d of disposers.reverse()) {
       try {
-        await fn?.()
+        await d?.()
       } catch { /* 清理失败不掩盖断言 */ }
     }
   }

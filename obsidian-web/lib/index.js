@@ -124,10 +124,37 @@ export function apply(ctx, rawConfig) {
       try {
         const cfg = getConfig()
         indexService = createIndexService({ vaultRoot: cfg.vaultRoot, indexDir: cfg.indexDir, warn: (line) => warn(ctx, line) })
-        ctx.effect(() => indexService.stop())
-        indexService.start().catch((err) => {
-          warn(ctx, `[obsidian-web] 索引启动补跑失败（scan 兜底仍可用，30min 定时器重试）：${err?.message ?? err}`)
-        })
+        // S1 站点①（FX-INV-1/2，B2 修复）：注册动作（start）在 effect 执行体内当场跑、返回值=拆除器（stop）
+        //   ——真 cordis 语义=执行器立即执行、返回函数才是拆除器。收敛骨架：执行体抛错先收敛已注册
+        //   资源再上抛（stop 先入账，start 同步抛错也不泄漏）；拆除器幂等（disposed flag）+ 可等待
+        //   （S4 收敛点 await 连动：异步拆除器聚合等待、绝不 reject；纯同步位回 undefined）。
+        ctx.effect(() => {
+          const disposers = []
+          try {
+            disposers.push(() => indexService.stop())
+            const p = indexService.start()
+            p?.catch?.((err) => {
+              warn(ctx, `[obsidian-web] 索引启动补跑失败（scan 兜底仍可用，30min 定时器重试）：${err?.message ?? err}`)
+            })
+          } catch (e) {
+            for (const d of disposers) { try { d()?.catch?.(() => { /* 收敛不抛 */ }) } catch { /* 收敛不抛 */ } }
+            throw e // 再上抛（绝不吞错；外层 fail-open 网兜放行装载+留痕）
+          }
+          let disposed = false
+          return () => {
+            if (disposed) return
+            disposed = true
+            const results = []
+            for (const d of disposers) {
+              try {
+                const r = d()
+                r?.catch?.(() => { /* 收敛不抛 */ })
+                results.push(r)
+              } catch { /* 收敛不抛 */ }
+            }
+            return results.some((r) => typeof r?.then === 'function') ? Promise.allSettled(results) : undefined
+          }
+        }, 'obsidian-web: index-service')
       } catch (err) {
         indexService = null
         warn(ctx, `[obsidian-web] 索引服务启动失败（fail-open：插件继续装载，检索走 scan 兜底，/ob/api/index/refresh 503）：${err?.message ?? err}`)
@@ -135,12 +162,42 @@ export function apply(ctx, rawConfig) {
     } else {
       warn(ctx, '[obsidian-web] 缺 ctx.effect 收敛缝：索引服务未启动（检索走 scan 兜底，/ob/api/index/refresh 503）')
     }
-    const dispose = registerWebRoutes(ctx, getConfig, {
+    // S1 站点②（FX-INV-1，B2 修复）：注册动作（registerWebRoutes）在 effect 执行体内当场跑、
+    //   返回值=拆除器（web-routes.js:688 签名不变）；收敛骨架/幂等拆除器同站点①。
+    //   缺 ctx.effect 收敛缝 → 注册照旧不收集（Ruling：FX-INV-3 放行语义零弱化——主 UI/REST 面
+    //   不因缺缝缺席，非宿主上下文行为与既往一致；拆除无收集）。
+    const registerRoutes = () => registerWebRoutes(ctx, getConfig, {
       distDir: DEFAULT_DIST_DIR,
       search: indexService === null ? undefined : { backends: { fts: indexService.ftsBackend } },
       index: indexService === null ? undefined : { refresh: () => indexService.refresh() },
     })
-    if (typeof ctx.effect === 'function') ctx.effect(dispose)
+    if (typeof ctx.effect === 'function') {
+      ctx.effect(() => {
+        const disposers = []
+        try {
+          disposers.push(registerRoutes())
+        } catch (e) {
+          for (const d of disposers) { try { d()?.catch?.(() => { /* 收敛不抛 */ }) } catch { /* 收敛不抛 */ } }
+          throw e // 再上抛（绝不吞错）
+        }
+        let disposed = false
+        return () => {
+          if (disposed) return
+          disposed = true
+          const results = []
+          for (const d of disposers) {
+            try {
+              const r = d()
+              r?.catch?.(() => { /* 收敛不抛 */ })
+              results.push(r)
+            } catch { /* 收敛不抛 */ }
+          }
+          return results.some((r) => typeof r?.then === 'function') ? Promise.allSettled(results) : undefined
+        }
+      }, 'obsidian-web: web-routes')
+    } else {
+      registerRoutes()
+    }
 
     // ── T9→0.2.0 接线：分享面双模式（问题 A 裁定，照 dsh-better-sidebar 路线）──────────────
     //   sharePort=null（默认）→ 挂 ctx.webServer.register({kind:'prefix', path:'/ob_share', handler})
@@ -156,12 +213,36 @@ export function apply(ctx, rawConfig) {
         if (initial.server.sharePort === null) {
           // webServer 模式：零自有 listener，面处理器与独立模式同一实现（面口径零分叉）。
           // 挂载面=SHARE_URL_PREFIX 去尾斜杠派生（URL 字面量单一来源锁：share.js 恰一处）
-          const disposeShare = ctx.webServer.register({
-            kind: 'prefix',
-            path: SHARE_URL_PREFIX.replace(/\/$/, ''),
-            handler: createShareHandler({ getConfig, warn: (line) => warn(ctx, line) }),
-          })
-          ctx.effect(disposeShare)
+          // S1 站点③（FX-INV-1，B2 修复）：注册动作（webServer.register）在 effect 执行体内当场跑、
+          //   返回值=拆除器；收敛骨架/幂等拆除器同站点①。挂载面字面量仍由 SHARE_URL_PREFIX 派生
+          //   （URL 字面量单一来源锁：share.js 恰一处，本处零新增）。
+          ctx.effect(() => {
+            const disposers = []
+            try {
+              disposers.push(ctx.webServer.register({
+                kind: 'prefix',
+                path: SHARE_URL_PREFIX.replace(/\/$/, ''),
+                handler: createShareHandler({ getConfig, warn: (line) => warn(ctx, line) }),
+              }))
+            } catch (e) {
+              for (const d of disposers) { try { d()?.catch?.(() => { /* 收敛不抛 */ }) } catch { /* 收敛不抛 */ } }
+              throw e // 再上抛（绝不吞错；外层分享面接线 fail-open 网兜放行+留痕）
+            }
+            let disposed = false
+            return () => {
+              if (disposed) return
+              disposed = true
+              const results = []
+              for (const d of disposers) {
+                try {
+                  const r = d()
+                  r?.catch?.(() => { /* 收敛不抛 */ })
+                  results.push(r)
+                } catch { /* 收敛不抛 */ }
+              }
+              return results.some((r) => typeof r?.then === 'function') ? Promise.allSettled(results) : undefined
+            }
+          }, 'obsidian-web: share-face')
         } else {
           const shareServer = createShareServer({
             getConfig,
@@ -169,16 +250,41 @@ export function apply(ctx, rawConfig) {
             host: initial.server.shareHost,
             warn: (line) => warn(ctx, line),
           })
-          ctx.effect(() => shareServer.close())
-          // fail-open：start() API 级绝不 reject（listen 失败 resolve {listening:false}+留痕）；
-          // .catch 为双保险（绝不 unhandledRejection——watchdog 掉服务根因链）
-          shareServer.start().then((started) => {
-            if (started?.listening === false && started.reason !== 'share_disabled') {
-              warn(ctx, `[obsidian-web] 分享面未起（fail-open 该次不启面，syncState 自愈重试）：${started.reason ?? '未知原因'}`)
+          // S1 站点④（FX-INV-1/2，B2 修复）：start 在 effect 执行体内当场跑（API 级绝不 reject
+          //   语义不变）、返回值=拆除器（close 幂等真关 listener：closeServer 先置空再关、二次调用
+          //   resolve 不抛；外加 disposed flag 双保险）；收敛骨架同站点①。
+          ctx.effect(() => {
+            const disposers = []
+            try {
+              disposers.push(() => shareServer.close())
+              // fail-open：start() API 级绝不 reject（listen 失败 resolve {listening:false}+留痕）；
+              // .catch 为双保险（绝不 unhandledRejection——watchdog 掉服务根因链）
+              shareServer.start().then((started) => {
+                if (started?.listening === false && started.reason !== 'share_disabled') {
+                  warn(ctx, `[obsidian-web] 分享面未起（fail-open 该次不启面，syncState 自愈重试）：${started.reason ?? '未知原因'}`)
+                }
+              }).catch((err) => {
+                warn(ctx, `[obsidian-web] 分享服务启动失败（fail-open 该次不启面）：${err?.message ?? err}`)
+              })
+            } catch (e) {
+              for (const d of disposers) { try { d()?.catch?.(() => { /* 收敛不抛 */ }) } catch { /* 收敛不抛 */ } }
+              throw e // 再上抛（绝不吞错；外层分享面接线 fail-open 网兜放行+留痕）
             }
-          }).catch((err) => {
-            warn(ctx, `[obsidian-web] 分享服务启动失败（fail-open 该次不启面）：${err?.message ?? err}`)
-          })
+            let disposed = false
+            return () => {
+              if (disposed) return
+              disposed = true
+              const results = []
+              for (const d of disposers) {
+                try {
+                  const r = d()
+                  r?.catch?.(() => { /* 收敛不抛 */ })
+                  results.push(r)
+                } catch { /* 收敛不抛 */ }
+              }
+              return results.some((r) => typeof r?.then === 'function') ? Promise.allSettled(results) : undefined
+            }
+          }, 'obsidian-web: share-server')
         }
       } catch (err) {
         warn(ctx, `[obsidian-web] 分享面接线失败（fail-open：插件继续装载，主 UI 面不受影响）：${err?.message ?? err}`)

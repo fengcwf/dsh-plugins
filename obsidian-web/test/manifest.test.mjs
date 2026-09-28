@@ -7,10 +7,11 @@ import { fileURLToPath } from 'node:url'
 const readJson = (rel) => JSON.parse(fs.readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8'))
 const readText = (rel) => fs.readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8')
 
-// 依赖白名单（2026-09-26 裁定续）：lib 零第三方被「渲染管线族白名单」显式豁免——
-// remark/unified/rehype/micromark 族及必要插件为白名单运行时依赖（ARC-1 精神=唯一源非自研）；
-// 白名单之外仍然零第三方。zod/dsh 共享包照旧 peer+dev 双声明。
-const PIPELINE_WHITELIST = new Set([
+// 依赖白名单（2026-09-26 裁定续；2026-09-28 依赖归类裁定修订 + S6 契约连动改形）：lib 零第三方被
+// 「运行时依赖白名单」显式豁免——remark/unified/rehype/micromark 族及必要插件为白名单运行时依赖
+//（ARC-1 精神=唯一源非自研）+ zod（第三方统一进 dependencies：peer 不代装，进 peer=单装即
+// ERR_MODULE_NOT_FOUND）。白名单之外仍然零第三方。@deepseek-ai/* 共享包照旧 peer+dev 双声明。
+const RUNTIME_DEP_WHITELIST = new Set([
   'unified',
   'remark-parse',
   'remark-rehype',
@@ -19,24 +20,29 @@ const PIPELINE_WHITELIST = new Set([
   'remark-breaks',
   'rehype-stringify',
   'rehype-sanitize',
+  'zod',
 ])
 
-test('依赖白名单：dependencies 仅限渲染管线族（白名单外零第三方），zod/dsh 全走 peer+dev 双声明', () => {
+test('依赖白名单：dependencies 仅限白名单族（渲染管线族+zod；白名单外零第三方），zod 入 dependencies、@deepseek-ai/* 走 peer+dev 双声明', () => {
   const pkg = readJson('../package.json')
-  assert.ok(Object.keys(pkg.dependencies ?? {}).length > 0, '渲染管线族应显式声明为运行时依赖')
+  assert.ok(Object.keys(pkg.dependencies ?? {}).length > 0, '运行时依赖应显式声明为 dependencies')
   for (const name of Object.keys(pkg.dependencies ?? {})) {
-    assert.ok(PIPELINE_WHITELIST.has(name), `白名单外运行时依赖：${name}（白名单=渲染管线族，2026-09-26 裁定）`)
+    assert.ok(RUNTIME_DEP_WHITELIST.has(name), `白名单外运行时依赖：${name}（白名单=渲染管线族+zod，2026-09-26/2026-09-28 裁定）`)
   }
-  for (const name of ['zod', '@deepseek-ai/dsh-atomic-write', '@deepseek-ai/dsh-llm', '@deepseek-ai/dsh-tools']) {
+  for (const name of ['@deepseek-ai/dsh-atomic-write', '@deepseek-ai/dsh-llm', '@deepseek-ai/dsh-tools']) {
     assert.ok(pkg.peerDependencies?.[name], `${name} 必须在 peerDependencies`)
     assert.ok(pkg.devDependencies?.[name], `${name} 必须在 devDependencies（独立测试副本）`)
     assert.ok(!pkg.dependencies?.[name], `${name} 走 peer+dev 双声明，不得进 dependencies`)
   }
+  // S6 改形锁（断言只增不删）：zod 归位 dependencies（S3）——锁 dependencies.zod 在场 + peer/dev 双无 zod
+  assert.ok(pkg.dependencies?.zod, 'zod 必须在 dependencies（第三方统一进 dependencies，2026-09-28 依赖归类裁定）')
+  assert.ok(!pkg.peerDependencies?.zod, 'peerDependencies 不得有 zod（peer 不代装：单装即 ERR_MODULE_NOT_FOUND）')
+  assert.ok(!pkg.devDependencies?.zod, 'devDependencies 不得有 zod link（link: 模式已废弃）')
 })
 
-test('zod peer 钉 ^4.6.5（T1 Ruling 兑现：下界=实测 .prefault 语义版 4.6.5）', () => {
+test('zod dependencies 钉 ^4.6.5（T1 Ruling 兑现：下界=实测 .prefault 语义版 4.6.5；S3 形状=dependencies 归位）', () => {
   const pkg = readJson('../package.json')
-  assert.equal(pkg.peerDependencies?.zod, '^4.6.5')
+  assert.equal(pkg.dependencies?.zod, '^4.6.5')
 })
 
 test('manifest：dsh.bundle.patch 指向真实文件且 patch 行 name == 包名', () => {

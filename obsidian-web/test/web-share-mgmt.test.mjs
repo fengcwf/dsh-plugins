@@ -43,8 +43,10 @@ function makeConfig(vault) {
 // ── 管理面 harness（web-routes.test.mjs 同款：真 node:http 往返，鉴权缝真过）────────
 function makeCtx({ rejection } = {}) {
   const routes = new Map()
+  const disposers = []
   return {
     routes,
+    disposers,
     ctx: {
       logger: { warn: () => {} },
       webServer: {
@@ -56,6 +58,12 @@ function makeCtx({ rejection } = {}) {
         },
       },
       connection: { requestRejection: () => rejection },
+      // 真 cordis effect 语义（S4 契约同源，B2 修复）：执行器立即执行、返回函数才是拆除器
+      //（cordis lib/index.js:1142-1143 实测）——错误契约烤进测试=假绿，本 harness 与真宿主同源。
+      effect(fn) {
+        const d = fn()
+        if (typeof d === 'function') disposers.push(d)
+      },
     },
   }
 }
@@ -77,8 +85,11 @@ function dispatch(routes, req, res) {
 }
 
 async function withApi(config, fn, opts = {}) {
-  const { routes, ctx } = makeCtx(opts)
-  registerWebRoutes(ctx, () => config, { distDir: fileURLToPath(new URL('./fixtures/dist', import.meta.url)) })
+  const { routes, ctx, disposers } = makeCtx(opts)
+  // 真语义接线（S4 契约同源，B2）：注册动作在 effect 执行体内当场跑、返回值=拆除器
+  ctx.effect(() => registerWebRoutes(ctx, () => config, { distDir: fileURLToPath(new URL('./fixtures/dist', import.meta.url)) }))
+  // 正向断言（B2 回归锁）：注册面必须在场（挡失效模式「effect 拆除器当执行器→注册即自拆」）
+  assert.ok(routes.has('prefix:/ob') && routes.has('exact:/ob/api/tree'), '注册面在场（B2 回归锁：挡「注册即自拆」）')
   const server = http.createServer((req, res) => {
     Promise.resolve(dispatch(routes, req, res)).catch(() => {
       if (!res.headersSent) res.writeHead(500)
@@ -91,6 +102,10 @@ async function withApi(config, fn, opts = {}) {
     await fn(base)
   } finally {
     await new Promise((resolve) => server.close(resolve))
+    // 收敛点连动（S4）：调用真语义收集的拆除器
+    for (const d of disposers.splice(0)) {
+      try { await d() } catch { /* 收敛不抛 */ }
+    }
   }
 }
 

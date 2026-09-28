@@ -42,7 +42,7 @@ function makeReact() {
 function makeSlotsCtx() {
   const injected = []
   const registered = []
-  const effects = []
+  const disposers = []
   const slots = {
     inject(name, cb) {
       const entry = { name, cb: null, cleanup: null }
@@ -63,7 +63,16 @@ function makeSlotsCtx() {
       }
     },
   }
-  return { ctx: { slots, effect: (fn) => effects.push(fn) }, injected, registered, effects }
+  // 真 cordis effect 语义（S4 契约同源，B2 修复）：执行器立即执行、返回函数才是拆除器
+  //（cordis lib/index.js:1142-1143 实测）——旧伪「effects.push(fn)」不执行执行器=错误契约烤进测试（假绿），已废。
+  const ctx = {
+    slots,
+    effect(fn) {
+      const d = fn()
+      if (typeof d === 'function') disposers.push(d)
+    },
+  }
+  return { ctx, injected, registered, disposers }
 }
 
 // ── ① 真加载：顶层 window.__ModuleLoader__.load 契约 ─────────────────────────────────
@@ -96,8 +105,12 @@ test('③ apply 注册 sidebar.panellist 行（id/order/label）+ main 槽页（
     assert.equal(name, 'react')
     return react
   })
-  const { ctx, injected, registered, effects } = makeSlotsCtx()
+  const { ctx, injected, registered, disposers } = makeSlotsCtx()
   exports.apply(ctx)
+  // 正向断言（B2 回归锁）：真语义 effect=执行器当场跑、返回值=拆除器——apply 返回后注册面必须在场
+  //（挡失效模式「拆除器当执行器→注册即自拆」）；拆除器恰一件被收集（返回值=拆除器，非执行器）
+  assert.equal(injected.length, 2, 'apply 返回后注册面在场（B2 回归锁：挡「effect 拆除器当执行器→注册即自拆」）')
+  assert.equal(disposers.length, 1, '拆除器必须由 apply 交 ctx.effect 收敛（真语义：effect 返回值=拆除器）')
   // 两个槽位都经 slots.inject 等待宿主声明（壳未声明=面板缺席不炸装载，skill-explorer 同款）
   assert.deepEqual(injected.map((x) => x.name).sort(), ['main', 'sidebar.panellist'], '槽位=sidelist 行 + main 页')
   // 行注册形
@@ -117,8 +130,8 @@ test('③ apply 注册 sidebar.panellist 行（id/order/label）+ main 槽页（
   assert.equal(el.type, 'iframe', '槽页=iframe 指既有 /ob/ 静态面（三栏 UI 已存在）')
   assert.equal(el.props.src, '/ob/', 'iframe src=/ob/（web-routes prefix /ob 既有面）')
   // 收敛：apply 交出 effect disposer，执行后两注册全撤（不悬挂）
-  assert.equal(effects.length, 1, 'apply 必须交 ctx.effect 收敛')
-  effects[0]()
+  assert.equal(disposers.length, 1, 'apply 必须交 ctx.effect 收敛')
+  disposers[0]()
   assert.equal(registered.length, 0, 'dispose 后注册全撤')
 })
 
