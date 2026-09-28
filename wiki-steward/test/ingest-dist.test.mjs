@@ -26,9 +26,13 @@ test('panel.js 是构建产物：导出 mount 契约、不残留 dev 源码运�
   assert.ok(!js.includes('<template'), 'SFC 模板必须已被编译（不得残留模板原文）')
 })
 
-test('清单契约：dsh.client（platform=web, inject 含 slots）+ exports["./client"] 指向工厂形', () => {
+test('清单契约：dsh.client（platform=web, inject=locale/renderer/layout 官方三件）+ exports["./client"] 指向工厂形', () => {
   assert.equal(pkg.dsh.client.platform, 'web')
-  assert.ok(pkg.dsh.client.inject.includes('slots'))
+  assert.deepEqual(pkg.dsh.client.inject, [
+    '@deepseek-ai/dsh-client-locale',
+    '@deepseek-ai/dsh-client-ui-renderer',
+    '@deepseek-ai/dsh-client-ui-layout',
+  ], 'dsh.client.inject=客户端模块包面（skill-explorer 契约形；旧 ["slots"] 为误形已弃）')
   assert.equal(pkg.exports['./client'], './lib/client.js', 'dsh-client-modules clientExportOf 契约：exports["./client"]')
   const client = fs.readFileSync(path.join(PKG_DIR, 'lib', 'client.js'), 'utf8')
   assert.match(client, /^(\s*\/\/[^\n]*\n)*\s*window\.__ModuleLoader__\.load\(\{/, 'client.js 必须是工厂形 bundle（头注释可前置）')

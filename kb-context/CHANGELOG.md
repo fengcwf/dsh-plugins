@@ -1,5 +1,14 @@
 # CHANGELOG — kb-context
 
+## 0.3.0 — 2026-09-28
+
+设置菜单新增相关设置配置（用户反馈需求）：kb-context 以**客户端模块 + settings.section 设置命名空间**进设置菜单（better-sidebar 路线，navLabel 自动进设置页），配置展示/可改。
+
+- **客户端面**（`lib/client.js` 新增，零构建 `window.__ModuleLoader__` 工厂形、React.createElement 无 JSX）：`package.json` `dsh.client`（platform=web, inject=locale/renderer/layout）+ `exports["./client"]` 扫描面；`settings.section` 注册（`{name:'settings.section', id:'kb-context', order, label}`）——**纯设置无面板行**（不注册 sidebar.panellist/main/settings.plugins.tab；root 壳槽位 launcher/trigger/header/close/action/onboarding 禁注册）
+- **可改项**（裁定枚举）：`triggers.words`/`triggers.entityPaths`（textarea 一行一项，数组整替）、`budget.maxSnippets`/`budget.maxTokens`、`timeoutMs`、`scope.indexAll`/`scope.grepOnDemand`；**hotMap/vaultRoot 只读展示**（裁定枚举外）；热改语义本就支持 per-call 读（检索/注入 handler 每次调用现读 config）
+- **设置面数据**（`lib/settings-routes.js` 新增，沿 wiki-steward 同款官方形）：`ctx.webServer.register({kind:"prefix", path:"/api/kb-context"})` → `GET/POST /api/kb-context/settings`（文档相对请求形）；写路径=`lib/settings-write.js`（新增）：可改白名单整单拒外键（not_editable）、真 zod 校验生效面、host `configEditor.edit` 持久化热生效（dsh-settings 服务同款缝）；缺缝=503 write_unavailable 如实+writable:false；接线=webServer/connection/configEditor **软取得**（`inject` 维持 `['tools']` 不变），半缺缝留痕、双缺=非 web 部署面不告警（既有告警计数契约零改动）
+- 测试 157→179（+22：client-settings 8/settings-routes 8/settings-write 6）；双 umask 口径全绿、npm run check exit 0；真验零 mock（真 zod Config+configEditor 最小缝）
+
 ## 0.2.1 — 2026-09-28
 
 生产 bug 修复：启用 kb-context 后对话报错 `format v4 message requires a producer-owned source kind`。

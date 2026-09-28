@@ -1,5 +1,15 @@
 # CHANGELOG — wiki-steward
 
+## 0.4.0 — 2026-09-28
+
+设置菜单页签修正 + 面板加载 404 修复（能力级重做，用户反馈两问题）：设置页签归位 **settings.section 设置菜单命名空间**（better-sidebar 路线，navLabel 自动进设置页）；ingest 面板改挂 **sidebar.panellist 行 + main 槽页**（skill-explorer 形）；弃自造 `settings.plugins.tab` 页签与站内绝对 `/wiki-steward/panel.js` 动态 import（生产 404 根因：login-gate 3500 基址下逃出 `<base href="./">` 前缀+旧路由族无人服务）。
+
+- **客户端面官方契约**（`lib/client.js` 重写，零构建 `window.__ModuleLoader__` 工厂形、React.createElement 无 JSX）：`package.json` `dsh.client`（platform=web, inject=locale/renderer/layout 三件，skill-explorer 契约形——旧 inject:["slots"] 为误形）+ `exports["./client"]` 扫描面；宿主自动服务 `/plugins/wiki-steward/client.js`（dsh-client-modules 浏览器花名册）
+- **设置菜单两面**：① `settings.section` 命名空间注册（better-sidebar 形：`{name:'settings.section', id:'wiki-steward', order, label}`）=设置页 navLabel 条目，组件做**配置展示/可改**；② ingest 日志/触发面板=`sidebar.panellist` 行 + `main` 槽页（slots.register 形照 skill-explorer：`{name:'sidebar.panellist', id, order, label}` + `{name:'main', key, inject}`），Vue 面板挂载契约不变（`mount(el,{apiBase})→{unmount()}`，清理幂等，失败容器内如实报错）；root 壳槽位 launcher/trigger/header/close/action/onboarding 维持禁注册（**settings.section 不在禁注册列**——better-sidebar 实证注册 + settings-general 壳 `renderSlot("settings.section")` 渲染贡献组件，上一波『禁注册含 settings.section』系误读已纠正）
+- **路由族官方形**（`lib/ingest-routes.js`，裁定 3）：`ctx.webServer.register({kind:"prefix", path:"/api/wiki-steward"})` 单 prefix + 内部分发——`GET/POST /api/wiki-steward/settings`（设置面展示/写入）、`GET /api/wiki-steward/ingest/{logs,settings}`、`POST /api/wiki-steward/ingest/{scan,distill}`、其余=web/dist 静态（panel.js/style.css，穿越围栏不变）；客户端一律**文档相对**请求 `api/wiki-steward/…`（skill-explorer issue #1707 教训：无前导斜杠/相对 base）；panel.js 面 404→200 回归钉死（真构建物字节等价断言）
+- **设置写路径**（`lib/settings-write.js` 新增，裁定 B「写路径走 settings 服务或 ctx.webServer API」取后者）：可改白名单=最小集（capture.enabled/bufferRounds、queue.maxRetries/ttlDays、secrets.enabled；**vaultRoot/write.readOnly 不可改**——INV-7 注记语义勿动）；白名单外叶子整单拒（not_editable，绝不静默丢键）、对象深合并数组整替、真 zod 校验生效面（inherited∪current∪patch）；落盘走 host `configEditor.edit`（@deepseek-ai/dsh-config-editor——dsh-settings 服务同款持久化缝：校验→profile patch→reconcile 热生效）；缺缝=写端点 503 write_unavailable 如实+writable:false，展示面照常
+- 测试 308→333（+25：client-face 6→13/settings-write 新 9/ingest-routes 11→18/ingest-wire 6→8，其中 ingest-dist 清单契约随 `dsh.client` 新形同步 1 条）；双 umask 口径全绿、npm run check exit 0；真验零 mock（真文件系统+真 zod Config+真构建物字节核）
+
 ## 0.3.0 — 2026-09-28
 
 设置页签 ingest 面板（用户反馈需求）：dsh 设置页新增 **wiki-steward · Ingest 页签**（`settings.plugins.tab`），可查 ingest 日志与相关设置、手动触发 ingest（双动作）。

@@ -9,6 +9,8 @@ import { z } from 'zod'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createPreStepHandler } from './inject.js'
+import { registerSettingsRoutes } from './settings-routes.js'
+import { createApplyPatch } from './settings-write.js'
 import { matchTrigger } from './trigger.js'
 import { search } from './search.js'
 import { openReadOnlyDb } from './index-db.js'
@@ -170,6 +172,55 @@ export function apply(ctx, rawConfig) {
     configSource: () => rawConfig,
   })
   ctx.on('agent/pre-step', handler, { prepend: true })
+
+  // ---- 设置面数据面（/api/kb-context/settings，官方路由形，沿 wiki-steward 同款）----
+  // webServer/connection/configEditor 软取得（wiki-steward 同款姿势）：inject 维持 ['tools'] 不加服务，
+  // cordis 未 inject 取服务属性会抛 → try/catch 兜底。缺缝=非 web 部署面 fail-open 留痕（INV-15）：
+  // 检索/注入面照常，只是设置面数据不注册。设置菜单注册在客户端面（lib/client.js settings.section，
+  // better-sidebar 路线）。设置写缝=host configEditor（dsh-settings 服务同款持久化缝）：
+  // 可改白名单（lib/settings-write.js）→ 校验 → profile patch 落盘 → reconcile 热生效（per-call 读即刻可见）。
+  const softService = (name, probe) => {
+    try {
+      if (typeof ctx?.get === 'function') {
+        const a = ctx.get(name)
+        if (probe(a)) return a
+        const b = ctx.get(name, false) // 非严格：提供者未激活也认（懒补接面）
+        if (probe(b)) return b
+      }
+    } catch { /* cordis 代理在服务缺位时抛——走兜底 */ }
+    try {
+      if (probe(ctx?.[name])) return ctx[name]
+    } catch { /* 同上 */ }
+    return null
+  }
+  const readCfg = () => {
+    const p = Config.safeParse(rawConfig)
+    return p.success ? p.data : Config.safeParse({}).data // 非法回退全默认（与 apply 告警面一致）
+  }
+  const webServerSvc = softService('webServer', (s) => typeof s?.register === 'function')
+  const connSvc = softService('connection', (s) => typeof s?.requestRejection === 'function')
+  const configEditorSvc = softService('configEditor', (s) => typeof s?.edit === 'function' && typeof s?.entries === 'function')
+  const applyPatch = configEditorSvc === null ? null : createApplyPatch({ configEditor: configEditorSvc, entryId: 'kb-context', Config })
+  if (webServerSvc !== null && connSvc !== null) {
+    const disposers = registerSettingsRoutes({
+      register: (spec) => webServerSvc.register(spec),
+      connection: connSvc,
+      getConfig: readCfg, // 热改现读（per-call 读语义）
+      applyPatch, // 设置写缝（缺=null → 写端点 503 如实，展示面照常）
+      warn: (line) => warn(ctx, line),
+    })
+    if (typeof ctx.effect === 'function') {
+      ctx.effect(() => {
+        for (const d of disposers) {
+          try { d() } catch { /* 收敛不抛 */ }
+        }
+      })
+    }
+  } else if (webServerSvc !== null || connSvc !== null) {
+    // 半缺缝（webServer/connection 只到其一）=接线异常，留痕（INV-15）；
+    // 双缺=非 web 部署面正常形态，数据面本就无处可注册，不告警（既有告警计数契约零改动）
+    warn(ctx, '[kb-context] webServer/connection 服务缝半缺，设置面数据（/api/kb-context/settings）未注册（fail-open：检索/注入面照常）')
+  }
 }
 
 // ⚠️ default 必须是对象（R13）：宿主读 default.inject / default.apply
