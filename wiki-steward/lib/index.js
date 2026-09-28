@@ -578,8 +578,9 @@ export function apply(ctx, rawConfig, opts = {}) {
   //    如实、展示面照常，诚实面=响应判据非额外告警）；
   //  - B2 修复（TECH.md D2）：注册动作在 effect 执行体内当场跑、返回值=拆除器、拆除幂等；
   //    注册中途抛错先收敛已注册资源再上抛（label 留痕，绝不吞错）；
-  //  - 半缺缝留痕（INV-15 不弱化）：告警专用 best-effort 探测（仅 warn，不参与注册决策；探测不抛）；
-  //    双缺=非 web 部署面正常形态，数据面本就无处可注册，不告警（既有告警计数契约零改动）。
+  //  - 缺缝留痕（INV-15 不弱化；审查 F1 裁决：用户确认 INV-2「web 数据面缺席留痕如实」口径优先）：
+  //    告警专用 best-effort 探测（仅 warn，不参与注册决策；探测不抛）；
+  //    双缺（web 数据面完全缺席）=留痕恰一 + 半缺=留痕恰一，两者都留痕如实。
   const softService = (name, probe) => {
     try {
       if (typeof ctx?.get === 'function') {
@@ -598,7 +599,9 @@ export function apply(ctx, rawConfig, opts = {}) {
   const applyPatch = configEditorSvc === null ? null : createApplyPatch({ configEditor: configEditorSvc, entryId: 'wiki-steward', Config })
   const wsProbe = softService('webServer', (s) => typeof s?.register === 'function')
   const connProbe = softService('connection', (s) => typeof s?.requestRejection === 'function')
-  if ((wsProbe === null) !== (connProbe === null)) {
+  if (wsProbe === null && connProbe === null) {
+    warn(ctx, '[wiki-steward] webServer/connection 服务缝缺失，数据面（/api/wiki-steward/*）未注册（fail-open：捕获/工具面照常）')
+  } else if ((wsProbe === null) !== (connProbe === null)) {
     warn(ctx, '[wiki-steward] webServer/connection 服务缝半缺，数据面（/api/wiki-steward/*）未注册（fail-open：捕获/工具面照常）')
   }
   try {

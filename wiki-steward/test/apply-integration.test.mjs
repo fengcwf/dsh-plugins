@@ -9,7 +9,8 @@
 //
 // 锁死面：B1 双层子插件形（外层 inject=['tools'] 不动 + 子插件硬 inject ['webServer','connection']）、
 // B2 生命周期（注册在 effect 执行体内 / apply 返回后不得自拆 / 返回值=拆除器 / 拆除全撤幂等 /
-// 注册中途抛错先收敛已注册资源再上抛）、双缺零告警（非 web 部署面正常形态）、半缺 warn 留痕、
+// 注册中途抛错先收敛已注册资源再上抛）、双缺 warn 留痕恰一（web 数据面完全缺席留痕如实，审查 F1 裁决）、
+// 半缺 warn 留痕恰一、
 // 代理抛守卫下 apply 不抛穿（INV-2 fail-open）。
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -189,11 +190,14 @@ test('inject 契约锁：外层 inject=[\'tools\']（default 同形，R13）；�
   assert.equal(state.registerCalls.length, 1)
 })
 
-test('B1 缺服务 fail-open 锁（双缺=非 web 部署面正常形态）：装载不抛、零注册零告警、工具/捕获/队列/写入拦截面照常、子插件延迟激活', (t) => {
+test('B1 缺服务 fail-open 锁（双缺）：装载不抛、零注册 + 告警恰一（留痕如实）、工具/捕获/队列/写入拦截面照常、子插件延迟激活', (t) => {
   const state = mkState({ webServer: false, connection: false })
   assert.doesNotThrow(() => apply(mkCtx(state), { vaultRoot: mkTmp(t) }, mkOpts(t)), 'INV-2：装载绝不抛穿')
   assert.deepEqual(state.registerCalls, [])
-  assert.deepEqual(state.warnings, [], '双缺=非 web 部署面正常形态，零告警（既有告警计数契约零改动）')
+  // 【断言恢复 R1 同步面｜修复轮 1（审查 F1 裁决）】双缺=web 数据面完全缺席 → 留痕恰一（INV-2「缺席留痕如实」，
+  // 用户确认口径优先）；与 ingest-wire.test.mjs R1 恢复的旧断言同语义互锁。
+  assert.equal(state.warnings.length, 1, '双缺=留痕恰一（审查 F1 裁决恢复旧语义）')
+  assert.match(state.warnings[0], /数据面.*未注册/)
   // 工具面照常（INV-4 名单零变化）
   assert.deepEqual(state.toolRegs.map((x) => x.name).sort(), [...TOOL_NAMES].sort())
   // 捕获三缝 + 写入拦截缝照常（fail-open 承诺）

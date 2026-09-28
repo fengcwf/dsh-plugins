@@ -110,7 +110,13 @@ test('B1/B2 服务缝契约（2026-09-28 b1b2 修复波）：数据面经子插�
     logger: { warn: (l) => warnings.push(l) },
     on: () => {},
     tools: { register: () => {} },
-    get: (name) => (name === 'timer' ? { interval: () => () => {} } : undefined),
+    // 宿主服务店最小形（cordis ctx.get 语义）：web 部署面 timer/webServer/connection 在场——
+    // 修复轮 1 夹具保真（审查 F1 裁决恢复双缺留痕后，缺服务探针须能看见服务在场，健康路径零告警才成立）
+    get: (name) => ({
+      timer: { interval: () => () => {} },
+      webServer: { register: () => () => {} },
+      connection: { requestRejection: () => undefined },
+    }[name]),
     // 子插件缝（宿主 _refresh 模拟）：服务齐即激活；effect 真语义（execute 立即跑、返回值=拆除器）
     plugin: (p) => {
       pluginCalls.push(p)

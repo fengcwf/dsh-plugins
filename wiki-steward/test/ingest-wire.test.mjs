@@ -1,6 +1,6 @@
 // ingest-wire 单测（index.js 数据面接线）：B1 双层子插件形取得服务（2026-09-28 b1b2 波，TECH.md D1——
 // 外层 inject 维持 ['tools'] 不加服务；webServer/connection 走子插件硬 inject ['webServer','connection']）、
-// 缺缝 fail-open（双缺=非 web 部署面正常形态不告警、半缺=留痕，见 R1/apply-integration）、注册单 prefix
+// 缺缝 fail-open（双缺=留痕恰一、半缺=留痕恰一，两者都留痕——审查 F1 裁决 INV-2 口径优先，见 R1/apply-integration）、注册单 prefix
 // /api/wiki-steward（官方路由形，裁定 3）、B2 effect 正确形（执行体内注册、返回值=拆除器，见 R2）、
 // Config 热改现读（settings 响应跟 rawConfig 走）、设置写缝（configEditor → createApplyPatch）接线与缺缝 503 如实。
 // 零 mock：假 host 缝最小形（wire.test 同款），业务面真调真文件系统（mkdtemp）。
@@ -117,15 +117,17 @@ test('接线：webServer 缝在场 → 注册单 prefix /api/wiki-steward（官�
   assert.equal(ctx.warnings.length, 0, '健康路径零留痕')
 })
 
-test('接线：webServer/connection 双缺 = 非 web 部署面正常形态（零注册零告警）+ 事件缝照常（fail-open）', (t) => {
+test('接线：webServer/connection 缺缝 = fail-open 留痕恰一 + 事件缝照常（INV-15 禁静默）', (t) => {
   const ctx = mkCtx({ withWeb: false })
   apply(ctx, { vaultRoot: mkTmp(t) })
   assert.equal(ctx.webRoutes.length, 0)
-  // 【断言修订 R1｜2026-09-28 b1b2 波】旧断言：warnings.length===1 + match /数据面.*未注册/。
-  // 修订理由：warn 留痕语义经派发裁定沿 kb-context 口径改形——双缺=非 web 部署面正常形态不告警、
-  // 半缺=告警留痕恰一（半缺锁见 apply-integration.test.mjs「半缺 warn 锁」）。此断言正是旧语义本身，
-  // 随 B1 语义变化必须改；fail-open 面（零注册 + 事件缝照常）断言原样保留。
-  assert.equal(ctx.warnings.length, 0, '双缺=非 web 部署面正常形态，零告警（既有告警计数契约零改动）')
+  // 【断言恢复 R1｜修复轮 1（审查 F1 裁决）】恢复原断言（warnings.length===1 + match /数据面.*未注册/）。
+  // 反转依据：审查 F1 判定「双缺=零告警」与用户已确认的 PRODUCT.md INV-2「web 数据面缺席留痕如实」冲突，
+  // 裁决=用户确认 INV-2 口径优先，旧语义整条恢复——双缺（web 数据面完全缺席）=留痕恰一；半缺=告警留痕恰一
+  // （半缺锁见 apply-integration.test.mjs「半缺 warn 锁」），最终口径=双缺恰一 + 半缺恰一，两者都留痕。
+  // fail-open 面断言（零注册 + 事件缝照常）原样保留。
+  assert.equal(ctx.warnings.length, 1)
+  assert.match(ctx.warnings[0], /数据面.*未注册/)
   assert.equal(typeof ctx.handlers['session/event'], 'function', '捕获面照常（fail-open）')
 })
 
