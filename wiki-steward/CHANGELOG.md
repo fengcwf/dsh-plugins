@@ -1,5 +1,14 @@
 # CHANGELOG — wiki-steward
 
+## 0.4.1 — 2026-09-28
+
+B1/B2 修复波（来源：`changes/2026-09-28-b1b2-service-effect-fix/`，Task 1 实现 + Task 2 zod 归位）：
+
+- **B1 服务缝取得修复**（`lib/index.js`）：数据面服务取得由 softService 单次快照改为双层子插件形 `ctx.plugin({inject:['webServer','connection'], apply(c){…}})` 硬 inject——外层 `export const inject=['tools']` 不动；provider 缺位=子插件延迟激活不炸装载、后到自动补激活（INV-2 fail-open）；configEditor 保持可缺位软取得（缺=写端点 503 如实，展示面照常）
+- **B2 effect 生命周期语义修复**（`lib/index.js`）：注册动作迁入 `c.effect` 执行体内——立即执行、返回值=拆除器（label `wiki-steward: ingest-routes`）、拆除幂等零残留；register 返回拆除器即记账+返回值去重双记账，注册中途抛错先收敛已注册资源再上抛；缺 effect 缝=跳过注册不悬挂（INV-3）；修前注册当场自拆/悬挂
+- **zod 依赖归位**（`package.json`，工作区裁定 2026-09-28：仅 `@deepseek-ai/*` 走 peer+dev 双声明，第三方统一 `dependencies`）：zod 从 `peerDependencies` 迁入 `dependencies`（^4.6.5，git 快照安装自动代装），devDep `zod link:` 副本移除；`@deepseek-ai/dsh-llm`/`@deepseek-ai/dsh-tools` 双声明零变化——修前第三方 zod 在 peer（peer 不代装，autoInstallPeers:false），干净安装即 `ERR_MODULE_NOT_FOUND: zod`
+- **测试 333→342**（+9：`test/apply-integration.test.mjs` 8 锁锁 B1/B2 回归——假 ctx 真 `apply()` + 真注册/handler 执行；`load.test.mjs` 子注入/拆除器契约 1）；断言修订 2 处逐条注明理由（task-1-report.md）；`node --test` 342/342 pass fail 0、`npm run check` exit 0
+
 ## 0.4.0 — 2026-09-28
 
 设置菜单页签修正 + 面板加载 404 修复（能力级重做，用户反馈两问题）：设置页签归位 **settings.section 设置菜单命名空间**（better-sidebar 路线，navLabel 自动进设置页）；ingest 面板改挂 **sidebar.panellist 行 + main 槽页**（skill-explorer 形）；弃自造 `settings.plugins.tab` 页签与站内绝对 `/wiki-steward/panel.js` 动态 import（生产 404 根因：login-gate 3500 基址下逃出 `<base href="./">` 前缀+旧路由族无人服务）。
