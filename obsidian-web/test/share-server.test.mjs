@@ -811,29 +811,47 @@ test('⑦ 显式 trustProxy 集成：可信代理链下 XFF 客户端各自独�
   })
 })
 
+/** T9 接线 harness（P8-2b F-1 抽出：原内联于下方 T9 测试体，纯搬移零语义变化——
+ *  使本文件伪件 throw 行被独立微断言锁死，挡失效模式「伪件静默忽略非法返回 / 删 throw 行静默复发」） */
+function makeWireCtx() {
+  const disposers = []
+  const warnings = []
+  const routes = new Map()
+  return {
+    disposers,
+    warnings,
+    routes,
+    ctx: {
+      logger: { warn: (line) => warnings.push(line) },
+      webServer: {
+        register(route) {
+          routes.set(`${route.kind}:${route.path}`, route)
+          return () => routes.delete(`${route.kind}:${route.path}`)
+        },
+      },
+      connection: { requestRejection: () => undefined },
+      // 真 cordis effect 语义（S4 契约同源，B2 修复）：执行器立即执行、返回函数才是拆除器
+      //（cordis lib/index.js:1142-1143 实测）——旧伪「effects.push(fn)」不执行执行器=错误契约烤进测试（假绿），已废。
+      effect(fn) {
+        const d = fn()
+        if (typeof d === 'function') disposers.push(d)
+        else if (d != null) throw new TypeError('Invalid effect')
+      },
+    },
+  }
+}
+
+// ── 伪 effect 宿主语义锁（P8-2b F-1，helper 路径=下方 T9 测试同一伪件拷贝）：本文件 throw 行被断言锁死 ──
+test('伪 effect 宿主语义锁（失效模式「伪件静默忽略非法返回 / 删 throw 行静默复发」，helper 路径）：执行器返回非函数非空 42 → TypeError("Invalid effect")', () => {
+  const { ctx } = makeWireCtx()
+  assert.throws(() => ctx.effect(() => 42), { name: 'TypeError', message: 'Invalid effect' })
+})
+
 // ── ⑥/T9 接线（OW-INV-10：独立 listener、可单独关停、缺收敛缝 fail-closed）────
 test('T9 接线：apply 宿主缝+ctx.effect → 起独立分享 listener（server.sharePort）；dispose 关停面消失', async () => {
   const vault = makeVault('wire', { 'hello.md': '# hi' })
   const probe = await probePort()
-  const disposers = []
-  const warnings = []
-  const routes = new Map()
-  const ctx = {
-    logger: { warn: (line) => warnings.push(line) },
-    webServer: {
-      register(route) {
-        routes.set(`${route.kind}:${route.path}`, route)
-        return () => routes.delete(`${route.kind}:${route.path}`)
-      },
-    },
-    connection: { requestRejection: () => undefined },
-    // 真 cordis effect 语义（S4 契约同源，B2 修复）：执行器立即执行、返回函数才是拆除器
-    //（cordis lib/index.js:1142-1143 实测）——旧伪「effects.push(fn)」不执行执行器=错误契约烤进测试（假绿），已废。
-    effect(fn) {
-      const d = fn()
-      if (typeof d === 'function') disposers.push(d)
-    },
-  }
+  const { ctx, disposers, routes } = makeWireCtx()
   apply(ctx, { vaultRoot: vault, indexDir: IDX_BASE, server: { sharePort: probe } })
   // 正向断言（B2 回归锁）：真语义 effect 下 apply 返回后主 UI/REST 注册面必须在场
   //（挡失效模式「effect 拆除器当执行器→注册即自拆」）

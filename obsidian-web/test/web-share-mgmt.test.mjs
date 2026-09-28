@@ -59,10 +59,11 @@ function makeCtx({ rejection } = {}) {
       },
       connection: { requestRejection: () => rejection },
       // 真 cordis effect 语义（S4 契约同源，B2 修复）：执行器立即执行、返回函数才是拆除器
-      //（cordis lib/index.js:1142-1143 实测）——错误契约烤进测试=假绿，本 harness 与真宿主同源。
+      //（cordis lib/index.js:1142-1143 实测）——错误契约烤进测试=假绿，本 harness 与真宿主同源（主路径同源；非函数非法返回抛 Invalid effect；thenable/iterable 分支未复刻——伪件对此类返回亦抛 Invalid effect（fail-closed，非静默忽略），真宿主则按协议收集）。
       effect(fn) {
         const d = fn()
         if (typeof d === 'function') disposers.push(d)
+        else if (d != null) throw new TypeError('Invalid effect')
       },
     },
   }
@@ -131,6 +132,12 @@ const MGMT_ROUTES = [
   ['GET', '/ob/api/share-settings'],
   ['POST', '/ob/api/share-settings'],
 ]
+
+// ── 伪 effect 宿主语义锁（终审 F1，直调路径=与上方 withApi 内 ctx.effect(() => registerWebRoutes(...)) 同款直调）──
+test('伪 effect 宿主语义锁（失效模式「伪件静默忽略非法返回」，直调路径）：ctx.effect(() => 42) 直调 → TypeError("Invalid effect")', () => {
+  const { ctx } = makeCtx()
+  assert.throws(() => ctx.effect(() => 42), { name: 'TypeError', message: 'Invalid effect' })
+})
 
 // ── ① 管理面鉴权（未授权拒 + 零副作用）────────────────────────────────────────
 test('① 管理面鉴权：requestRejection=401 → 全部管理路由 401 且零副作用', async (t) => {

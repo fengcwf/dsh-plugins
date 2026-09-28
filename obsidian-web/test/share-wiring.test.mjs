@@ -53,6 +53,7 @@ function makeCtx() {
       effect(fn) {
         const d = fn()
         if (typeof d === 'function') disposers.push(d)
+        else if (d != null) throw new TypeError('Invalid effect')
       },
     },
     disposers,
@@ -60,6 +61,12 @@ function makeCtx() {
     routes,
   }
 }
+
+// ── 伪 effect 宿主语义锁（P8-2b F-1，helper 路径）：本文件伪件 throw 行被断言锁死，删 throw 行此测试必红 ──
+test('伪 effect 宿主语义锁（失效模式「伪件静默忽略非法返回 / 删 throw 行静默复发」，helper 路径）：执行器返回非函数非空 42 → TypeError("Invalid effect")', () => {
+  const { ctx } = makeCtx()
+  assert.throws(() => ctx.effect(() => 42), { name: 'TypeError', message: 'Invalid effect' })
+})
 
 /** 把注册面 handler 挂到真实 node:http server（面契约真 HTTP 往返，非纸面断言） */
 function mountHandler(handler) {

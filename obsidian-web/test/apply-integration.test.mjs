@@ -53,7 +53,7 @@ function makeVault(tag, files) {
 }
 
 /**
- * 假 ctx，但 effect=真 cordis 语义（S4 契约同源）：执行器立即执行、返回函数才是拆除器。
+ * 假 ctx，但 effect=真 cordis 语义（S4 契约同源，主路径同源）：执行器立即执行、返回函数才是拆除器；非函数非法返回抛 Invalid effect；thenable/iterable 分支未复刻——伪件对此类返回亦抛 Invalid effect（fail-closed，非静默忽略；真宿主则按协议收集 thenable/iterable）。
  * webServer.register 收集 spec→handler Map（返回 disposer）；connection.requestRejection 返回 undefined=放行。
  */
 function makeCtx() {
@@ -73,6 +73,7 @@ function makeCtx() {
       effect(fn) {
         const d = fn()
         if (typeof d === 'function') disposers.push(d)
+        else if (d != null) throw new TypeError('Invalid effect')
       },
     },
     disposers,
@@ -152,6 +153,12 @@ async function waitForPort(port, host = '127.0.0.1', timeoutMs = 5000) {
   }
   return false
 }
+
+// ── 伪 effect 宿主语义锁（终审 F1，helper 路径）：非法返回必须抛，不许静默 ───────────
+test('伪 effect 宿主语义锁（失效模式「伪件静默忽略非法返回」，helper 路径）：执行器返回非函数非空 42 → TypeError("Invalid effect")', () => {
+  const { ctx } = makeCtx()
+  assert.throws(() => ctx.effect(() => 42), { name: 'TypeError', message: 'Invalid effect' })
+})
 
 // ── 轴一 注册面在场（默认 sharePort=null）──────────────────────────────────────────────
 test('轴一① 注册面在场（B2 回归锁，失效模式「注册即自拆」——修前此断言必红）：apply() 返回后 /ob 面 + 分享面注册真在场', async () => {

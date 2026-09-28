@@ -70,10 +70,17 @@ function makeSlotsCtx() {
     effect(fn) {
       const d = fn()
       if (typeof d === 'function') disposers.push(d)
+      else if (d != null) throw new TypeError('Invalid effect')
     },
   }
   return { ctx, injected, registered, disposers }
 }
+
+// ── 伪 effect 宿主语义锁（P8-2b F-1，helper 路径）：本文件伪件 throw 行被断言锁死，删 throw 行此测试必红 ──
+test('伪 effect 宿主语义锁（失效模式「伪件静默忽略非法返回 / 删 throw 行静默复发」，helper 路径）：执行器返回非函数非空 42 → TypeError("Invalid effect")', () => {
+  const { ctx } = makeSlotsCtx()
+  assert.throws(() => ctx.effect(() => 42), { name: 'TypeError', message: 'Invalid effect' })
+})
 
 // ── ① 真加载：顶层 window.__ModuleLoader__.load 契约 ─────────────────────────────────
 test('① client.js 真加载：window.__ModuleLoader__.load({id:"obsidian-web", factory}) 定义被真捕获', async () => {
