@@ -24,7 +24,7 @@
 
 - **方案A（选定）**：服务端 `ctx.webServer.register({kind:'prefix',path:'/api/login-gate/settings'})` → GET 回读 / POST `{patch}` → 白名单预检（白名单外整单拒 not_editable）→ zod 校验生效面 → `configEditor.edit(entryId='login-gate', change)` → 写 profile patch + Loader reconcile。
 - **方案B（弃）**：插件自写配置文件/直写 YAML——绕开 reconcile、并发不安全、违反 Global Constraint 1。
-- **生效语义（R-16，即时生效）**：sessionDays/maxFailures/secureCookie/wsAllow/gzipPass = handler per-call 读 config 热生效；port/listenHost/upstreamPort/rewriteHost = 写入后经宿主 re-apply 立即生效（端口保存前 UI 警示断连）（ADR-003 修订标注）。
+- **生效语义（R-16，即时生效）**：九键均经宿主 re-apply 即时生效（apply 期快照，重 apply 重取）（端口保存前 UI 警示断连）（ADR-003 修订标注）。
 
 ### ADR-003: 端口维护 = 可改 + 事前警示 + 联动清单（用户 Round 1 裁定 / R-16 修订）
 

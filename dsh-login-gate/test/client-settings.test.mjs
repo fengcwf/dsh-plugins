@@ -3,7 +3,7 @@
 //        lib/login-page.js —— renderLogin 纯函数（页脚文案动态 N）。
 // 契约（changes/2026-09-29-login-gate-settings/PRODUCT.md US-1~4 + task-12-context.md）：
 // settings.section 注册（id='login-gate'、order=31、label='dsh-login-gate'）；四区一段：
-// 端口区（可改+重启提示+联动清单四行）/参数区（5 可改+3 只读）/账号区（增改删表单，列表仅名字
+// 端口区（可改+事前警示+联动清单四行）/参数区（5 可改+3 只读）/账号区（增改删表单，列表仅名字
 // 永无哈希）/说明段（N 天免登录动态 + 固定过期/302 重登/logout-all 机制）。
 // 保存语义 R-12/R-16：空 draft 拒保存；成功=合并回显+字面「已保存，已生效（监听端口/参数已即时应用）」（G1）；
 // 端口（port）草稿保存前必须先弹断连警示确认条（R-16 事前警示），确认才 POST、取消零 POST；其他键不弹；
@@ -326,6 +326,7 @@ test('保存成功（G1/R-16）：含 port 草稿=先弹断连警示确认条（
   const okEl = find(t, (n) => typeof n.props?.className === 'string' && n.props.className.includes('login-gate-settings-ok'))
   assert.ok(okEl, '成功 notice 在')
   assert.ok(allText(okEl).includes('已保存，已生效'), 'G1 字面文案=保存成功 notice 本体')
+  assert.deepEqual(noticeEl(t).children, ['已保存，已生效（监听端口/参数已即时应用）'], 'G1 notice 全串等值（R-16 字面全文一字不差，非字面子串）')
   assert.equal(buttonByText(t, '确认保存'), null, '确认后警示条收起')
   // 合并回显：输入值=返回 config；draft 清空（再保存=空 draft 拒）
   assert.equal(rowOf(t, 'sessionDays').props.value, 7)

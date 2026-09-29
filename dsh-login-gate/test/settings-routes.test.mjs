@@ -68,7 +68,6 @@ async function startRoutes(t, overrides = {}) {
     },
     connection: { requestRejection: ({ headers }) => (headers['x-test-auth'] === '1' ? undefined : 401) },
     getConfig: () => baseConfig(),
-    getBootConfig: () => baseConfig(),
     getUsers: () => ({}),
     usersFile: join(tmpdir(), 'unused-users.json'),
     getApplyPatch: () => async (patch) => ({ ok: true, config: { ...baseConfig(), ...patch }, effective: { ...baseConfig(), ...patch } }),
