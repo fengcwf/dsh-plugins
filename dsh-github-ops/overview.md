@@ -93,7 +93,7 @@
 | Phase 3 | proposal.md + constitution.md（P-1..P-10） | ✅ | BA9F2B9E |
 | Phase 4 | 机械自检 | ✅ | 809AC5E7 |
 | Phase 5 | 实现计划 tasks.md（Task 10-17 + 覆盖矩阵 US/INV） | ✅ | 2EC9D072 |
-| Phase 6 | Task 10-17 全部 clean（2 轮修复环 + 整分支终审 READY） | ✅ | — |
+| Phase 6 | Task 10-17 全部 clean（3 轮修复环：Task 10/14/17 + 整分支终审 READY） | ✅ | — |
 | Phase 7 | 归档复盘（本文件 + archive 三件 + review-report + fix-notes） | ✅ | 见 gate-phase7 |
 | Phase 8 | 优化循环（backlog 池 + 用户反馈驱动） | 🔄 R1 进行中（用户反馈驱动） | — |
 
