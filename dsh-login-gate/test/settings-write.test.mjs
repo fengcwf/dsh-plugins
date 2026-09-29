@@ -17,14 +17,16 @@ import {
   probePortBindable,
   precheckPort,
   createApplyPatch,
+  readEntryConfig,
+  createConfigReader,
 } from '../lib/settings-write.js'
 
-/** 假 configEditor（缝契约形）：entries() 列活动表，edit(entry, cb) 执行变更回调并落回 entry config */
+/** 假 configEditor（缝契约形，对齐 dsh-config-editor 实测：entry.options.config=已保存显式配置） */
 function fakeConfigEditor(initialConfig = {}, { entryId = 'login-gate', withEntry = true, editThrows = null } = {}) {
   const state = { config: { ...initialConfig }, editCalls: 0 }
   return {
     state,
-    entries: () => (withEntry ? [{ options: { id: entryId }, config: state.config }] : []),
+    entries: () => (withEntry ? [{ options: { id: entryId, config: state.config } }] : []),
     edit: async (entry, cb) => {
       state.editCalls += 1
       if (editThrows) throw editThrows
@@ -126,15 +128,19 @@ test('applyEditablePatch：zod 校验失败 = invalid（消息含字段路径）
   assert.equal(pre.code, 'not_editable')
 })
 
-test('restartRequiredFor：port/listenHost/upstreamPort/rewriteHost 任一变更=true；热生效参数变更=false（INV-1）', () => {
-  const base = { port: 3500, listenHost: '127.0.0.1', upstreamPort: 3080, rewriteHost: true }
-  assert.deepEqual(RESTART_KEYS, ['port', 'listenHost', 'upstreamPort', 'rewriteHost'])
+test('restartRequiredFor（R-11）：九键任一差异=true（含热键）；等值数组不误报；全等=false', () => {
+  const base = {
+    port: 3500, listenHost: '127.0.0.1', upstreamPort: 3080, rewriteHost: true,
+    sessionDays: 30, maxFailures: 5, secureCookie: true, wsAllow: ['^/api/'], gzipPass: true,
+  }
+  assert.deepEqual(RESTART_KEYS, ['port', 'listenHost', 'upstreamPort', 'rewriteHost', 'sessionDays', 'maxFailures', 'secureCookie', 'wsAllow', 'gzipPass'])
   assert.equal(restartRequiredFor(base, { ...base }), false)
-  assert.equal(restartRequiredFor(base, { ...base, port: 3501 }), true)
-  assert.equal(restartRequiredFor(base, { ...base, listenHost: '0.0.0.0' }), true)
-  assert.equal(restartRequiredFor(base, { ...base, upstreamPort: 3090 }), true)
-  assert.equal(restartRequiredFor(base, { ...base, rewriteHost: false }), true)
-  assert.equal(restartRequiredFor(base, { ...base, sessionDays: 7, maxFailures: 9, secureCookie: false, wsAllow: ['any'], gzipPass: false }), false)
+  assert.equal(restartRequiredFor(base, { ...base, wsAllow: ['^/api/'] }), false, '等值数组不应误报（sameValue 逐项）')
+  for (const k of RESTART_KEYS) {
+    const v = k === 'wsAllow' ? ['any'] : (typeof base[k] === 'boolean' ? !base[k] : base[k] + 1)
+    assert.equal(restartRequiredFor(base, { ...base, [k]: v }), true, `${k} 变更应标重启（R-11 无热生效键）`)
+  }
+  assert.equal(restartRequiredFor(base, { ...base, sessionDays: 7, maxFailures: 9, secureCookie: false, gzipPass: false }), true, '热键变更同样标重启（R-11）')
 })
 
 test('probePortBindable：真 net 可绑定性探测——占用=false、空闲=true（探测后立即 close）', async () => {
@@ -209,4 +215,44 @@ test('createApplyPatch：白名单外绝不触达 edit；缺 entry = no_entry；
   const half = await createApplyPatch({ configEditor: {}, entryId: 'login-gate', Config })({ port: 3501 })
   assert.equal(half.ok, false)
   assert.equal(half.code, 'no_entry')
+})
+
+test('readEntryConfig（R-12）：entry.options.config 现读；缺缝/缺入口/异常=null 不抛穿', () => {
+  const editor = fakeConfigEditor({ port: 4700 })
+  assert.deepEqual(readEntryConfig(editor, 'login-gate'), { port: 4700 })
+  assert.equal(readEntryConfig(editor, 'other-id'), null)
+  assert.equal(readEntryConfig(null, 'login-gate'), null)
+  assert.equal(readEntryConfig({}, 'login-gate'), null, '半缺缝按缺位收敛')
+  assert.equal(readEntryConfig({ entries: () => { throw new Error('boom') } }, 'login-gate'), null, '异常收敛不抛')
+  assert.equal(readEntryConfig(fakeConfigEditor({}, { withEntry: false }), 'login-gate'), null)
+})
+
+test('createConfigReader（R-12）：已保存面优先 overlay（written∪boot）；缺缝回退 base；现读异常回退 base', () => {
+  const editor = fakeConfigEditor({ port: 4700, sessionDays: 7 })
+  const read = createConfigReader({
+    getBase: () => ({ port: 3500, listenHost: '127.0.0.1', sessionDays: 30 }),
+    readSaved: () => readEntryConfig(editor, 'login-gate'),
+    normalize: (c) => ({ ...c }),
+  })
+  assert.deepEqual(read(), { port: 4700, listenHost: '127.0.0.1', sessionDays: 7 }, 'saved 键优先、其余沿 boot')
+
+  // 写后现读即新值（GET「返回已保存值」语义）
+  editor.state.config = { ...editor.state.config, port: 4800 }
+  assert.equal(read().port, 4800)
+
+  // 缺缝→回退 base（written∪boot 的 boot 面）
+  const readOnly = createConfigReader({
+    getBase: () => ({ port: 3500 }),
+    readSaved: () => readEntryConfig(null, 'login-gate'),
+    normalize: (c) => ({ ...c }),
+  })
+  assert.deepEqual(readOnly(), { port: 3500 })
+
+  // 现读异常→回退 base（绝不抛穿 GET）
+  const throwing = createConfigReader({
+    getBase: () => ({ port: 3500 }),
+    readSaved: () => { throw new Error('boom') },
+    normalize: (c) => ({ ...c }),
+  })
+  assert.deepEqual(throwing(), { port: 3500 })
 })

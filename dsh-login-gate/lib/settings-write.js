@@ -6,7 +6,7 @@
 //     （坏正则写入会让 proxy.js apply 期 `new RegExp` 炸装载——写入面直接拒）。
 //   - 端口可绑定性探测（net.createServer().listen 探测后立即 close）：占用拒 port_in_use + 占用提示；
 //     port 未变更不探测（探测自身 listener 必误报）。
-//   - restartRequired 只标记（port/listenHost/upstreamPort/rewriteHost 任一变更），绝不热重绑 listener（INV-1）。
+//   - restartRequired 只标记（R-11：九键任一写入/差异即标，绝不宣称热生效），绝不热重绑 listener（INV-1）。
 //   - configEditor 缝（createApplyPatch）：change 形按 kb-context/lib/settings-write.js 契约
 //     （edit(entry, cb) 的 cb 返回写入形），缺缝/缺入口/校验失败=结构化失败，绝不抛穿路由。
 import net from 'node:net'
@@ -14,8 +14,12 @@ import net from 'node:net'
 /** 可写白名单（顶层键）；其余键只读/不可见，POST 携带=整单拒 */
 export const EDITABLE_KEYS = Object.freeze(['port', 'sessionDays', 'maxFailures', 'secureCookie', 'wsAllow', 'gzipPass'])
 
-/** 重启敏感键：任一变更→响应标 restartRequired（INV-1；服务端不做任何热重绑） */
-export const RESTART_KEYS = Object.freeze(['port', 'listenHost', 'upstreamPort', 'rewriteHost'])
+/**
+ * 重启敏感键（R-11 裁定：语义扩到全部可写键）：config 展示九键全集——boot 期按值捕获（index.js
+ * 直传 cfg 字段），写入后运行面不热生效，任一成功写入即「已保存，需重启生效」，绝不宣称已生效。
+ * INV-1：只标记，服务端不做任何热重绑。
+ */
+export const RESTART_KEYS = Object.freeze(['port', 'listenHost', 'upstreamPort', 'rewriteHost', 'sessionDays', 'maxFailures', 'secureCookie', 'wsAllow', 'gzipPass'])
 
 function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -110,9 +114,15 @@ export function applyEditablePatch({ inherited = {}, current = {}, patch }, Conf
   return { ok: true, config: { ...structuredClone(current), ...minimal }, effective: parsed.data }
 }
 
-/** 重启敏感键任一变更→true（INV-1：只标记，绝不热重绑 listener） */
+/** 值等价（数组逐项、其余严格等）：wsAllow 等数组键不能用引用比较（normalize 每次新建数组） */
+function sameValue(a, b) {
+  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((x, i) => sameValue(x, b[i]))
+  return a === b
+}
+
+/** 任一重启敏感键变更→true（R-11：九键任一差异都需重启才生效；只标记，绝不热重绑 listener） */
 export function restartRequiredFor(before, after) {
-  return RESTART_KEYS.some((k) => (before ?? {})[k] !== (after ?? {})[k])
+  return RESTART_KEYS.some((k) => !sameValue((before ?? {})[k], (after ?? {})[k]))
 }
 
 /**
@@ -184,5 +194,39 @@ export function createApplyPatch({ configEditor, entryId, Config }) {
     } catch (e) {
       return { ok: false, code: typeof e?.code === 'string' ? e.code : 'edit_failed', message: String(e?.message ?? e) }
     }
+  }
+}
+
+/**
+ * 读 configEditor entry 的已保存显式配置（R-12）：entries() 现读 `entry.options.config`
+ * （dsh-config-editor 实测形：edit() 的 current 即 structuredClone(entry.options.config ?? {})）。
+ * 缺缝/缺入口/异常→null（调用方回退 base）。
+ */
+export function readEntryConfig(configEditor, entryId) {
+  try {
+    if (typeof configEditor?.entries !== 'function') return null
+    const entry = configEditor.entries().find((e) => e?.options?.id === entryId)
+    const saved = entry?.options?.config
+    return isPlainObject(saved) ? saved : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 已保存面优先配置现读（R-12）：saved（configEditor entry 现读）overlay 于 base（boot/rawConfig），
+ * saved 键优先（written∪boot）；缺缝回退 base；normalize 补 zod 缺省。
+ * 语义=「GET 返回已保存值；生效需重启」（R-11：运行面不热生效）。
+ */
+export function createConfigReader({ getBase, readSaved = () => null, normalize = (x) => x }) {
+  return () => {
+    let saved = null
+    try {
+      saved = readSaved()
+    } catch {
+      saved = null // 现读失败按缺位收敛（回退 base，绝不抛穿 GET）
+    }
+    const base = getBase() ?? {}
+    return normalize({ ...base, ...(isPlainObject(saved) ? saved : {}) })
   }
 }

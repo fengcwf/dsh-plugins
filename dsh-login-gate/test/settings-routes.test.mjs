@@ -10,7 +10,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { registerSettingsRoutes } from '../lib/settings-routes.js'
-import { apply } from '../lib/index.js'
+import { createApplyPatch, createConfigReader, readEntryConfig } from '../lib/settings-write.js'
+import { apply, Config } from '../lib/index.js'
 import { loadUsers } from '../lib/users.js'
 import { verifyPassword } from '../lib/auth.js'
 
@@ -29,17 +30,31 @@ const baseConfig = () => ({
   gzipPass: true,
 })
 
-/** 假 configEditor（缝契约形） */
+/** 假 configEditor（缝契约形，对齐 dsh-config-editor 实测：entry.options.config=已保存显式配置） */
 function fakeConfigEditor(initial = {}) {
   const state = { config: { ...initial }, editCalls: 0 }
   return {
     state,
-    entries: () => [{ options: { id: 'login-gate' }, config: state.config }],
+    entries: () => [{ options: { id: 'login-gate', config: state.config } }],
     edit: async (_entry, cb) => {
       state.editCalls += 1
       const next = cb(state.config, {})
       if (next !== undefined) state.config = next
     },
+  }
+}
+
+/** 真接线（F5）：fake configEditor → createApplyPatch 写缝 + createConfigReader 已保存面现读（R-12） */
+function wireEditor(initial = {}) {
+  const editor = fakeConfigEditor(initial)
+  return {
+    editor,
+    getApplyPatch: () => createApplyPatch({ configEditor: editor, entryId: 'login-gate', Config }),
+    getConfig: createConfigReader({
+      getBase: () => baseConfig(),
+      readSaved: () => readEntryConfig(editor, 'login-gate'),
+      normalize: (c) => ({ ...baseConfig(), ...c }),
+    }),
   }
 }
 
@@ -92,33 +107,36 @@ test('GET /api/login-gate/settings：契约形（writable/restartRequired/config
   assert.equal(JSON.stringify(body).includes('usersFile'), false, 'GET config 不含 usersFile/users 内部键')
 })
 
-test('POST /api/login-gate/settings：白名单写入成功，回显合并后 config + restartRequired', async (t) => {
-  const editor = fakeConfigEditor()
-  const written = []
-  const { post, get } = await startRoutes(t, {
-    getApplyPatch: () => async (patch) => {
-      written.push(patch)
-      return { ok: true, config: { ...baseConfig(), ...patch }, effective: { ...baseConfig(), ...patch } }
-    },
-  })
+test('POST/GET（真接线 F5）：任一成功写入=已保存+restartRequired:true（R-11）；写后 GET 回读已保存值（R-12/F3）', async (t) => {
+  const { editor, getApplyPatch, getConfig } = wireEditor()
+  const { post, get } = await startRoutes(t, { getApplyPatch, getConfig })
+
+  // 热键写入同样标重启（boot 期按值捕获，运行面不热生效——绝不宣称已生效）
   const res = await post('/api/login-gate/settings', { patch: { sessionDays: 7, maxFailures: 3 } })
   assert.equal(res.status, 200)
   const body = await res.json()
-  assert.equal(body.data.restartRequired, false, '热生效参数变更不标重启（INV-1 只对端口类标记）')
+  assert.equal(body.data.restartRequired, true, 'R-11：任一成功写入即需重启（含热键）')
   assert.equal(body.data.config.sessionDays, 7)
   assert.equal(body.data.config.maxFailures, 3)
-  assert.deepEqual(written, [{ sessionDays: 7, maxFailures: 3 }])
-  assert.equal(editor.state.editCalls, 0)
+  assert.deepEqual(editor.state.config, { sessionDays: 7, maxFailures: 3 }, '写入形落 entry')
+  assert.equal(editor.state.editCalls, 1)
+
+  // R-12/F3：写后 GET 回读已保存值（不是 boot 旧值）
+  const after1 = await (await get('/api/login-gate/settings')).json()
+  assert.equal(after1.data.config.sessionDays, 7, '写后 GET 应显已保存值')
+  assert.equal(after1.data.restartRequired, true)
 
   const res2 = await post('/api/login-gate/settings', { patch: { port: 4700 } })
-  const body2 = await res2.json()
   assert.equal(res2.status, 200)
+  const body2 = await res2.json()
   assert.equal(body2.data.config.port, 4700)
-  assert.equal(body2.data.restartRequired, true, 'port 变更必须标 restartRequired（INV-1）')
+  assert.equal(body2.data.restartRequired, true)
+  assert.equal(editor.state.editCalls, 2)
 
-  // GET 同样如实反映「待重启」状态（写入已持久化但未重启）
-  const after = await (await get('/api/login-gate/settings')).json()
-  assert.equal(after.data.restartRequired, true)
+  const after2 = await (await get('/api/login-gate/settings')).json()
+  assert.equal(after2.data.config.port, 4700, '写后 GET 回读新端口（R-12 证据）')
+  assert.equal(after2.data.config.sessionDays, 7, '既有已保存值保持')
+  assert.equal(after2.data.restartRequired, true)
 })
 
 test('POST：白名单外/只读键携带=整单拒 not_editable，绝不触达写缝', async (t) => {
@@ -204,10 +222,19 @@ test('鉴权缝：未登录 GET/POST/settings/users 一律拒 401，且零副作
   assert.equal(u.status, 401)
   assert.equal(calls, 0)
   assert.equal(existsSync(file), false, '未登录不得写 usersFile')
-  assert.equal(typeof url, 'string')
 })
 
-test('方法守卫与路径：405 + allow 头、非本面路径 404', async (t) => {
+test('鉴权缝统一在分发首行（F1）：未登录 PUT/未知路径/GET users 也 401，不泄漏路由与方法形', async (t) => {
+  const { url } = await startRoutes(t)
+  const put = await fetch(url + '/api/login-gate/settings', { method: 'PUT' })
+  assert.equal(put.status, 401, '未登录 405/404 兜底必须先被 401 拦截')
+  const nf = await fetch(url + '/api/login-gate/other')
+  assert.equal(nf.status, 401, '未登录不得以 404 泄漏路径形')
+  const gu = await fetch(url + '/api/login-gate/settings/users')
+  assert.equal(gu.status, 401)
+})
+
+test('方法守卫与路径：405 + allow 头、非本面路径 404 route_not_found（已登录）', async (t) => {
   const { get, url } = await startRoutes(t)
   const put = await fetch(url + '/api/login-gate/settings', { method: 'PUT', headers: AUTH })
   assert.equal(put.status, 405)
@@ -217,6 +244,49 @@ test('方法守卫与路径：405 + allow 头、非本面路径 404', async (t) 
   assert.equal(gu.headers.get('allow'), 'POST')
   const nf = await get('/api/login-gate/other')
   assert.equal(nf.status, 404)
+  assert.equal((await nf.json()).error.code, 'route_not_found')
+})
+
+test('错误码契约（F4）：畸形 JSON→invalid、未知路径→route_not_found、config-only 账号改删→not_found', async (t) => {
+  const cfgDir = mkdtempSync(join(tmpdir(), 'dlg-cfg-'))
+  const file = join(cfgDir, 'users.json')
+  t.after(() => rmSync(cfgDir, { recursive: true, force: true }))
+  const configOnlyUsers = { bob: 'scrypt$16384$8$1$cc$dd' } // config.users 仅有、usersFile 没有
+  const { post, get, url } = await startRoutes(t, {
+    usersFile: file,
+    getUsers: () => ({ ...configOnlyUsers, ...loadUsers({ usersFile: file }).users }),
+  })
+
+  // 畸形 JSON（settings 与 users 两处）→ invalid（F4 归一，不再外泄 bad_request 码）
+  const bad = await fetch(url + '/api/login-gate/settings', { method: 'POST', headers: JSON_HEADERS, body: '{bad' })
+  assert.equal(bad.status, 400)
+  assert.equal((await bad.json()).error.code, 'invalid')
+  const bad2 = await fetch(url + '/api/login-gate/settings/users', { method: 'POST', headers: JSON_HEADERS, body: '{bad' })
+  assert.equal(bad2.status, 400)
+  assert.equal((await bad2.json()).error.code, 'invalid')
+
+  // config-only 账号（合并表可见、usersFile 无）改/删 → not_found + 给因（不支持在此改/删）
+  const upd = await post('/api/login-gate/settings/users', { action: 'update', name: 'bob', password: 'pw' })
+  assert.equal(upd.status, 400)
+  const ub = await upd.json()
+  assert.equal(ub.error.code, 'not_found')
+  assert.match(ub.error.message, /配置/)
+  const del = await post('/api/login-gate/settings/users', { action: 'delete', name: 'bob', currentName: 'alice' })
+  assert.equal(del.status, 400)
+  assert.equal((await del.json()).error.code, 'not_found')
+  assert.equal(existsSync(file), false, '拒写路径零副作用')
+
+  const nf = await get('/api/login-gate/other')
+  assert.equal((await nf.json()).error.code, 'route_not_found')
+})
+
+test('getBootConfig 缺省（F6）：null 时跳过 boot 比较，restartRequired 只看 pendingRestart', async (t) => {
+  const { get, post } = await startRoutes(t, { getBootConfig: undefined })
+  const before = await (await get('/api/login-gate/settings')).json()
+  assert.equal(before.data.restartRequired, false, '无 boot 面且未写入=false')
+  await post('/api/login-gate/settings', { patch: { sessionDays: 7 } })
+  const after = await (await get('/api/login-gate/settings')).json()
+  assert.equal(after.data.restartRequired, true, '写入后 pendingRestart 置位=true')
 })
 
 test('users CRUD（真 fs）：写入 Config usersFile 路径（显式断言）、响应永不含哈希、合并表判重名', async (t) => {
@@ -306,6 +376,12 @@ test('users 删除：防自锁（self_lock）、身份未知 fail-closed、会�
   const selfBody = await post('/api/login-gate/settings/users', { action: 'delete', name: 'carol', currentName: 'carol' })
   assert.equal(selfBody.status, 400)
   assert.equal((await selfBody.json()).error.code, 'self_lock')
+  assert.deepEqual(unchanged(), ['alice', 'carol'])
+
+  // F9：非字符串 currentName 不得采信（无会话时按无身份拒删，不绕防自锁）
+  const nonString = await post('/api/login-gate/settings/users', { action: 'delete', name: 'carol', currentName: 123 })
+  assert.equal(nonString.status, 400)
+  assert.equal((await nonString.json()).error.code, 'current_user_unknown', '非字符串 currentName 一律按无身份拒删')
   assert.deepEqual(unchanged(), ['alice', 'carol'])
 
   // 会话身份优先于 body（伪造 currentName 不能删自己）

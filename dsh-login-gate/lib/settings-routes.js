@@ -10,7 +10,7 @@
 // 路由层身份两源收敛——①getSession 缝（直连/回环，sessions.verifyCookie）②请求体 currentName
 // （经门禁场景，客户端取自 GET /__gate/status 的 user）；会话优先（防伪造 body 删自己），
 // 两者皆缺→拒删 current_user_unknown（fail-closed，与 Task 10 deleteUser 契约同向）。
-import { addUser, updatePassword, deleteUser } from './users.js'
+import { addUser, updatePassword, deleteUser, loadUsers } from './users.js'
 import { validatePatch, precheckPort, probePortBindable, restartRequiredFor } from './settings-write.js'
 
 export const API_PREFIX = '/api/login-gate'
@@ -107,12 +107,29 @@ function hasUser(getUsers, name) {
 const WRITE_STATUS = { not_editable: 400, invalid: 400, port_in_use: 400, no_entry: 409, write_unavailable: 503 }
 
 /**
+ * update/delete 的存在性判据（F4）：以 usersFile 现读为准（CRUD 只写 usersFile）。
+ * config-only 条目（config.users 有、usersFile 无）按 not_found 拒并给因（裁定：code 选 not_found
+ * 而非新码 config_only——语义都是「不支持在此改/删」，少一个码面）。
+ * @returns {string|null} 不存在时返回拒绝消息；存在返回 null
+ */
+function missingFromFile(getUsers, usersFile, name) {
+  let fileTable = {}
+  try {
+    fileTable = loadUsers({ usersFile }).users ?? {}
+  } catch { /* 读取失败按空表 → 走不存在分支（fail-closed，绝不放行写） */ }
+  if (Object.hasOwn(fileTable, name)) return null
+  return hasUser(getUsers, name)
+    ? `用户「${name}」由配置（settings.yaml users）维护，不支持在此修改/删除`
+    : `用户「${name}」不存在`
+}
+
+/**
  * 注册 login-gate 设置面（单 prefix /api/login-gate + 内部分发）。
  * @param {object} deps
  * @param {(spec:object)=>Function} deps.register ctx.webServer.register 缝
  * @param {{requestRejection:Function}} deps.connection 鉴权缝（INV-4）
  * @param {()=>object} deps.getConfig 热改现读 config（per-call 读）
- * @param {()=>object} [deps.getBootConfig] 本次启动绑定面（GET restartRequired 判据）
+ * @param {()=>object} [deps.getBootConfig] 本次启动绑定面（GET restartRequired 判据；null=跳过比较，F6）
  * @param {()=>Record<string,string>} [deps.getUsers] 合并账号表（config.users ∪ usersFile，热加载）
  * @param {string} [deps.usersFile] Config usersFile（含 normalize 缺省解析后的路径，CRUD 必传）
  * @param {(patch:object)=>Promise<object>} [deps.applyPatch] 设置写缝（settings-write createApplyPatch 形）
@@ -127,7 +144,7 @@ export function registerSettingsRoutes({
   register,
   connection,
   getConfig,
-  getBootConfig = () => ({}),
+  getBootConfig = () => null,
   getUsers = () => ({}),
   usersFile,
   applyPatch = null,
@@ -147,18 +164,18 @@ export function registerSettingsRoutes({
       }
     : () => applyPatch
   const disposers = []
-  // 待重启状态（INV-1）：重启敏感键写入成功→置位；GET 如实回示「需重启生效」直到重启/重装载
+  // 待重启状态（R-11/INV-1）：任一成功写入→置位（boot 期按值捕获，运行面不热生效）；重启/重装载后消失
   let pendingRestart = false
 
   const settingsGet = async (req, res) => {
-    if (!authGate(connection, req, res)) return
     if (!methodGuard(req, res, ['GET'])) return
     try {
       const cfg = getConfig()
+      const boot = getBootConfig()
       sendJson(res, 200, {
         data: {
           writable: typeof resolveApplyPatch() === 'function',
-          restartRequired: pendingRestart || restartRequiredFor(getBootConfig(), cfg),
+          restartRequired: pendingRestart || (boot != null && restartRequiredFor(boot, cfg)),
           config: displayConfig(cfg),
           users: userList(getUsers),
         },
@@ -170,7 +187,6 @@ export function registerSettingsRoutes({
   }
 
   const settingsPost = async (req, res) => {
-    if (!authGate(connection, req, res)) return
     if (!methodGuard(req, res, ['POST'])) return
     const write = resolveApplyPatch()
     if (typeof write !== 'function') {
@@ -190,28 +206,28 @@ export function registerSettingsRoutes({
         return fail(res, WRITE_STATUS[code] ?? 500, code, r?.message ?? '配置写入失败')
       }
       const after = r.effective ?? { ...before, ...(typeof patch === 'object' && patch ? patch : {}) }
-      const restartRequired = restartRequiredFor(before, after)
-      if (restartRequired) pendingRestart = true // INV-1：只标记，绝不热重绑 listener
-      return sendJson(res, 200, { data: { config: displayConfig(after), restartRequired } })
+      pendingRestart = true // R-11：任一成功写入即需重启（boot 期按值捕获，运行面不热生效）；INV-1 只标记
+      return sendJson(res, 200, { data: { config: displayConfig(after), restartRequired: true } })
     } catch (e) {
       const status = typeof e?.status === 'number' ? e.status : 500
-      // 警告文案不插值 e.message（可能回显用户输入，审查验收项 4）；细节走响应给调用方
+      // F4：畸形 JSON/超限体归入契约码 invalid；警告文案不插值 e.message（审查验收项 4）
+      const code = e?.code === 'bad_request' ? 'invalid' : typeof e?.code === 'string' ? e.code : 'internal'
       warn(`[login-gate] 设置面写入失败（${e?.name ?? 'Error'}）`)
-      return fail(res, status, typeof e?.code === 'string' ? e.code : 'internal', String(e?.message ?? e))
+      return fail(res, status, code, String(e?.message ?? e))
     }
   }
 
-  /** 防自锁身份：会话优先（不可伪造），body.currentName 兜底（经门禁场景）；皆缺='' */
+  /** 防自锁身份：会话优先（不可伪造），body.currentName 兜底（经门禁场景）；皆缺/非字符串=''（F9） */
   const currentNameOf = (req, body) => {
     try {
       const u = getSession(req)?.u
       if (typeof u === 'string' && u.trim()) return u.trim()
     } catch { /* 会话解析失败按无身份收敛（fail-closed） */ }
-    return String(body?.currentName ?? '').trim()
+    const b = body?.currentName
+    return typeof b === 'string' ? b.trim() : ''
   }
 
   const usersPost = async (req, res) => {
-    if (!authGate(connection, req, res)) return
     if (!methodGuard(req, res, ['POST'])) return
     try {
       const body = await readJsonBody(req)
@@ -227,25 +243,28 @@ export function registerSettingsRoutes({
         await addUser(name, password, { usersFile }) // 必传 Config usersFile（含 normalize 缺省解析）
       } else if (action === 'update') {
         if (typeof password !== 'string' || !password) return fail(res, 400, 'invalid', '密码必须为非空字符串')
-        if (!hasUser(getUsers, name)) return fail(res, 400, 'not_found', `用户「${name}」不存在`)
+        const missing = missingFromFile(getUsers, usersFile, name)
+        if (missing) return fail(res, 400, 'not_found', missing)
         await updatePassword(name, password, { usersFile })
       } else {
         const current = currentNameOf(req, body)
         if (!current) return fail(res, 400, 'current_user_unknown', '无法确定当前登录账号名（防自锁），拒删——请经登录门禁操作或在请求中带 currentName')
         if (current === name) return fail(res, 400, 'self_lock', `不能删除当前登录账号「${name}」（防自锁）`)
-        if (!hasUser(getUsers, name)) return fail(res, 400, 'not_found', `用户「${name}」不存在`)
+        const missing = missingFromFile(getUsers, usersFile, name)
+        if (missing) return fail(res, 400, 'not_found', missing)
         await deleteUser(current, name, { usersFile })
       }
       return sendJson(res, 200, { data: { users: userList(getUsers) } })
     } catch (e) {
       // Task 10 模块契约：错误信息不含哈希（INV-3）；message 原文回显给调用方（契约：失败显服务端原文），
-      // 但 warn 警告文案不插值任何用户输入（审查验收项 4）
+      // 但 warn 警告文案不插值任何用户输入（审查验收项 4）；畸形 JSON 归入 invalid（F4）
       warn(`[login-gate] 账号操作失败（${e?.name ?? 'Error'}）`)
-      return fail(res, 400, 'user_op_failed', String(e?.message ?? e))
+      return fail(res, 400, e?.code === 'bad_request' ? 'invalid' : 'user_op_failed', String(e?.message ?? e))
     }
   }
 
   const handler = async (req, res) => {
+    if (!authGate(connection, req, res)) return // INV-4/F1：鉴权缝统一在分发首行——405/404 兜底同样不泄漏路由/方法形
     const p = pathnameOf(req)
     if (p === SETTINGS_PATH) {
       if (req.method === 'GET') return settingsGet(req, res)
@@ -256,7 +275,7 @@ export function registerSettingsRoutes({
       if (req.method === 'POST') return usersPost(req, res)
       return methodGuard(req, res, ['POST'])
     }
-    return fail(res, 404, 'not_found', '不提供该路径')
+    return fail(res, 404, 'route_not_found', '不提供该路径')
   }
   disposers.push(register({ kind: 'prefix', path: API_PREFIX, handler }))
 

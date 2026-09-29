@@ -17,7 +17,7 @@ import { loadUsers, createUserProvider } from './users.js'
 import { createDshSession } from './dsh-session.js'
 import { createForwarder } from './proxy.js'
 import { createGateServer } from './gate.js'
-import { createApplyPatch } from './settings-write.js'
+import { createApplyPatch, createConfigReader, readEntryConfig } from './settings-write.js'
 import { registerSettingsRoutes } from './settings-routes.js'
 
 export const name = 'login-gate'
@@ -130,12 +130,18 @@ export function apply(ctx, rawConfig) {
   // ['webServer','connection'] 承载——provider 缺位=延迟激活不炸装载、到达自动补激活。
   // configEditor 不进硬 inject（保持可缺位=只读部署如实）：per-request 惰性 ctx.get 求值，
   // 缺位=POST 503 write_unavailable、GET writable:false 如实，后到可见。
-  const readCfg = () => normalize(rawConfig) // 热改现读（per-call 读语义）
   // 服务 best-effort 探测（只读、不抛、不参与注册决策）：cordis 代理在服务缺位时可能抛 → 收敛 null
   const probeService = (name) => {
     try { if (typeof ctx?.get === 'function') return ctx.get(name) ?? ctx.get(name, false) ?? null } catch { /* 探针收敛不抛 */ }
     return null
   }
+  // R-12：GET 配置=已保存面优先（configEditor entry 现读 overlay written∪boot），缺缝/缺入口回退 rawConfig；
+  // 语义=「返回已保存值；生效需重启」（R-11：boot 期按值捕获，运行面不热生效）
+  const readCfg = createConfigReader({
+    getBase: () => rawConfig,
+    readSaved: () => readEntryConfig(probeService('configEditor'), 'login-gate'),
+    normalize,
+  })
   const lazyApplyPatch = () => {
     const svc = probeService('configEditor')
     if (svc === null || typeof svc.edit !== 'function' || typeof svc.entries !== 'function') return null
@@ -157,17 +163,18 @@ export function apply(ctx, rawConfig) {
           c.effect(() => {
             const disposers = []
             try {
-              disposers.push(...registerSettingsRoutes({
+              const routeDisposers = registerSettingsRoutes({
                 register: (spec) => c.webServer.register(spec),
                 connection: c.connection,
-                getConfig: readCfg,
+                getConfig: readCfg, // 已保存面优先现读（R-12）
                 getBootConfig: () => cfg,
                 getUsers,
                 usersFile,
                 getApplyPatch: lazyApplyPatch, // configEditor 惰性（后到可见）
                 getSession: (req) => sessions.verifyCookie(req.headers.cookie), // 防自锁身份源①（直连/回环）
                 warn: (line) => log(line),
-              }))
+              })
+              for (const d of routeDisposers) if (typeof d === 'function') disposers.push(d) // F8：非函数不进收敛环
             } catch (e) {
               for (const d of disposers) { try { d() } catch { /* 收敛不抛 */ } }
               throw e // 再上抛（宿主 fiber 兜底收集；绝不吞错）
@@ -182,7 +189,10 @@ export function apply(ctx, rawConfig) {
         },
       })
     }
-  } catch { /* ctx.plugin 缺位/异常 fail-open：装载不炸 */ }
+  } catch (e) {
+    // F7：fail-open 不吞痕——留一行（含 e.name；警告纪律不插值 e.message）
+    log(`⚠️ 设置面注册失败（${e?.name ?? 'Error'}），本部署无设置面数据（fail-open：门禁/反代照常）`)
+  }
 
   ctx.effect(() => {
     const server = createGateServer({
