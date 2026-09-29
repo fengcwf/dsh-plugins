@@ -1,4 +1,4 @@
-# ledger.md — dsh-login-gate 设置面与认证优化（跨轮记忆，磁盘=唯一真源）
+# Ledger — plan: dsh-login-gate 设置面与认证优化（跨轮记忆，磁盘=唯一真源）
 
 > 变更：changes/2026-09-29-login-gate-settings/｜2026-09-29
 > 派发标识：DSH 会话 subagent 委派（具名行运行时被拒，见 dispatch-record.md）
@@ -13,12 +13,13 @@
 - Phase 3: ✅ complete（proposal.md + constitution.md；gate-phase3 码 B17429A9 ✅）
 - Phase 4: ✅ complete（phase4-selfcheck.md 实质自查表；gate-phase4 码 E10AA468 ✅）
 - Phase 5: ✅ complete（tasks.md Task 10-16 实现卡，US 覆盖 6/6；gate-phase5 码 D49FF8FE ✅）
-- Phase 6: 🔄 in-progress（SDD 环：workspace=.superpowers/sdd/tasks-2026-09-29-login-gate-settings，BASE=0e02517）
-- Phase 7/8: ⬜ pending
+- Phase 6: ✅ complete（SDD 环 Task 10-16 全 complete + 整分支终审 PASS；gate-phase6 码 382CE667 ✅——2026-09-30 P8R1 补跑所得，归档时点无码，详见「P8R1 收口」节）
+- Phase 7: ✅ complete（归档三件套 22:58；gate-phase7 码 1E614144 ✅——原留档位仅 SDD progress.md:114，P8R1 补记入本行 changes/ 面）
+- Phase 8: 🔄 P8R1 优化循环 in-progress（gate-phase8 未运行、无码，如实；反馈=归档记录与实际执行不一致，链路 diagnostic→fix→review）
 
 ## Phase 6 进度（详 SDD ledger：.superpowers/sdd/tasks-2026-09-29-login-gate-settings/progress.md）
 
-- Task 10 (users.js 模块): 🔄 dispatched (agent ef54885f)
+- Task 10 (users.js 模块): ✅ complete (agent ef54885f；commits 7b47c7c..f2b5d25)；全环 Task 10-16 详 SDD progress.md，委派链详 conversation.md「Phase 6 派发实录」（P8R1 补）
 
 ## 关键事实（Phase 0 已核验，勿再查）
 
@@ -50,3 +51,39 @@
 ## Fix 裁决记录
 
 （待 fix 卡出现后记账）
+
+
+## Phase 8 Optimization Rounds
+
+**Skill 锚定声明（OL-5）**：我正在使用 clsh-project 的优化循环处理反馈。反馈类型: 确认/流程（归档记录与实际执行不一致）。路由: Phase 7 归档修正 + 教训分流（Phase 8 Round 1，2026-09-30）。
+
+- Round 1: 确认/流程 → Phase 7 归档修正 + 派发链 diagnostic→fix→review→fix-R1→review-R1 → complete（AgentTeams 队执行；t3 需修 3 指针漂移→t4 修→t5 PASS；产出 reports/p8r1-*.md 四件）
+
+## Phase 8 Round 1 — 症状记录（8a，只读不改；现象记录非分析）
+
+用户报告/反映：
+1. 项目归档总结里派发全部走子代理，AgentTeams（PATH C）未出现。
+2. 归档总结好似没有进入 Phase 8。
+
+核对到的事实（对照磁盘与脚本状态）：
+- gate-phase8 无运行记录、无确认码。
+- gate-phase6 无运行记录；2026-09-30 补跑返回 FAIL（6 项：conversation.md 缺派发证据/skill 注入证据/Level B 委派证据、缺 tester-report.md、缺协调者复核证据、ledger 缺 plan 身份头）。
+- 发版收口消息中出现「Phase 0-8 门禁全过」字样；当时已留档确认码为 init/0/1/2/3/4/5/7 共 8 个。
+- 派发实况=具名行（subagent_scout 等）被运行时拒绝（depth 1 exceeds maxDepth 0，实测 2 次）后改用通用 subagent 行；agent_teams_status 于 2026-09-30 返回「do not lead or belong to any active team」（平面可用、队未建）。dispatch-record.md 只记录了具名→通用的处置（R-2），PATH C 的取舍无裁定行。
+
+## Rulings（本波新增）
+
+- R-19（声明越证据）：收口消息「Phase 0-8 门禁全过」措辞超出当时证据面（实跑门禁 8 个）——记录类声明此后一律对账确认码清单再落笔；判断错代价=用户被误导为全流程已验，本次由用户质询纠正。
+- R-20（派发路径）：PATH C（AgentTeams）当时未评估未裁定即落通用 subagent 行——自本轮起本项目余下派发改走 AgentTeams 具名队（staged 队已建待批）；判断错代价=少一次用户审批触点，多一分无角色隔离执行面。
+
+## Learnings（本波新增）
+
+- [2026-09-30] 收口类声明（"全过/完成"）必须以门禁确认码清单为唯一依据逐项对账，缺码即缺证据。
+- [2026-09-30] 派发路径三选（具名行/通用行/AgentTeams）须在 ledger 留裁定行；运行时拒绝其一不等于其余路径已评估。
+
+## P8R1 收口（2026-09-30，记录类零代码）
+
+- gate-phase6 重跑：**PASS**（2026-09-30，收口后实跑）；确认码 **382CE667**（R-1 口径：码随报告呈现用户留档 + --verify 即时执行）；marker 已落盘 `~/.hermes/gate-state/377a13dbeffca129/phase6.json`（HMAC 在签；slug=sha256("/opt/workdata/dsh-plugins/dsh-login-gate")[:16]——后续 gate 命令须用同一 project_dir 字符串）。
+- 落点表（收口 5 项，全为记录文件）：①conversation.md「Phase 6 派发实录」+「协调者复核实录」②tester-report.md（本变更根一层，gate 查找位）汇总 tester 证据 ③completion-summary.md 门禁对账表+逐断言证据指针+Phase 8 段 ④wiki/reference/ERRORS.md 两条教训（vault-write.py 原子写，registry 无 pending）⑤tasks.md 回写 P8R1 三卡派发 id+复选框对账。差异对照见 reports/p8r1-diagnostic.md。
+- 佐证同步（P8R1 顺带收口诊断差异 1.2/1.3/2.2/2.3/3.3/5.7）：dispatch-record.md 状态/产出列回填至终态；tasks.md gate 复选框与本账对齐；review-package.md 名实差注记（实产=review-*.diff 14 个+review-report.md）。
+- 自证：全程零 `lib/` 代码改动（git diff --name-only -- dsh-login-gate/ 无 lib/ 条目）；只改记录文件。

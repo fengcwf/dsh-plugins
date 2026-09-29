@@ -120,7 +120,7 @@
 
 - [ ] 13 项待确认问题收敛出范围（P0/P1/P2）
 - [ ] 用户故事 US-* 与不变量 INV-* 成文
-- [ ] gate-phase1 通过
+- [x] gate-phase1 通过（码 A9BD8113，ledger.md:10；P8R1 勾选面对账 diagnostic 1.3）
 
 ## Task 2: Phase 2 方案设计（TECH.md + 方案对比 + Global Constraints）
 
@@ -135,7 +135,7 @@
 
 - [ ] ≥2 方案对比与推荐
 - [ ] Global Constraints 头（不触碰面：生产 cordis.patch.yml、3500 外部契约等）
-- [ ] gate-phase2 通过
+- [x] gate-phase2 通过（码 96108180，ledger.md:11）
 
 ## Task 3: Phase 2.5 视觉 Spike（设置 UI 视觉决策）
 
@@ -163,7 +163,7 @@
 **验收标准**:
 
 - [ ] bite-sized 任务切片 + 精确文件路径 + 验证步骤
-- [ ] gate-phase3 通过
+- [x] gate-phase3 通过（码 B17429A9，ledger.md:13）
 
 ## Task 5: Phase 4 机械自检
 
@@ -176,7 +176,7 @@
 
 **验收标准**:
 
-- [ ] gate-phase4 通过
+- [x] gate-phase4 通过（码 E10AA468，ledger.md:14）
 
 ## Task 6: Phase 5 实现计划（tasks 细化 + INV/US 覆盖矩阵）
 
@@ -190,11 +190,11 @@
 **验收标准**:
 
 - [ ] 实现卡拆到单轮可完成粒度
-- [ ] gate-phase5 通过
+- [x] gate-phase5 通过（码 D49FF8FE，ledger.md:15）
 
 ## Task 7: Phase 6 分发执行（coder/tester/reviewer）
 
-- status: ⬜
+- status: ✅（Task 10-16 全 complete + 整分支终审 PASS，2026-09-29 21:45；P8R1 回填）
 - phase: Phase 6
 - role: coder/tester/reviewer（PATH A 通用 subagent）
 - skills: subagent-driven-development, code-review-and-quality
@@ -205,8 +205,8 @@
 
 - [ ] node --test 全绿（含 load + integration 形）
 - [ ] 测试环境 boot 冒烟四关
-- [ ] tester-report.md + review-package.md 落盘
-- [ ] gate-phase6/7 通过
+- [x] tester-report.md + review-package.md 落盘（名实注记 P8R1/diagnostic 3.3：tester-report.md=changes/<变更>/tester-report.md 汇总页（gate 查找位）+ reports/ 指针页 + SDD 正本；review-package.md 无同名文件，实产形制=review-*.diff 14 个 + review-report.md）
+- [x] gate-phase6/7 通过（phase7 码 1E614144；phase6 码 382CE667=2026-09-30 P8R1 重跑补码——归档时点 phase6 无码，见 ledger.md「P8R1 收口」）
 
 ## Task 8: 发版五步 + 生产同步（用户逐次确认）
 
@@ -307,7 +307,7 @@
 - [ ] .testenv boot 冒烟四关全绿（换票 HTTP 200/303 → --dump-config 含插件层 → node --test → load 冒烟）
 - [ ] E2E：设置页真实渲染、端口保存回显+重启提示+联动清单、参数保存回读、账号增删改密登录流转（新密码可登旧密码失效）
 - [ ] 未登录访问 /api/login-gate/settings 必拒；响应无哈希
-- [ ] tester-report.md 落盘（含命令输出证据）
+- [x] tester-report.md 落盘（含命令输出证据）（命令输出证据=task-14-report.md 正本；gate 查找位汇总页 tester-report.md 于 P8R1 补）
 
 ## Task 15: 任务级复审 + 整分支终审
 
@@ -322,11 +322,11 @@
 
 - [ ] 每任务 spec 合规+质量判定（SDD 任务级审查已随环执行）
 - [ ] 整分支终审五轴（正确性/可读性/架构/安全/性能）+ deferred minors 分诊
-- [ ] review-package.md 落盘
+- [x] review-package.md 落盘（名实注记：实产=review-*.diff 14 个 + review-report.md；diagnostic 3.3）
 
 ## Task 16: 文档与分析交付归档（US-5/US-6 + INV-7）
 
-- status: 🔄（implementer 4b22113f，含终审随手清 4 项）
+- status: ✅（146022e+0a0bfe1，complete 21:45，含终审随手清 4 项；P8R1 回填）
 - phase: Phase 6 收尾
 - role: coder（PATH A 通用 subagent）
 - skills: dsh-plugin-ops
@@ -338,3 +338,15 @@
 - [ ] README：设置面说明 + 端口联动清单 + 超时机制说明（US-3/US-5）
 - [ ] CHANGELOG 版本条目 + 根 README 版本表
 - [ ] P2 候选清单（US-6）在档（phase0-research §五 + reports/）
+
+---
+
+## P8R1 归档收口派发卡（Phase 8 Round 1，2026-09-30；派发卡 id 回写——brief 收口清单⑤）
+
+> 派发面：AgentTeams 具名队 `dsh-login-gate-0-3-0-phase8`（R-20：自本波起本项目派发路径）；三卡 brief= tasks/task-P8R1-{diagnostic,fix,review}.md。
+
+| 卡 | brief | 派发卡 id（AgentTeams） | 成员 / attempt id | 状态 |
+|---|---|---|---|---|
+| P8R1-diagnostic | tasks/task-P8R1-diagnostic.md | t1（T-diag） | scout / 7f3906c9-bfc7-45f2-ad05-5303819c4b1c | ✅ complete（reports/p8r1-diagnostic.md） |
+| P8R1-fix | tasks/task-P8R1-fix.md | t2（T-fix） | coder / ba7ee98d-96fb-4086-a132-f00be6544b95 | ✅ complete（落点表=ledger.md「P8R1 收口」；gate-phase6 重跑 PASS 码 382CE667） |
+| P8R1-review | tasks/task-P8R1-review.md | t3（T-review） | reviewer / （执行时回填 attempt id） | ⬜ pending（一致性复核，结论以任务面为准） |
