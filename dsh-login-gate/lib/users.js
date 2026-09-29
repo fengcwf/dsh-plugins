@@ -33,15 +33,25 @@ export function loadUsers({ users = {}, usersFile } = {}) {
   }
 
   if (file && existsSync(file)) {
+    // 警告文案同样只留 e.name——JSON.parse 错误自带输入摘录，插值 e.message 会把哈希片段
+    // 带进 warning（上屏/进日志即泄漏，INV-3），与 mutateUsers 的错误路径同法
+    let raw = null
     try {
-      const data = JSON.parse(readFileSync(file, 'utf8'))
-      for (const [k, v] of Object.entries(data)) {
-        const name = String(k ?? '').trim()
-        if (!name || !v) continue
-        out[name] = String(v)
-      }
+      raw = readFileSync(file, 'utf8')
     } catch (e) {
-      warnings.push(`usersFile 解析失败（${file}）：${e.message}`)
+      warnings.push(`usersFile 读取失败（${file}）：${e.name}`)
+    }
+    if (raw !== null) {
+      try {
+        const data = JSON.parse(raw)
+        for (const [k, v] of Object.entries(data)) {
+          const name = String(k ?? '').trim()
+          if (!name || !v) continue
+          out[name] = String(v)
+        }
+      } catch (e) {
+        warnings.push(`usersFile 解析失败（${file}）：不是合法 JSON（${e.name}）`)
+      }
     }
   }
 

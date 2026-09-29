@@ -190,3 +190,32 @@ test('坏 usersFile：错误信息不得泄漏文件内容/哈希（INV-3，覆�
     return true
   })
 })
+
+test('loadUsers：坏 usersFile 的 warning 不泄漏哈希（INV-3，含不可读路径）', async (t) => {
+  const file = tmpUsersFile(t)
+  mkdirSync(dirname(file), { recursive: true })
+  const secretHash = await generateHash('pw-secret')
+  const leaks = (msg) =>
+    msg.includes(SCRYPT_PREFIX) || msg.includes(secretHash) || msg.includes(secretHash.slice(0, 10))
+
+  // ① 非法 JSON（正文=哈希原文）→ 解析失败 warning
+  writeFileSync(file, secretHash, { mode: 0o600 })
+  const w1 = loadUsers({ usersFile: file }).warnings
+  assert.equal(w1.length, 1)
+  assert.match(w1[0], /解析失败/)
+  assert.ok(!leaks(w1[0]), `warning 泄漏哈希：${w1[0]}`)
+
+  // ② null JSON（Object.entries 抛错路径）
+  writeFileSync(file, 'null', { mode: 0o600 })
+  const w2 = loadUsers({ usersFile: file }).warnings
+  assert.equal(w2.length, 1)
+  assert.ok(!leaks(w2[0]), `warning 泄漏哈希：${w2[0]}`)
+
+  // ③ usersFile 是目录（readFileSync 失败路径）
+  rmSync(file, { force: true })
+  mkdirSync(file, { recursive: true })
+  const w3 = loadUsers({ usersFile: file }).warnings
+  assert.equal(w3.length, 1)
+  assert.match(w3[0], /读取失败/)
+  assert.ok(!leaks(w3[0]), `warning 泄漏哈希：${w3[0]}`)
+})
