@@ -1,0 +1,26 @@
+{
+  "project_name": "dsh-login-gate 设置面与认证优化",
+  "slug": "dsh-login-gate",
+  "directory": "/opt/workdata/dsh-plugins/dsh-login-gate",
+  "raw_docs_dir": "/mnt/unraid_data/Obsidian/raw/projects/dsh-login-gate",
+  "fix_notes_dir": "/mnt/unraid_data/Obsidian/raw/projects/dsh-login-gate/fix-notes",
+  "task_board": "changes/2026-09-29-login-gate-settings/tasks.md",
+  "roles": {
+    "scout": "subagent",
+    "coder": "subagent",
+    "reviewer": "subagent",
+    "tester": "subagent",
+    "artist": "subagent"
+  },
+  "bots": {
+    "scout": "subagent",
+    "coder": "subagent",
+    "reviewer": "subagent",
+    "tester": "subagent",
+    "artist": "subagent"
+  },
+  "user_confirmed": true,
+  "user_confirmation_note": "2026-09-29 ask_user_question 三项确认：名称=dsh-login-gate 设置面与认证优化；slug=dsh-login-gate（raw 映射 raw/projects/dsh-login-gate/fix-notes/，新建）；项目目录=复用 /opt/workdata/dsh-plugins/dsh-login-gate（镜像 kb-context/wiki-steward 先例，changes/<变更名>/ 建档）。角色→委派行如实声明为通用 subagent：具名行 subagent_scout 等在本运行时被拒（subagent depth 1 exceeds maxDepth 0，2026-09-29 实测两次），通用 subagent 行可用，角色契约内联进 prompt。",
+  "created_at": "2026-09-29T11:08:00+08:00",
+  "verified_at": "2026-09-29T03:17:47.220093+00:00"
+}

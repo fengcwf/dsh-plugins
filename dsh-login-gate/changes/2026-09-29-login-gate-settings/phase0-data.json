@@ -1,0 +1,196 @@
+{
+  "scan_time": "2026-09-29T03:01:03.827137+00:00",
+  "scanner_version": "1.0.0",
+  "project": {
+    "project_dir": "/opt/workdata/dsh-plugins/dsh-login-gate",
+    "exists": true,
+    "is_new_project": true,
+    "file_count": 859,
+    "dir_count": 38,
+    "key_files": {
+      "package.json": {
+        "category": "node",
+        "size": 884,
+        "modified": "2026-09-24T03:46:10.461462+00:00"
+      },
+      "README.md": {
+        "category": "docs",
+        "size": 9118,
+        "modified": "2026-09-24T03:46:10.461307+00:00"
+      }
+    },
+    "tech_stack": [],
+    "languages": [
+      "typescript",
+      "javascript",
+      "json",
+      "yaml"
+    ]
+  },
+  "obsidian": {
+    "obsidian_path": "/mnt/unraid_data/Obsidian",
+    "available": true,
+    "grep_results": [
+      {
+        "source": "wiki/INDEX.md",
+        "keyword": "json",
+        "matched": true
+      },
+      {
+        "source": "wiki/INDEX.md",
+        "keyword": "dsh",
+        "matched": true
+      },
+      {
+        "source": "wiki/INDEX.md",
+        "keyword": "gate",
+        "matched": true
+      }
+    ],
+    "solutions_matches": [
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/fastify-no-execSync.md",
+        "keyword": "node",
+        "name": "fastify-no-execSync"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/codewhale-partial-edit-corruption.md",
+        "keyword": "node",
+        "name": "codewhale-partial-edit-corruption"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/vue3-cdn-destructuring.md",
+        "keyword": "node",
+        "name": "vue3-cdn-destructuring"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/env-hash-format.md",
+        "keyword": "node",
+        "name": "env-hash-format"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/fetch-credentials-missing.md",
+        "keyword": "javascript",
+        "name": "fetch-credentials-missing"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/external-api-check-openapi.md",
+        "keyword": "json",
+        "name": "external-api-check-openapi"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/phase8-enforcement-执行强制方案.md",
+        "keyword": "json",
+        "name": "phase8-enforcement-执行强制方案"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/dashboard-cpu-analysis-2026-09-07.md",
+        "keyword": "gate",
+        "name": "dashboard-cpu-analysis-2026-09-07"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/loop-engineering-report.md",
+        "keyword": "gate",
+        "name": "loop-engineering-report"
+      }
+    ],
+    "project_matches": [
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/clsh-content/changes/2026-05-18-initial/proposal.md",
+        "keyword": "node"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/clsh-content/changes/2026-05-18-initial/design.md",
+        "keyword": "node"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/clsh-content/changes/2026-05-18-initial/tasks.md",
+        "keyword": "node"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/clsh-content/changes/2026-05-18-initial/integration-test-report.md",
+        "keyword": "node"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/clsh-content/source-of-truth/constitution.md",
+        "keyword": "node"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/clsh-content/references/integration/halo-obsidian-ref.md",
+        "keyword": "node"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/clsh-content-workspace/changes/2026-06-05-channel-swap/tasks.md",
+        "keyword": "node"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/moviepilot/changes/2026-05-31-ui-overhaul/source-of-truth/proposal.md",
+        "keyword": "node"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/moviepilot/changes/2026-05-31-ui-overhaul/source-of-truth/tasks.md",
+        "keyword": "node"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/moviepilot/changes/2026-06-01-phase8-round2/test-log.md",
+        "keyword": "node"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/obsidian-workbench/changes/2026-05-27-round7-bugfix/bugfix-spec.md",
+        "keyword": "node"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/obsidian-workbench/changes/2026-05-27-round8-bugfix/bugfix-spec.md",
+        "keyword": "node"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/obsidian-workbench/changes/2026-05-27-round9-bugfix/bugfix-spec.md",
+        "keyword": "node"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/obsidian-workbench/changes/archive/2026-05-19-initial/conversation.md",
+        "keyword": "node"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/obsidian-workbench/changes/archive/2026-05-19-initial/proposal.md",
+        "keyword": "node"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/obsidian-workbench/changes/archive/2026-05-19-initial/tasks-slice1.md",
+        "keyword": "node"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/obsidian-workbench/changes/archive/2026-05-19-initial/tasks-slice2.md",
+        "keyword": "node"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/obsidian-workbench/changes/archive/2026-05-19-initial/tasks-slice3.md",
+        "keyword": "node"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/obsidian-workbench/changes/archive/2026-05-19-initial/tasks.md",
+        "keyword": "node"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/obsidian-workbench/changes/archive/2026-05-19-initial/completion-summary.md",
+        "keyword": "node"
+      }
+    ],
+    "keywords_used": [
+      "docs",
+      "dsh",
+      "gate",
+      "javascript",
+      "json",
+      "login",
+      "node",
+      "typescript",
+      "yaml"
+    ]
+  },
+  "learnings": {
+    "learnings_files": [],
+    "pitfalls_count": 37,
+    "matched_pitfalls": []
+  }
+}

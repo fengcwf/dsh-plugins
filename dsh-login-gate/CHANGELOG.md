@@ -1,6 +1,6 @@
 # Changelog — dsh-login-gate
 
-## 0.3.0 — 2026-09-29（待发版：发版五步未执行，tag/push 待用户确认）
+## 0.3.0 — 2026-09-29
 - **设置栏目**：dsh 设置菜单「dsh-login-gate」栏目（`settings.section` 槽）——端口维护 / 参数区 / 账号区 / 超时说明段四区一段；零构建单文件 `lib/client.js`（`__ModuleLoader__` 工厂形 + React.createElement）。
 - **端口维护（US-1 / INV-7）**：端口可改（默认 3500，整数 1-65535）+ 服务端端口占用预检 + 保存前断连警示确认条（R-16 事前警示：确认才写入、取消零请求）+ 联动清单四行（gate-watchdog.sh:36 探活 curl 行 / start-dsh.sh:118-129 [3/3] 验证监听端口与门禁段 / obsidian-web 3500 `/ob_share` 分享契约 / Lucky 外网反代需人工同步）。
 - **参数可配（US-2）**：`sessionDays`（1~3650）/`maxFailures`/`secureCookie`/`wsAllow`/`gzipPass` 5 键可改；`listenHost`/`upstreamPort`/`rewriteHost` 3 键只读展示；写入只经 `configEditor.edit` 白名单（白名单外整单拒 `not_editable`）。
@@ -9,7 +9,7 @@
 - **超时说明（US-3）**：登录页/设置页明示「登录后约 N 天内免登录」（N=sessionDays 动态）+ 会话机制说明段（固定过期不滑动续期 / 到期 302 重登 / logout-all 全员下线）。
 - **测试面**：72 用例全绿（认证回归 auth-regression 6 + 跨面契约对账 contract-e2e 3 + load 冒烟 2 + 设置面/账号 49 + users 原子写 12）+ integration 形（假 ctx 真 `apply()` + 真 handler）。
 - **文档**：README 新增「设置面」「端口联动清单（INV-7）」「登录会话超时机制」章节 + Roadmap 改写；分析交付归档 US-5/US-6 = `changes/2026-09-29-login-gate-settings/reports/scout-a-auth-timeout.md`、`reports/scout-b-settings-contract.md`、`phase0-research.md` §五。
-- 注：**发版五步未执行**——package.json 未 bump、未打 tag、未 push；tag/push/`gh release create` 待用户逐次确认（Task 8）。
+- 注：发版五步=bump 0.3.0 + CHANGELOG + 根 README 版本表 + check-release PASS + commit/tag `dsh-login-gate-v0.3.0`/push/`gh release create`（tag/push/release 经用户逐次确认后执行，2026-09-29）。
 
 ## 0.2.0 — 2026-09-23
 - 迁入 `fengcwf/dsh-plugins` monorepo（历史随迁自独立仓库 `fengcwf/dsh-login-gate` @`165f86b`，`git log` 可溯 v0.1.0–v0.1.3 原提交）。

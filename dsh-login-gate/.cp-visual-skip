@@ -1,0 +1,5 @@
+# .cp-visual-skip — Phase 2.5 视觉 Spike 豁免（2026-09-29）
+
+原因：本变更 UI=dsh 设置菜单 settings.section 参数面板，形制由既有设计系统完全决定（settings.section 槽契约 + `--dsw-alias-*` dsh token + kb-context/wiki-steward 先例形），无新视觉设计决策、无候选参考图可选。视觉一致性以 token 对齐 + integration 渲染测试 + 测试环境人工核对保障（ERR 2026-09-25 教训：验证以用户可见行为为准）。
+
+裁定记录：ledger R-5。判错代价=设置面观感与 dsh 不一致，按 token 表修正即可，可逆。
