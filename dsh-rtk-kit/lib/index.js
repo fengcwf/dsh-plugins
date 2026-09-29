@@ -18,9 +18,14 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { decideEligibility, isSafeRewrite, pickRewritten } from './rewrite.js'
 import { awarenessText } from './awareness.js'
+import { runDoctorTool } from './doctor.js'
+import { registerDoctorRoutes } from './doctor-routes.js'
 
 export const name = 'rtk-kit'
 export const inject = ['shell', 'tools']
+// webServer/connection = 软依赖（TECH.md ADR 接线形）：经内层 ctx.plugin({inject:['webServer','connection']}) 子插件
+// 承载设置页数据面 + softService 缺缝探测 fail-open。⚠️ 不进外层 inject——外层硬 inject 会使缺缝部署整插件
+// pending（resolve 改写缝与 awareness 随之失效，破坏 constitution 既有语义冻结）。
 
 export const Config = z.object({
   enabled: z.boolean().default(true),
@@ -30,6 +35,9 @@ export const Config = z.object({
   exclude: z.array(z.string()).default([]),
   awareness: z.enum(['default', 'high', 'full', 'off']).default('default'),
   registerDoctorTool: z.boolean().default(true),
+  // rtk_doctor 是否输出 gain 统计段（INV-6 瘦身：缺省 false=只出轻诊断三行，省 350-420 token/次；
+  // true 时统计段仍受工具参数 gain!==false 门控——完整统计唯一入口=设置页面板）
+  doctorGain: z.boolean().default(false),
 })
 
 /** 探测 rtk 是否可用；缺失时整个插件退化为恒等（与 DeepTrial 同款 fail-safe）。 */
@@ -56,6 +64,43 @@ function runRtkRewrite(rtkBin, command, timeoutMs) {
   }
 }
 
+/**
+ * rtk_doctor 工具定义工厂（Task 8 瘦身）：执行体单源走 lib/doctor.js runDoctorTool（→ getVersion/getGain，
+ * 零 spawnSync）；deps.exec 为测试注入缝（零真实 rtk，INV-4）。defineTool 全库恰此一处（零新增会话工具，INV-2）。
+ * gain 段门控（INV-6）：config.doctorGain 缺省 false 不输出；true 时仍受工具参数 gain!==false 门控。
+ */
+export function buildDoctorTool({
+  rtkBin = 'rtk',
+  doctorGain = false,
+  autoRewrite = false,
+  conservative = true,
+  awareness = 'default',
+  exec,
+  timeoutMs,
+} = {}) {
+  return defineTool({
+    name: 'rtk_doctor',
+    description:
+      'Diagnose the RTK (Rust Token Killer) integration: binary availability, version, and config; token-savings summary only when the `doctorGain` option is on. Use when compressed output looks wrong or you want to verify the integration.',
+    parameters: {
+      gain: {
+        type: 'boolean',
+        description: 'Include the `rtk gain` savings dashboard (default false; requires config `doctorGain: true`).',
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { text: { type: 'string', required: true, description: 'Diagnostic report.' } },
+      },
+      render: (_args, value) => [{ type: 'text', text: value.text }],
+    },
+    execute: (args) =>
+      runDoctorTool(args ?? {}, { rtkBin, doctorGain, autoRewrite, conservative, awareness, exec, timeoutMs }),
+  })
+}
+
 export function apply(ctx, rawConfig) {
   const config = Config.parse(rawConfig ?? {})
   const available = config.enabled && probeRtk(config.rtkBin)
@@ -77,9 +122,12 @@ export function apply(ctx, rawConfig) {
       return spec // fail-open
     }
   }
-  ctx.effect(() => {
+  // 工厂形 effect（cordis 0.2.0-rc.1 实测：execute 当场跑、返回函数才是拆除器）：拆除时还原 resolve。
+  // ⚠️ 勿写成 ctx.effect(() => { shell.resolve = origResolve }) 拆除器形——工厂语义下它当场还原、包壳即死
+  //（2026-09-29 e2e 实锤：拆除器形 apply 后包壳存活=false，改写缝从未生效；工厂形存活=true、teardown 还原=true）
+  ctx.effect(() => () => {
     shell.resolve = origResolve
-  })
+  }, 'rtk-kit: resolve-rewrite')
 
   // ── ② 会话启动注入 awareness（随插件装卸，不污染 AGENTS.md）──
   const text = awarenessText(config.awareness)
@@ -98,46 +146,61 @@ export function apply(ctx, rawConfig) {
     })
   }
 
-  // ── ③ rtk_doctor 诊断工具（吸收 pharaohnie 的 doctor 思想；不暴露 rtk run）──
+  // ── ③ rtk_doctor 诊断工具（吸收 pharaohnie 的 doctor 思想；永不暴露透传执行子命令）──
   if (config.registerDoctorTool) {
     ctx.tools.register(
-      defineTool({
-        name: 'rtk_doctor',
-        description:
-          'Diagnose the RTK (Rust Token Killer) integration: binary availability, version, config, and recent token-savings summary. Use when compressed output looks wrong or you want to verify the integration.',
-        parameters: {
-          gain: {
-            type: 'boolean',
-            description: 'Include the `rtk gain` savings dashboard (default true).',
-          },
-        },
-        output: {
-          schema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: { text: { type: 'string', required: true, description: 'Diagnostic report.' } },
-          },
-          render: (_args, value) => [{ type: 'text', text: value.text }],
-        },
-        execute(args) {
-          const lines = []
-          const ok = probeRtk(config.rtkBin)
-          lines.push(`rtk available: ${ok ? 'yes' : 'no'} (bin: ${config.rtkBin})`)
-          if (!ok) {
-            lines.push('安装：brew install rtk / curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/master/install.sh | sh')
-            return { text: lines.join('\n') }
-          }
-          const version = spawnSync(config.rtkBin, ['--version'], { encoding: 'utf8', timeout: 3000 })
-          lines.push(`version: ${(version.stdout ?? '').trim() || '(unknown)'}`)
-          lines.push(`auto-rewrite: ${available ? 'on' : 'off'} | conservative: ${config.conservative} | awareness: ${config.awareness}`)
-          if (args.gain !== false) {
-            const gain = spawnSync(config.rtkBin, ['gain'], { encoding: 'utf8', timeout: 5000 })
-            const out = (gain.stdout ?? '').trim().slice(0, 1200)
-            lines.push('', '--- rtk gain (tail-capped) ---', out || '(no data yet)')
-          }
-          return { text: lines.join('\n') }
-        },
+      buildDoctorTool({
+        rtkBin: config.rtkBin,
+        doctorGain: config.doctorGain,
+        autoRewrite: available,
+        conservative: config.conservative,
+        awareness: config.awareness,
       }),
     )
   }
+
+  // ── ④ 设置页数据面（/api/rtk-kit/*）：webServer/connection 软依赖接线（照 wiki-steward/lib/index.js 同形）──
+  //   内层子插件硬 inject ['webServer','connection'] 承载（provider 缺位=延迟激活不炸装载、到达自动补激活）；
+  //   缺缝探测留痕（fail-open：跳过注册不炸装载）：双缺/半缺各留痕恰一；
+  //   注册动作在 effect 执行体内当场跑、返回值=拆除器（工厂形语义）、拆除幂等。
+  const softService = (svcName, probe) => {
+    try {
+      if (typeof ctx?.get === 'function') {
+        const a = ctx.get(svcName)
+        if (probe(a)) return a
+        const b = ctx.get(svcName, false) // 非严格：提供者未激活也认（懒补接面）
+        if (probe(b)) return b
+      }
+    } catch { /* cordis 代理在服务缺位时抛——走兜底 */ }
+    try {
+      if (probe(ctx?.[svcName])) return ctx[svcName]
+    } catch { /* 同上 */ }
+    return null
+  }
+  const wsProbe = softService('webServer', (s) => typeof s?.register === 'function')
+  const connProbe = softService('connection', (s) => typeof s?.requestRejection === 'function')
+  if (wsProbe === null && connProbe === null) {
+    ctx.logger?.warn?.('[rtk-kit] webServer/connection 服务缝缺失，设置页数据面（/api/rtk-kit/*）未注册（fail-open：改写/awareness/工具面照常）')
+  } else if ((wsProbe === null) !== (connProbe === null)) {
+    ctx.logger?.warn?.('[rtk-kit] webServer/connection 服务缝半缺，设置页数据面（/api/rtk-kit/*）未注册（fail-open：改写/awareness/工具面照常）')
+  }
+  try {
+    if (typeof ctx?.plugin === 'function') {
+      ctx.plugin({
+        inject: ['webServer', 'connection'],
+        apply(c) {
+          if (typeof c?.effect !== 'function') return // 缺 effect 缝=无拆除器路径，跳过注册（零残留）
+          // 工厂形：注册当场跑、返回函数才是拆除器（registerDoctorRoutes 内部拆除幂等、收敛不抛）
+          c.effect(
+            () =>
+              registerDoctorRoutes(c, {
+                rtkBin: config.rtkBin,
+                warn: (msg) => ctx.logger?.warn?.(msg),
+              }),
+            'rtk-kit: doctor-routes',
+          )
+        },
+      })
+    }
+  } catch { /* ctx.plugin 缺位/异常 fail-open：装载不炸（等价宿主 _reload 兜底语义） */ }
 }

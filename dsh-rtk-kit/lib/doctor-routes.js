@@ -140,20 +140,43 @@ export function createDoctorHandlers({
  */
 export function registerDoctorRoutes(ctx, opts = {}) {
   const connection = ctx.connection
+  const warn = opts.warn ?? ((msg) => ctx.logger?.warn?.(msg))
   const handlers = createDoctorHandlers({
-    connection,
     ...opts,
-    warn: opts.warn ?? ((msg) => ctx.logger?.warn?.(msg)),
+    // F1（T6 审查收口）：connection/warn 最后进——opts.connection 不得遮蔽 ctx.connection 鉴权缝（防鉴权旁路）
+    connection,
+    warn,
   })
 
+  // F2（T6 审查收口）：dispatch 外层兜底——authGate/methodGuard 抛错或 handler 异步拒绝 → 错误信封
+  //（码族收口 RTK_ERROR），绝不 unhandled rejection；响应已发出/损坏时只留痕不二次回写（兜底自身绝不抛）。
+  const failSafe = (res, err) => {
+    warn(`[rtk-kit] 路由异常兜底：${String(err?.message ?? err)}`)
+    try {
+      if (res.writableEnded || res.headersSent) return
+      fail(res, 500, 'RTK_ERROR', `内部错误：${String(err?.message ?? err)}`)
+    } catch {
+      /* 兜底不抛（响应已损坏时无处回信封） */
+    }
+  }
+
   const handler = (req, res) => {
-    const p = pathnameOf(req)
-    if (p === `${API_PREFIX}/version`) return handlers.version(req, res)
-    if (p === `${API_PREFIX}/gain`) return handlers.gain(req, res)
-    if (p === `${API_PREFIX}/health`) return handlers.health(req, res)
-    // 未知路径先过鉴权缝再 404（未登录者不获知路径存在性）；码族收口
-    if (!authGate(connection, req, res)) return undefined
-    return fail(res, 404, 'RTK_ERROR', '不提供该路径')
+    try {
+      const p = pathnameOf(req)
+      let ret
+      if (p === `${API_PREFIX}/version`) ret = handlers.version(req, res)
+      else if (p === `${API_PREFIX}/gain`) ret = handlers.gain(req, res)
+      else if (p === `${API_PREFIX}/health`) ret = handlers.health(req, res)
+      else {
+        // 未知路径先过鉴权缝再 404（未登录者不获知路径存在性）；码族收口
+        if (!authGate(connection, req, res)) return undefined
+        return fail(res, 404, 'RTK_ERROR', '不提供该路径')
+      }
+      return typeof ret?.then === 'function' ? ret.catch((err) => failSafe(res, err)) : ret // F2：异步拒绝收敛为信封
+    } catch (err) {
+      failSafe(res, err) // F2：分发面同步抛错（authGate 等）同回信封
+      return undefined
+    }
   }
 
   const dispose = ctx.webServer.register({ kind: 'prefix', path: API_PREFIX, handler })

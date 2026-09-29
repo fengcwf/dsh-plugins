@@ -39,6 +39,7 @@ dsh plugin --profile web add /root/.dsh/plugins/dsh-rtk-kit
 | `exclude` | `[]` | 永不改写的命令前缀黑名单（对应 rtk 的 `exclude_commands` 语义） |
 | `awareness` | `default` | `default`/`high`/`full`/`off`（推荐 `high`：带逃生舱说明） |
 | `registerDoctorTool` | `true` | 是否注册 `rtk_doctor` |
+| `doctorGain` | `false` | `rtk_doctor` 是否输出 gain 统计段（缺省 false=只出轻诊断三行，省 350-420 token/次）；true 时仍受工具参数 `gain!==false` 门控——完整统计唯一入口=设置页面板 |
 
 ## 逃生舱（模型侧）
 

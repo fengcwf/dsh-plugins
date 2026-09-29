@@ -5,7 +5,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { apply } from '../lib/index.js'
+import { apply, buildDoctorTool } from '../lib/index.js'
 import { API_PREFIX, registerDoctorRoutes } from '../lib/doctor-routes.js'
 import { HEALTH_ITEMS, INSTALL_HINT } from '../lib/doctor.js'
 
@@ -394,6 +394,148 @@ test('分发面：方法不匹配 405 + allow 头；未知路径 404；码族收
 
   for (const res of [wrongMethod, wrongHealthMethod, unknown]) {
     assert.ok(['AUTH_REQUIRED', 'RTK_UNAVAILABLE', 'RTK_TIMEOUT', 'RTK_ERROR'].includes(res.body.error.code))
+    assert.equal(typeof res.body.error.message, 'string')
+    assert.ok(!('data' in res.body), '失败信封不得混入 data')
+  }
+})
+
+// ───────────────────────── Task 8：doctor 瘦身（INV-6） ─────────────────────────
+
+test('INV-6 doctor 瘦身：gain 段受 config.doctorGain && args.gain!==false 门控，缺省不输出', async () => {
+  // 真 apply 注册面：唯一会话工具仍为 rtk_doctor（零新增 defineTool），参数 description 同步 default false
+  const ctx = makeCtx()
+  apply(ctx, { enabled: false, registerDoctorTool: true, awareness: 'off', doctorGain: false })
+  assert.equal(ctx.toolCalls.length, 1)
+  const tool = ctx.toolCalls[0][0]
+  assert.equal(tool.name, 'rtk_doctor')
+  // defineTool 归一为 JSON Schema 形（模型可见面）
+  assert.equal(tool.parameters.type, 'object')
+  assert.match(tool.parameters.properties.gain.description, /default false/)
+
+  const { exec, calls } = fakeExec(async (file, args) => {
+    if (args.join(',') === '--version') return { code: 0, stdout: 'rtk 0.49.0\n', stderr: '' }
+    return { code: 0, stdout: JSON.stringify({ summary: { total_commands: 7 } }), stderr: '' }
+  })
+  const base = { rtkBin: 'rtk', exec }
+  // doctorGain 缺省 false：args.gain=true 也不输出（config 门控优先）
+  const r1 = await buildDoctorTool(base).execute({ gain: true })
+  assert.doesNotMatch(r1.text, /rtk gain/)
+  // doctorGain:true → 含 gain 段
+  const r2 = await buildDoctorTool({ ...base, doctorGain: true }).execute({})
+  assert.match(r2.text, /--- rtk gain/)
+  assert.match(r2.text, /total_commands/)
+  // doctorGain:true 但 args.gain===false → 不输出
+  const r3 = await buildDoctorTool({ ...base, doctorGain: true }).execute({ gain: false })
+  assert.doesNotMatch(r3.text, /rtk gain/)
+  // 双缺省 → 不输出（缺省口径）
+  const r4 = await buildDoctorTool(base).execute({})
+  assert.doesNotMatch(r4.text, /rtk gain/)
+  assertSafeArgv(calls) // doctor 工具动作走 doctor.js 白名单（INV-7）
+})
+
+test('INV-2/INV-7 源面（index.js）：defineTool 调用恰一处（既有 rtk_doctor 瘦身复用）、零破坏性旗标暴露', () => {
+  const INDEX = fs.readFileSync(new URL('../lib/index.js', import.meta.url), 'utf8')
+  assert.equal(INDEX.match(/\bdefineTool\s*\(/g)?.length ?? 0, 1, '零新增 defineTool（唯一会话工具仍 rtk_doctor）')
+  assert.doesNotMatch(INDEX, /--reset/)
+  assert.doesNotMatch(INDEX, /spawnSync\([^)]*['"]run['"]/)
+})
+
+// ───────────────────────── Task 8：接线面（fail-open / 工厂形 effect） ─────────────────────────
+
+test('fail-open（INV-8）：缺 webServer/connection 缝的假 ctx → apply 不抛、留痕恰一、resolve 改写缝仍工作', () => {
+  const warnings = []
+  const effects = []
+  const orig = (request) => request
+  const bare = {
+    shell: { resolve: orig },
+    tools: { register() {} },
+    effect(fn, label) {
+      effects.push({ fn, label })
+    },
+    on() {},
+    logger: { warn: (m) => warnings.push(String(m)) },
+  }
+  apply(bare, { enabled: false, registerDoctorTool: false, awareness: 'off' })
+  assert.equal(warnings.length, 1, '缺缝留痕恰一（fail-open 不炸装载）')
+  assert.match(warnings[0], /webServer\/connection 服务缝(缺失|半缺)/)
+  // resolve 改写缝仍工作：包壳在位 + enabled:false 恒等放行（零 spawn）
+  assert.notEqual(bare.shell.resolve, orig, 'resolve 缝包壳仍在')
+  const req = { command: 'git status', stdin: null }
+  assert.deepEqual(bare.shell.resolve(req), req)
+  // 工厂形 effect（队长硬约束）：body 当场跑、返回函数才是拆除器；拆除后还原
+  assert.equal(effects.length, 1)
+  const wrapped = bare.shell.resolve
+  const dispose = effects[0].fn()
+  assert.equal(typeof dispose, 'function', '工厂形：返回函数才是拆除器')
+  assert.equal(bare.shell.resolve, wrapped, '拆除前包壳仍在（工厂当场跑不还原）')
+  dispose()
+  assert.notEqual(bare.shell.resolve, wrapped, '拆除后包壳卸下（还原 resolve）')
+  assert.deepEqual(bare.shell.resolve(req), req, '还原后恒等形')
+  assert.doesNotThrow(() => dispose()) // 拆除幂等
+})
+
+test('接线正路径：假 ctx 带 webServer/connection + ctx.plugin 子插件形 → prefix 注册 + 工厂形 effect 拆除', () => {
+  const ctx = makeCtx()
+  const pluginCalls = []
+  ctx.plugin = (spec) => {
+    pluginCalls.push(spec)
+  }
+  apply(ctx, { enabled: false, registerDoctorTool: false, awareness: 'off' })
+  assert.equal(pluginCalls.length, 1, '数据面走 ctx.plugin 孅插件形接线')
+  const spec = pluginCalls[0]
+  assert.deepEqual(spec.inject, ['webServer', 'connection'])
+  // 模拟宿主：子插件 ctx 拿到两缝后跑 apply（注册动作在 effect 执行体内当场跑）
+  const effects = []
+  const sub = {
+    ...ctx,
+    effect(fn, label) {
+      effects.push({ fn, label })
+    },
+  }
+  spec.apply(sub)
+  assert.equal(effects.length, 1)
+  assert.equal(effects[0].label, 'rtk-kit: doctor-routes')
+  const dispose = effects[0].fn() // 工厂当场跑 → 返回拆除器
+  assert.equal(typeof dispose, 'function')
+  assert.equal(ctx.registered.length, 1)
+  assert.equal(ctx.registered[0].kind, 'prefix')
+  assert.equal(ctx.registered[0].path, '/api/rtk-kit')
+  dispose()
+  dispose() // 拆除幂等
+  assert.equal(ctx.registered[0].disposeCalls.count, 1)
+})
+
+// ───────────────────────── Task 8：T6 审查 deferred 项收口（F1/F2） ─────────────────────────
+
+test('F1：opts.connection 不得遮蔽 ctx.connection 鉴权缝（展开序 {...opts, connection, warn}）', async () => {
+  const { exec } = fakeExec(async () => ({ code: 0, stdout: 'rtk 0.49.0\n', stderr: '' }))
+  const bogusCalls = []
+  const bogus = {
+    requestRejection(arg) {
+      bogusCalls.push(arg)
+      return 403
+    },
+  }
+  const r = routesWith({ exec, connection: bogus }, { rejection: undefined })
+  const res = await r.call(makeReq({ url: `${API_PREFIX}/version` }))
+  assert.equal(res.status, 200, '鉴权缝必须走 ctx.connection（rejection: undefined=放行）')
+  assert.equal(r.ctx.rejectionCalls.length, 1)
+  assert.equal(bogusCalls.length, 0, 'opts.connection 不得被调用（不得遮蔽缝）')
+})
+
+test('F2：鉴权缝抛错 → dispatch 外层兜底回错误信封（绝不 unhandled rejection）', async () => {
+  const throwing = () => {
+    throw new Error('鉴权缝炸了')
+  }
+  for (const [url, method] of [
+    [`${API_PREFIX}/version`, 'GET'], // handler 内 authGate 抛（异步拒绝）
+    [`${API_PREFIX}/nope`, 'GET'], // 分发面 authGate 抛（同步）
+  ]) {
+    const { exec } = fakeExec(async () => ({ code: 0, stdout: '', stderr: '' }))
+    const r = routesWith({ exec }, { rejection: throwing })
+    const res = await r.call(makeReq({ url, method }))
+    assert.equal(res.status, 500, `${url} 应回错误信封`)
+    assert.equal(res.body.error.code, 'RTK_ERROR')
     assert.equal(typeof res.body.error.message, 'string')
     assert.ok(!('data' in res.body), '失败信封不得混入 data')
   }

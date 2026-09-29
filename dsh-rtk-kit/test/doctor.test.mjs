@@ -20,6 +20,7 @@ import {
   getGain,
   getHealth,
   getVersion,
+  runDoctorTool,
 } from '../lib/doctor.js'
 
 /** 记录调用形的假 execFile（执行器注入缝；测试零 node:child_process、零真实 rtk）。 */
@@ -410,4 +411,62 @@ test('getHealth：rtk 全缺失也绝不抛错，exec 面项如实 fail（fail-o
   assert.equal(items.find((it) => it.id === 'gain-source').status, 'fail')
   assert.equal(items.find((it) => it.id === 'compression-effective').status, 'fail')
   assert.equal(items.find((it) => it.id === 'guard-matrix').status, 'pass')
+})
+
+// ───────────────────────── rtk_doctor 轻诊断执行体（Task 8 瘦身 / INV-6） ─────────────────────────
+
+/** 模拟二进制缺失的 spawn 级失败（ENOENT）。 */
+function enoentError() {
+  const e = new Error('spawn rtk ENOENT')
+  e.code = 'ENOENT'
+  return e
+}
+
+test('runDoctorTool 轻诊断三行形（可用性/版本/配置）：rtk 在场恰三行、只走 --version', async () => {
+  const { exec, calls } = fakeExec(async () => ({ code: 0, stdout: 'rtk 0.49.0\n', stderr: '' }))
+  const r = await runDoctorTool({}, { rtkBin: 'rtk', exec, autoRewrite: true, conservative: true, awareness: 'high' })
+  assert.deepEqual(r.text.split('\n'), [
+    'rtk available: yes (bin: rtk)',
+    'version: 0.49.0',
+    'auto-rewrite: on | conservative: true | awareness: high',
+  ])
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0].args, ['--version'])
+})
+
+test('runDoctorTool：rtk 缺失软回可用行 + 安装提示（US-1 降级显示，不抛错）', async () => {
+  const { exec } = fakeExec(async () => {
+    throw enoentError()
+  })
+  const r = await runDoctorTool({}, { exec })
+  assert.deepEqual(r.text.split('\n'), ['rtk available: no (bin: rtk)', INSTALL_HINT])
+})
+
+test('runDoctorTool gain 段渲染（doctorGain:true）：summary 指标 JSON；gain 输出坏 → (no data yet) 兜底', async () => {
+  const { exec } = fakeExec(async (file, args) => {
+    if (args.join(',') === '--version') return { code: 0, stdout: 'rtk 0.49.0\n', stderr: '' }
+    return { code: 0, stdout: JSON.stringify({ summary: { total_commands: 7, avg_savings_pct: 12.5 } }), stderr: '' }
+  })
+  const r = await runDoctorTool({}, { exec, doctorGain: true })
+  const lines = r.text.split('\n')
+  assert.equal(lines.length, 6)
+  assert.equal(lines[3], '')
+  assert.equal(lines[4], '--- rtk gain (summary) ---')
+  // R-3 归一形：SUMMARY_METRICS 全键（缺失字段回 null）
+  assert.deepEqual(JSON.parse(lines[5]), {
+    total_commands: 7,
+    total_input: null,
+    total_output: null,
+    total_saved: null,
+    avg_savings_pct: 12.5,
+    total_time_ms: null,
+    avg_time_ms: null,
+  })
+
+  const bad = fakeExec(async (file, args) => {
+    if (args.join(',') === '--version') return { code: 0, stdout: 'rtk 0.49.0\n', stderr: '' }
+    return { code: 0, stdout: 'not json', stderr: '' }
+  })
+  const r2 = await runDoctorTool({}, { exec: bad.exec, doctorGain: true })
+  assert.deepEqual(r2.text.split('\n').slice(4), ['--- rtk gain (summary) ---', '(no data yet)'])
 })

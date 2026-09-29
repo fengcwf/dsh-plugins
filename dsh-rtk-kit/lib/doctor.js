@@ -380,3 +380,47 @@ export async function getHealth(opts = {}) {
     }),
   )
 }
+
+// ───────────────────────── rtk_doctor 工具执行体（Task 8 瘦身 / INV-6） ─────────────────────────
+
+/**
+ * rtk_doctor 轻诊断执行体（单源复用本模块 getVersion/getGain；lib/index.js 的工具 execute 薄包装调用本函数）。
+ * 输出形：可用性/版本/配置恰三行（US-1：rtk 缺失=可用行 + 安装提示降级显示）；
+ * gain 统计段受 `doctorGain && args.gain !== false` 门控，缺省不输出（INV-6 省 350-420 token/次；
+ * 完整统计唯一入口=设置页面板）。零 spawnSync（INV-5）：执行全走 execRtk 异步封装修身后的共享函数。
+ * @param {object} [args] - 工具参数 {gain?: boolean}
+ * @param {object} [opts] - {rtkBin, exec, timeoutMs, doctorGain, autoRewrite, conservative, awareness}
+ * @returns {Promise<{text: string}>}
+ */
+export async function runDoctorTool(args = {}, opts = {}) {
+  const {
+    rtkBin = 'rtk',
+    exec,
+    timeoutMs,
+    doctorGain = false,
+    autoRewrite = false,
+    conservative = true,
+    awareness = 'default',
+  } = opts
+  const lines = []
+  const v = await getVersion({ rtkBin, exec, timeoutMs })
+  lines.push(`rtk available: ${v.available ? 'yes' : 'no'} (bin: ${v.path})`)
+  if (!v.available) {
+    lines.push(INSTALL_HINT)
+    return { text: lines.join('\n') }
+  }
+  lines.push(`version: ${v.version ?? '(unknown)'}`)
+  lines.push(`auto-rewrite: ${autoRewrite ? 'on' : 'off'} | conservative: ${conservative} | awareness: ${awareness}`)
+  if (doctorGain === true && args?.gain !== false) {
+    // gain 段 fail-soft：统计源异常回 (no data yet)（与瘦身前降级形一致），绝不让诊断工具抛错
+    let out = '(no data yet)'
+    try {
+      const g = await getGain({ rtkBin, exec, timeoutMs })
+      out = JSON.stringify(g.summary) || '(no data yet)'
+    } catch {
+      /* 统计源不可用 → 占位回显 */
+    }
+    lines.push('', '--- rtk gain (summary) ---', out)
+  }
+  return { text: lines.join('\n') }
+}

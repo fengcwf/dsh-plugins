@@ -21,3 +21,6 @@
         awareness: high
         # 注册 rtk_doctor 诊断工具（模型可见，schema ≈ 百级 token；不需要可关）
         registerDoctorTool: true
+        # rtk_doctor 是否输出 gain 统计段（缺省 false=只出轻诊断三行，省 350-420 token/次；
+        # true 时统计段仍受工具参数 gain!==false 门控——完整统计唯一入口=设置页面板）
+        doctorGain: false
