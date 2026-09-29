@@ -27,7 +27,10 @@ window.__ModuleLoader__.load({
       if (code && code.indexOf('GHO-AUTH-') === 0) return status === 401 ? '未登录' : '来源受限'
       if (code && code.indexOf('GHO-ROUTE-') === 0) return LABEL_BY_HTTP[status] ?? '请求被拒'
       var m = /-(\d\d)$/.exec(code ?? '')
-      return (m ? LABEL_BY_NN[m[1]] : null) ?? LABEL_BY_HTTP[status] ?? '未知错误'
+      return (m ? LABEL_BY_NN[m[1]] : null) ?? LABEL_BY_HTTP[status] ?? (status >= 500 ? '服务内部错误' : status >= 400 ? '请求被拒' : '未知错误')
+    }
+    function hintByStatus(status) {
+      return HINT_BY_HTTP[status] ?? (status >= 500 ? '服务内部错误：请查看 dsh 日志' : status >= 400 ? '请求被拒：请刷新页面后重试' : '请结合提示归因后重试；持续失败请查看 dsh 日志')
     }
 
     /** 结构化失败 → 分级错误卡模型（title=「状态 · 归因」，hint=修复指引）；只取白名单字段 */
@@ -42,7 +45,7 @@ window.__ModuleLoader__.load({
         status: status,
         title: (status === null ? '' : status + ' · ') + labelOf(code, status),
         message: String(resp.message ?? ''),
-        hint: String(resp.hint ?? HINT_BY_HTTP[status] ?? '请结合提示归因后重试；持续失败请查看 dsh 日志'),
+        hint: String(resp.hint ?? hintByStatus(status)),
       }
     }
 

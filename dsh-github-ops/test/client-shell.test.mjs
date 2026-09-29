@@ -72,10 +72,18 @@ function makeRequire({ ui, uiError } = {}) {
   return req
 }
 
-// lib/ 下全部 client chunk 源码（M1/F-scan-1：源码扫描面须覆盖 UI 兄弟 chunk 全家）
-const allClientSources = () => readdirSync(new URL('../lib/', import.meta.url))
-  .filter((f) => CLIENT_CHUNK.test(f))
-  .map((f) => read('../lib/' + f))
+// lib/ 下壳 + 全部 UI 兄弟 chunk 源码（S1 修复：CLIENT_CHUNK 正则不含 client.js——壳必须显式入列，
+// SEATS 表 name: 注册形只在壳里，M1/P-7/P-8/绝对路径三处源码锁漏扫壳=假保险）
+const allClientSources = () => [
+  read('../lib/client.js'),
+  ...readdirSync(new URL('../lib/', import.meta.url))
+    .filter((f) => f !== 'client.js' && CLIENT_CHUNK.test(f))
+    .map((f) => read('../lib/' + f)),
+]
+
+// P-7/M1 红线扫描形（模块级共享：M1 回归用例自证正反例都真命中）
+const banCall = /slots\.(inject|register)\(\s*['"`](root|sidebar|rightbar)['"`]/
+const banName = /name:\s*['"`](root|sidebar|rightbar)['"`]/
 
 // 假 ctx（忠实 slots.inject 语义：callback 返回拆除器，声明塌缩/卸载时调用；register 返回拆除器）
 function makeCtx({ withSlots = true, registerThrows = false, injectThrows = false } = {}) {
@@ -248,10 +256,8 @@ test('P-7 红线：root 槽禁注册；sidebar/rightbar 零占位', async () => 
     assert.notEqual(rec.opts.name, 'rightbar')
   }
   // 源码面：壳与 UI 全 chunk 不得出现 root/sidebar/rightbar 注册字面。
-  // M1（T13 携带）：正则须覆盖 SEATS 表与 options() 的 `name: '…'` 形（原调用形正则失配=假保险），
-  // 并先用正例自证可命中，杜绝「扫描永真绿」复发。
-  const banCall = /slots\.(inject|register)\(\s*['"`](root|sidebar|rightbar)['"`]/
-  const banName = /name:\s*['"`](root|sidebar|rightbar)['"`]/
+  // M1（T13 携带）：正则须覆盖 SEATS 表与 options() 的 `name: '…'` 形（原调用形正则失配=假保险）；
+  // 扫描形在模块级共享（banCall/banName），扫描集合必含壳（S1 回归用例另证）。
   assert.match("ctx.slots.inject('sidebar', fn)", banCall, '正例自证：调用形可命中')
   assert.match("ctx.slots.register({ name: 'root' }, fn)", banName, '正例自证：name: 形可命中（M1）')
   for (const src of allClientSources()) {
@@ -374,7 +380,10 @@ function fakeApi(routes) {
       return {
         ok: route.httpOk ?? true,
         status: route.status ?? 200,
-        json: async () => route.body ?? {},
+        json: async () => {
+          if (route.jsonThrows) throw new Error('not json') // 非 JSON 形（如 login-gate HTML/代理 502）
+          return route.body ?? {}
+        },
       }
     },
   }
@@ -547,6 +556,16 @@ test('T14 多账号交互：逐账号验证 + 切换 active（busy 态 + POST �
   assert.equal(rows.find((r) => r.login === 'ci-bot').busy, false, '终态收敛')
   const texts = textsOf(cards.renderSettingsView(model.getState(), model.actions))
   assert.ok(texts.includes('切换') || texts.includes('当前'), '非 active 行给「切换」，active 行给「当前」')
+  // MED a①接线回归：逐账号验证入口=状态按钮 → verifyAccount → POST {logins:[…]} + 行状态刷新
+  const tree2 = cards.renderSettingsView(model.getState(), model.actions)
+  const row2 = collectNodes(tree2).find((el) => classListOf(el).includes('gho-row') && textsOf(el).includes('ci-bot'))
+  const verifyBtn = collectNodes(row2).find((el) => el.type === 'button' && /已验证|待验证/.test(textsOf(el)))
+  assert.ok(verifyBtn, '逐账号验证入口接线（US-4，非纯 span）')
+  assert.match(String(verifyBtn.props['aria-label'] ?? ''), /验证/, 'aria 语义在')
+  await verifyBtn.props.onClick()
+  const vf = api.calls.filter((c) => c.path === 'accounts/verify' && c.init.body).at(-1)
+  assert.deepEqual(JSON.parse(vf.init.body).logins, ['ci-bot'], '逐账号验证只验该账号')
+  assert.equal(model.getState().accounts.rows.find((r) => r.login === 'ci-bot').busy, false, '验证终态收敛')
 })
 
 test('T14 P-8 + 禁令清单（可见文案）：无删除/登出入口；零 em-dash/emoji；状态点配文字', async () => {
@@ -575,6 +594,9 @@ test('T14 布局与 token（DESIGN.md C-5）：双栏/<960 单列/1200px/16px + 
   assert.equal(/grid-template-columns:\s*1fr/.test(css), true, '折叠=单列')
   assert.match(css, /gap:\s*var\(--dsw-space-4,\s*16px\)/, '卡间距 16px（space-4）')
   assert.equal(/#[0-9A-Fa-f]{3,8}/.test(css), false, '零硬编码 hex（唯一色板来源=--dsw-*）')
+  for (const src of allClientSources()) {
+    assert.equal(/#[0-9A-Fa-f]{3,8}/.test(src), false, '零硬编码 hex（全 client 源码面，S1 并面）')
+  }
   assert.match(css, /--dsw-font-mono/, '数值/命令列 mono')
   assert.match(css, /--dsw-font-family/, '字体族 token')
   for (const m of css.matchAll(/(?:^|[;{])\s*(color|background|background-color|border-color|border-top-color|border-bottom-color|border|outline-color|box-shadow|fill|stroke)\s*:\s*([^;{}]+)/g)) {
@@ -650,4 +672,42 @@ test('L1 挂载期异常 fail-open（INV-6）：重挂失败只 warn 不炸、�
   await settle()
   assert.equal(activeOf(calls).length, 1, '恢复路径可用')
   disposeB()
+})
+
+test('T14 Error（非 JSON 5xx）：HTTP 502 HTML 形=硬失败分级卡，绝不当成功（S2）', async () => {
+  const routes = {
+    ...ROUTES_ALL_OK,
+    status: { httpOk: false, status: 502, jsonThrows: true },
+    health: { httpOk: false, status: 502, jsonThrows: true },
+    'repo-context': { httpOk: false, status: 502, jsonThrows: true },
+  }
+  const model = modelMod.createModel({ api: fakeApi(routes) })
+  await model.actions.boot()
+  assert.equal(model.getState().auth.phase, 'error', 'status 非 JSON 5xx=分级卡（非「未检测到」成功形）')
+  assert.equal(model.getState().health.phase, 'error', 'health 同缝（洞限三个 load，逐个断言）')
+  assert.equal(model.getState().repo.phase, 'error', 'repo 同缝')
+  const tree = cards.renderSettingsView(model.getState(), model.actions)
+  const errs = collectNodes(tree).filter((el) => classListOf(el).includes('gho-error-card'))
+  assert.ok(errs.length >= 3, '三卡各出分级错误卡')
+  const texts = textsOf(tree)
+  assert.match(texts, /502 · 服务内部错误/, '分级标题=状态 · 归因（5xx 兜底归因）')
+  assert.match(texts, /请查看 dsh 日志|刷新/, '修复指引在场（INV-10）')
+  assert.equal(texts.includes('未检测到'), false, '绝不误当成功投影')
+})
+
+test('M1/S1 扫描面回归：源码锁真读到壳（SEATS name: 靶子），坏形必命中、真实源码零命中', () => {
+  const srcs = allClientSources()
+  assert.ok(srcs.some((s) => s.includes("name: 'settings.section'")), '扫描集合必含 lib/client.js（SEATS 表=name: 真实靶子，S1）')
+  assert.ok(srcs.length >= 6, '壳 + UI 全 chunk 都在扫描面（当前 ' + srcs.length + ' 份）')
+  // 反例自证：合成坏源码必命中（防「扫描真空转」假保险复发）
+  assert.equal(banName.test("ctx.slots.register({ name: 'root' }, fn)"), true, '反例自证：name: 形必命中')
+  assert.equal(banCall.test("ctx.slots.inject('sidebar', fn)"), true, '反例自证：调用形必命中')
+  assert.equal(/method:\s*['"`]DELETE['"`]/i.test("api.fetch('x', { method: 'DELETE' })"), true, '反例自证：DELETE 形必命中')
+  assert.equal(/#[0-9A-Fa-f]{3,8}/.test('.x{color:#4176E6}'), true, '反例自证：hex 形必命中')
+  // 真实源码（壳 + 全 chunk）零命中
+  const all = srcs.join('\n')
+  assert.equal(banName.test(all), false)
+  assert.equal(banCall.test(all), false)
+  assert.equal(/method:\s*['"`]DELETE['"`]/i.test(all), false)
+  assert.equal(/#[0-9A-Fa-f]{3,8}/.test(all), false)
 })

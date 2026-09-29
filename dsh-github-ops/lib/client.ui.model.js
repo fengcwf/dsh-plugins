@@ -33,11 +33,11 @@ window.__ModuleLoader__.load({
       try { body = await resp.json() } catch { body = null }
       if (!resp.ok || resp.status >= 400) {
         if (body && typeof body === 'object') return body
-        return { transport: false, code: null, status: resp.status, message: 'HTTP ' + resp.status, hint: null }
+        return { ok: false, code: null, status: resp.status, message: 'HTTP ' + resp.status, hint: null } // S2：非 JSON 4xx/5xx=硬失败形（分级卡），绝不当成功
       }
       return body && typeof body === 'object' ? body : {}
     }
-    const isHardFailure = (body) => body.transport === true || body.http === true
+    const isHardFailure = (body) => body.transport === true
       || (body.ok === false && !NOT_CONFIGURED.test(String(body.code ?? '')))
 
     /** UI 状态模型：{getState, subscribe, actions}（容器组件订阅，cards 纯渲染消费） */
@@ -52,7 +52,7 @@ window.__ModuleLoader__.load({
         health: { phase: 'loading', error: null, rows: [] },
         accounts: { phase: 'loading', error: null, rows: [], hint: null },
         repo: { phase: 'loading', error: null, branch: null, remotes: [], repo: null, hint: null },
-        token: { draft: '', busy: false, notice: null, error: null, focus: 0 },
+        token: { draft: '', busy: false, notice: null, error: null },
       }
       function notify() {
         for (var i = 0; i < listeners.length; i++) { try { listeners[i]() } catch { /* 订阅者异常不炸模型（INV-6） */ } }
@@ -248,8 +248,8 @@ window.__ModuleLoader__.load({
       }
 
       function addAccount() {
-        // 添加账号入口（US-4）：与 token 维护同一录入链路（stdin 写入 hosts.yml），数据面无第二录入端点
-        state.token.focus += 1
+        // 添加账号入口（US-4）：与 token 维护同一录入链路（stdin 写入 hosts.yml），数据面无第二录入端点；
+        // 行为=录入引导（Token 卡保存）；输入框聚焦增强未实现（deferred，无死计数器）
         state.token.notice = { kind: 'info', text: '粘贴新账号的 PAT 后点「保存并验证」，即可加入 hosts.yml' }
         notify()
       }

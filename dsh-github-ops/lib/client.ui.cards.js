@@ -148,6 +148,16 @@ window.__ModuleLoader__.load({
     }
 
     // —— 右栏：多账号库卡（US-4：active 标记/逐账号验证/切换；Empty=尚无其他账号 + 添加入口）——
+    /** 逐账号验证入口（US-4）：状态即按钮（文案沿定稿图，aria 语义 + busy 禁用）→ actions.verifyAccount */
+    function verifyBtn(r, actions) {
+      return h('button', {
+        type: 'button',
+        className: 'gho-verify',
+        'aria-label': '重新验证账号 ' + r.login,
+        disabled: r.busy === true,
+        onClick: function onVerify() { return actions && actions.verifyAccount ? actions.verifyAccount(r.login) : undefined },
+      }, r.verified ? '已验证' : h('span', { className: 'gho-chip gho-chip-warn' }, '待验证'))
+    }
     function accountRowEl(r, actions, i) {
       var dotClass = r.verified ? 'gho-dot gho-dot-ok' : r.active ? 'gho-dot gho-dot-warn' : 'gho-dot gho-dot-off'
       return h('div', { className: 'gho-row gho-row-account', key: 'acc' + i },
@@ -155,9 +165,7 @@ window.__ModuleLoader__.load({
           h('span', { className: dotClass, 'aria-hidden': 'true' }),
           h('span', { className: 'gho-row-login gho-mono' }, r.login),
           r.busy ? h('span', { className: 'gho-spinner', 'aria-hidden': 'true' }) : null,
-          r.verified
-            ? h('span', { className: 'gho-row-detail' }, '已验证')
-            : h('span', { className: 'gho-chip gho-chip-warn' }, '待验证')),
+          verifyBtn(r, actions)),
         h('span', { className: 'gho-row-side' },
           r.active
             ? h('span', { className: 'gho-chip gho-chip-active' }, 'active')
