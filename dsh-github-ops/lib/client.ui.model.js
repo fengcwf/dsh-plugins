@@ -4,7 +4,8 @@
 //   惰性 require.async 取用）。容器与展示分离：本层零 DOM 零 React，client.ui.cards.js 纯渲染消费。
 // 显示边界（INV-1 / INV-10 / P-5 / 合同 1）：只读结构化字段（code/status/message/hint/quota/投影数组），
 //   绝不读取 stderr 等原始串、不自行拼接任何 URL 或 token 明文（数据面 sendJson 已整树 redact，双保险）。
-// HTTP 语义（合同 9）：业务失败=HTTP 200 + ok:false（按 code 归因分级），4xx/5xx 只表达传输/契约违例——分流看 ok/code，不看 HTTP 状态。
+// HTTP 语义（合同 9）：业务失败=HTTP 200 + ok:false（按 code 归因分级），4xx/5xx 只表达传输/契约违例——分流看 ok/code，不看 HTTP 状态；
+//   4xx/5xx 且 body 缺 ok:false（网关/反代自返 JSON）一律合成硬失败形走分级卡，绝不假成功（D2 收口）。
 // 「留空=不修改」（INV-4）：空 token 提交不发请求、不触碰既有凭据；保存即清空（INV-1）；保存后立即验证（US-2）。
 window.__ModuleLoader__.load({
   id: 'dsh-github-ops',
@@ -32,8 +33,16 @@ window.__ModuleLoader__.load({
       var body = null
       try { body = await resp.json() } catch { body = null }
       if (!resp.ok || resp.status >= 400) {
-        if (body && typeof body === 'object') return body
-        return { ok: false, code: null, status: resp.status, message: 'HTTP ' + resp.status, hint: null } // S2：非 JSON 4xx/5xx=硬失败形（分级卡），绝不当成功
+        // D2 收口（INV-10 邻域）：HTTP≥400 且 body 是 JSON 但缺 ok:false（前置反代/网关自返 {error:…} 401/502 JSON）
+        // 不得原样放行——否则 isHardFailure 判成功出假成功卡；显式 ok:false 才按业务分级放行
+        if (body && typeof body === 'object' && body.ok === false) return body
+        return {
+          ok: false,
+          code: null,
+          status: resp.status,
+          message: (body && typeof body === 'object' && body.message != null) ? String(body.message) : 'HTTP ' + resp.status,
+          hint: null,
+        } // 合成硬失败形（分级卡）：message 取 body.message ?? 'HTTP '+status；非 JSON 4xx/5xx 走同一形（S2），绝不当成功
       }
       return body && typeof body === 'object' ? body : {}
     }

@@ -24,7 +24,9 @@ let stdin = ''
 try { stdin = readFileSync(0, 'utf8') } catch {}
 if (process.env.FAKE_GH_LOG) {
   appendFileSync(process.env.FAKE_GH_LOG, JSON.stringify({ argv, stdin, env: {
-    GH_PROMPT_DISABLED: process.env.GH_PROMPT_DISABLED, NO_COLOR: process.env.NO_COLOR, PAGER: process.env.PAGER } }) + '\\n')
+    GH_PROMPT_DISABLED: process.env.GH_PROMPT_DISABLED, NO_COLOR: process.env.NO_COLOR, PAGER: process.env.PAGER },
+    // P-6 单一凭据源探针：执行器 env 里若漏进这四键（gh 的 env token 优先级高于 hosts.yml），此处即现形
+    envCreds: ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GH_HOST'].filter((k) => process.env[k] !== undefined) }) + '\\n')
 }
 const plan = process.env.FAKE_GH_PLAN_FILE ? JSON.parse(readFileSync(process.env.FAKE_GH_PLAN_FILE, 'utf8')) : {}
 const key = argv.join(' ')
@@ -99,6 +101,22 @@ test('makeRunGh：stdin 传 token、argv/env 恒定、返回值零明文', () =>
   assert.ok(r2.stdout.includes('https://user:pass@keep.example/x'))
   assert.equal(r2.stderr, 'dial https://host/x failed')
   assertNoPlaintext(r2, 'runGh 返回值(F-2)')
+})
+
+test('makeRunGh：env 有 GH_TOKEN/GITHUB_TOKEN/GH_ENTERPRISE_TOKEN/GH_HOST 也不进执行器（P-6 单一凭据源）', () => {
+  const KEYS = ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GH_HOST']
+  const saved = {}
+  for (const k of KEYS) { saved[k] = process.env[k]; process.env[k] = k === 'GH_HOST' ? 'env-shadow.example.com' : 'ghp_envshadow_' + k.toLowerCase() + '_0000000000' }
+  try {
+    const runGh = makeRunGh({ ghBin: fakeGh, timeoutMs: 3000 })
+    const r = withPlan({ 'api user': { stdout: '{"login":"alice"}', exit: 0 } }, () => runGh(['api', 'user']))
+    assert.equal(r.status, 0)
+    const [c] = calls()
+    assert.deepEqual(c.envCreds, [], 'env 四键一律不进执行器（否则=hosts.yml 之外的隐形第二凭据源，且顶包「保存后立即验证」）')
+    assert.deepEqual(c.env, { GH_PROMPT_DISABLED: '1', NO_COLOR: '1', PAGER: 'cat' }, '执行器 env 恒定（ghHost 选择只走 argv/hosts.yml）')
+  } finally {
+    for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k] }
+  }
 })
 
 test('makeRunGh：超时出 timedOut、gh 缺失出 ENOENT、输出有界（4MiB maxBuffer）', () => {

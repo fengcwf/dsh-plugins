@@ -25,18 +25,26 @@ export function redact(text) {
   return redactTokens(String(text ?? '').replace(/([a-z][a-z0-9+.-]*:\/\/)[^/\s]*@/gi, '$1'))
 }
 
-// ── 统一执行器：token 一律 stdin 传递，env 恒定，输出有界且零明文 ──
+// ── 统一执行器：token 一律 stdin 传递，env 恒定且剔除 GH_TOKEN/GITHUB_TOKEN/GH_ENTERPRISE_TOKEN/GH_HOST（P-6 单一凭据源），输出有界且零明文 ──
 export function makeRunGh({ ghBin = 'gh', timeoutMs = 60000 } = {}) {
   return function runGh(argv, opts = {}) {
     const stdin = opts.stdin == null ? '' : String(opts.stdin)
     const secret = stdin.trim() === '' ? null : stdin.trim()
     const t0 = Date.now()
+    // P-6 单一凭据源：GH_TOKEN/GITHUB_TOKEN/GH_ENTERPRISE_TOKEN/GH_HOST 是 hosts.yml 之外的隐形第二凭据源
+    //（gh 的 env token 优先级高于 hosts.yml，会顶包「保存后立即验证」US-2）——执行器 env 一律剔除这四键，
+    // ghHost/账号选择只走 argv 与 hosts.yml，永不走 env
+    const env = { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1', PAGER: 'cat' }
+    delete env.GH_TOKEN
+    delete env.GITHUB_TOKEN
+    delete env.GH_ENTERPRISE_TOKEN
+    delete env.GH_HOST
     const r = spawnSync(ghBin, argv.map(String), {
       encoding: 'utf8',
       timeout: opts.timeoutMs ?? timeoutMs,
       maxBuffer: MAX_BUFFER,
       input: stdin,
-      env: { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1', PAGER: 'cat' },
+      env,
     })
     // 返回值零明文（INV-1/F-2）：stdin 秘密精确擦除 + token 形态扫描；
     // stdout 保真（URL 凭据擦除属 redact() 层职责，展示/投影边界由调用方 redact）；stderr 全量 redact

@@ -1,7 +1,8 @@
 // UI 面退化形测试（Task 15 收口，与 client-shell.test.mjs 分文件——后者 713 行已超限）：
 //   ① 超时分级结果→分级卡终态不挂死（INV-5）+「状态 · 归因」标题口径（INV-10）；
 //   ② repo-context 失败降级不炸栏目（INV-6）；③ UI 投影零明文对抗（INV-1/P-5/P-10）；
-//   ④ 假 ctx 无 slots 注入 apply() 不炸（INV-6，index.js 与 client 壳两面）。
+//   ④ 假 ctx 无 slots 注入 apply() 不炸（INV-6，index.js 与 client 壳两面）；
+//   ⑤ D2 收口：HTTP≥400 且 body JSON 缺 ok:false → 合成硬失败形走分级卡（假成功残洞封死）。
 // 载入形：同 client-shell.test.mjs 第④节——真 client.ui.* chunk 工厂（fakeReact）+ 假 api + model 驱动 cards 纯渲染，
 // 零 DOM 零网络；UI 投影只读结构化字段，原始串（stderr 等）绝不进树。
 import test from 'node:test'
@@ -211,4 +212,29 @@ test('假 ctx 无 slots 注入：client 壳 apply() 不炸零注册；index appl
   assert.doesNotThrow(() => indexMod.apply(ctx, {}), '假 ctx 无 slots 注入绝不炸装载')
   assert.notEqual(ctx.shell.resolve, before, '层①包壳照常在场（数据面缺席≠四层死，Ruling-3）')
   assert.match(ctx.shell.resolve({ command: 'curl https://api.github.com/x', stdin: null }).command, /gh auth token/)
+})
+
+// ================= ⑤ D2 收口：HTTP≥400 且 body JSON 缺 ok:false → 合成硬失败形走分级卡（绝不假成功） =================
+
+test('401 JSON 缺 ok（网关/反代自返 {error:…}）→ 合成硬失败形走分级卡，绝不判成功（D2 收口/INV-10 邻域）', async () => {
+  const model = modelMod.createModel({ api: fakeApi({ ...BASE_ROUTES, status: { httpOk: false, status: 401, body: { error: 'Bad credentials' } } }) })
+  await model.actions.boot()
+  const state = model.getState()
+  assert.equal(state.auth.phase, 'error', 'HTTP≥400 且 body 无 ok:false=硬失败，绝不假成功（原样放行=卡片假成功洞）')
+  const tree = cards.renderSettingsView(state, model.actions)
+  const err = findByClass(tree, 'gho-error-card')
+  assert.ok(err, '分级错误卡在场（走分级卡，不是成功卡）')
+  const title = textsOf(findByClass(err, 'gho-error-title') ?? err)
+  assert.match(title, /401/, '分级卡带 HTTP 状态归因')
+  assert.match(textsOf(err), /HTTP 401/, '合成形 message 兜底=HTTP <status>（body 无 message 字段）')
+  for (const t of CARD_TITLES) assert.ok(textsOf(tree).includes(t), '分级不炸栏目（六卡齐）：' + t)
+})
+
+test('502 JSON 缺 ok 但带 message → 合成硬失败形保留 message 归因（D2 收口：body.message ?? HTTP <status>）', async () => {
+  const model = modelMod.createModel({ api: fakeApi({ ...BASE_ROUTES, health: { httpOk: false, status: 502, body: { message: 'upstream dead' } } }) })
+  await model.actions.boot()
+  assert.equal(model.getState().health.phase, 'error', '502 网关自返 JSON 缺 ok=硬失败')
+  const err = findByClass(cards.renderSettingsView(model.getState(), model.actions), 'gho-error-card')
+  assert.ok(err, '分级错误卡在场')
+  assert.match(textsOf(err), /upstream dead/, 'body.message 透传进分级卡归因')
 })

@@ -81,7 +81,11 @@
 | 文件路径 | 操作 | 职责说明 |
 |----------|------|----------|
 | `lib/client.js` | 新建 | 浏览器壳（F-scan-1 边界）：`__ModuleLoader__.load` + 槽位多座自探测防双挂载 + fetch 文档相对帮手 + 挂载生命周期；零 UI 字面 |
-| `lib/client.ui.js` | 新建 | UI 兄弟 chunk（Ruling-4）：render* 接口面（renderSettingsSection/renderSummary）+ 占位渲染最小桩；Task 14 填真 UI（双栏六节卡片，≤300 行/文件） |
+| `lib/client.ui.js` | 新建 | UI 兄弟 chunk（Ruling-4）：render* 接口面（renderSettingsSection/renderSummary）+ 壳 chunk 引用（容器：chunk 装载 + 模型订阅 + 挂载生命周期，经 `require.async('./client.ui.js')` 取用后惰性载入 styles/model/cards 三兄弟 chunk）；真 UI 形（Task 14，双栏六节卡片，≤300 行/文件） |
+| `lib/client.ui.model.js` | 新建（Task 14 拆分） | UI 状态模型层：经 `api.fetch`（文档相对 `api/github-ops/…`）取数 + 组织视图状态（busy 态先行/分级降级/订阅通知）；零 DOM 零渲染 |
+| `lib/client.ui.project.js` | 新建（Task 14 拆分） | 纯投影层：gradeFailure/checkRows/healthRows/formatQuota 等纯函数投影（只读白名单结构化字段，零取数零 DOM） |
+| `lib/client.ui.cards.js` | 新建（Task 14 拆分） | 纯渲染层：renderSettingsView（双栏六节卡片）+ 共享原语；零取数零状态零样式字面 |
+| `lib/client.ui.styles.js` | 新建（Task 14 拆分） | 样式 token 层：dsh `--dsw-*` token 唯一色板来源（零硬编码 hex），DESIGN.md token 表逐字进实现 |
 | `lib/settings-routes.js` | 新建 | 数据面双层子插件：8 端点注册 + 首行鉴权 + 1MiB 有界 + zod 白名单校验 |
 | `lib/gh-auth.js` | 新建 | 纯逻辑：状态投影/写 token（stdin）/探针/账号库/切换（可单测，runGh 统一执行器在此收编） |
 | `lib/index.js` | 修改 | inject 维持 `['shell','tools']`（0.2.1 激活语义，Ruling-3：非 web 部署四层照常生效）；设置数据面由内层子插件硬 inject ['webServer','connection'] 承载（kb-context 双层形）；Config 增 `probeTimeoutMs`；runGh 收编进 gh-auth.js 引用；ctx.effect 工厂形收敛（shell.resolve 卸载还原——拆除器形会当场还原、包壳即死，rtk-kit 2026-09-29 教训） |
@@ -100,7 +104,7 @@
 | `test/client-degrade.test.mjs` | 新建（Task 15，C-2 先登记） | UI 面退化形：超时分级结果→分级卡终态不挂死（INV-5）、repo-context 失败降级不炸栏目（INV-6）、UI 投影零明文对抗（INV-1/P-5）、假 ctx 无 slots apply() 不炸 |
 | `test/client-shell.test.mjs` | 修改（Task 15 携带） | D1「禁站内绝对 /api/」正则补合成正/反例自证（防扫描假保险）；Empty 空态「添加账号」断言限定 `.gho-empty` 子树（原全树 find 会命中常驻卡头按钮，锁不住空态自带入口） |
 | `changes/20260929-phase0/DESIGN.md` + `visual/final.png` | 新建 | Phase 2.5 视觉定稿（gate-phase2 机械要求） |
-| `CHANGELOG.md` / 根 `README.md` 版本表 / `README.zh.md` | 修改 | 发版五步②③（0.3.0）；README.zh.md 补 `dsh.plugin.json` 用途说明（N-2）与计数同步（11 工具/109 测试/`node --check` × 11/`probeTimeoutMs` 配置行） |
+| `CHANGELOG.md` / 根 `README.md` 版本表 / `README.zh.md` | 修改 | 发版五步②③（0.3.0）；README.zh.md 补 `dsh.plugin.json` 用途说明（N-2）与计数同步（11 工具/112 测试/`node --check` × 11/`probeTimeoutMs` 配置行；109 基线 + 终审修复波 3 断言） |
 
 ### 文件依赖关系
 

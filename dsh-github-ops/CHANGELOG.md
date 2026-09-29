@@ -4,7 +4,8 @@
 - 新增 dsh 设置菜单「GitHub 集成」栏目（settings.section + 多座兼容）：认证状态卡、token 维护（留空=不修改、保存即验证、全程零明文）、访问检验（三段探针，`probeTimeoutMs: 3000` 可配）、多账号库（展示/录入/验证/切换 active，无删除登出）、仓库上下文卡、插件自检 health + 限额可视化与分级错误文案。
 - 数据面 `/api/github-ops/*` 8 端点（首行鉴权、1MiB 请求有界、zod 白名单校验、结构化错误）。
 - **修复命令强制层接线死锁**：0.2.1 的 `ctx.effect` 拆除器形致包壳即死，curl/wget token 注入与 `git clone` 改写**从未生效**；改为工厂形（shell.resolve 包装）+ 双断言锁死。
-- 测试面：integration 形（假 ctx 真 `apply()` + 真 handler）与退化形/失败形收口，`node --test` **109/109** 全绿（含 load 真 import 冒烟 + 既有 16 测试零回归）；`.testenv` boot 冒烟四关待 Task 17 执行。
+- 测试面：integration 形（假 ctx 真 `apply()` + 真 handler）与退化形/失败形收口，`node --test` **112/112** 全绿（含 load 真 import 冒烟 + 既有 16 测试零回归；109 基线 + 终审修复波 3 断言）；`.testenv` boot 四关全绿（含多 chunk 嵌套链与 GUI 栏目在场双断言，真机双断言 + 截图）。
+- 终审修复波（0.3.0 同版本收口）：① 执行器 env 剔除 `GH_TOKEN`/`GITHUB_TOKEN`/`GH_ENTERPRISE_TOKEN`/`GH_HOST` 四键——gh 的 env token 优先级高于 `hosts.yml`（P-6 单一凭据源之外的隐形第二凭据源，且会顶包「保存后立即验证」）；ghHost/账号选择只走 argv 与 `hosts.yml`。② HTTP≥400 且 body 缺 `ok:false`（前置反代/网关自返 JSON）一律合成硬失败形走分级卡，封死假成功残洞（D2 收口/INV-10 邻域）。
 - 发版面欠账清理：`package.json` 补 `repository`（W-3）、`files` 补 `CHANGELOG.md`（N-1）、工具计数 10→11 同步（M12-2：description 与 `cordis.patch.yml` 注释）、`scripts.check` 补齐全部 lib 文件 `node --check` 面（T13 carry）；`dsh.plugin.json` 保留（N-2 处置）——社区工具发现惯例、官方 dsh 不读取，用途说明记 `README.zh.md`（严格 JSON 禁注释，LRN-035），版本随 `package.json` bump。
 
 ## 0.2.1 — 2026-09-29

@@ -1,7 +1,7 @@
 # dsh-github-ops —— GitHub token 强制层 + 仓库管理工具集（DeepSeek Harness 插件）
 
 > 一句话：GitHub 相关命令**默认强制走 token 模式**（curl 自动注入 `Bearer $(gh auth token)`、`git clone https` 自动改走 `gh repo clone`、web_fetch 匿名抓 API 被门禁）+ **11 个仓库管理工具**（gh 后端，含 `github_api` 万能入口）。
-> 零构建纯 ESM JS；测试 `node --test`（109/109 通过，含 load 冒烟 + integration 形/退化形）。
+> 零构建纯 ESM JS；测试 `node --test`（112/112 通过，含 load 冒烟 + integration 形/退化形）。
 
 ## 为什么需要它
 
@@ -38,7 +38,9 @@ GitHub 匿名 API 限额仅 **60/h**（实测本机代理出口已耗尽），�
 
 ```bash
 # 前置：gh 已登录（gh auth status）——本机 fengcwf 已就绪
-dsh plugin --profile web add /root/.dsh/plugins/dsh-github-ops
+# 分发唯一形态=钉版本 git 快照（tag 不可变可回溯）
+dsh plugin --profile web add 'github:fengcwf/dsh-plugins#dsh-github-ops-v0.3.0&path:dsh-github-ops'
+# 升级 = 换新 tag 重新执行上面的 add（同名即替换旧快照）
 # 重启 dsh web 生效（本机用 /root/.dsh/start-dsh.sh）
 ```
 
@@ -55,6 +57,27 @@ dsh plugin --profile web add /root/.dsh/plugins/dsh-github-ops
 | `awareness` | `true` | 会话启动注入 GitHub 访问约定 |
 | `ghTimeoutMs` | `60000` | 单条 gh 命令超时 |
 | `probeTimeoutMs` | `3000` | 访问检验探针独立超时（毫秒，1000-600000，设置页访问检验用） |
+
+## 设置栏目（dsh web 设置菜单 → 「GitHub 集成」）
+
+设置菜单新增「GitHub 集成」栏目（settings.section 形，多座自探测防双挂载），六卡一览：
+
+| 卡 | 内容 |
+|---|---|
+| 认证状态 | 主机/登录名/token 是否在位 + API 限额可视化（remaining / limit + 重置时间），全程零明文 |
+| 访问检验 | 三段探针逐段行（本地配置 → 认证连通 → 延迟 · 限额）+ 归因分级错误卡 + 重新检查入口 |
+| Token 维护 | Personal Access Token 录入 + 保存并验证（保存后立即验证） |
+| 多账号库 | 账号展示/添加/逐账号验证/切换 active |
+| 仓库上下文 | 分支、remote（凭据已擦除）与仓库摘要（stars/issues/默认分支）；失败卡内降级不炸栏目 |
+| 插件自检 | 配置合成复检 / gh CLI 可用性 / 凭据在位 三段 health |
+
+用户边界（安全语义，产品即边界）：
+
+- **留空=不修改**：Token 输入留空提交不发请求、不触碰既有凭据；
+- **保存即清空 + 零明文**：保存后输入框立即清空；token 只走 stdin 写入 `hosts.yml`（单一凭据源），UI/日志/返回值全程零明文；
+- **无删除 / 无登出**：界面不提供删除账号或登出入口。
+
+访问检验的探针超时走配置节 `probeTimeoutMs` 行（默认 3000ms，可调 1000-600000）；配置修改走 profile `cordis.patch.yml` 覆盖（整行替换语义，全键重述），不改包内文件。
 
 ## 包内文件说明（`dsh.plugin.json`）
 
@@ -73,7 +96,7 @@ dsh plugin --profile web add /root/.dsh/plugins/dsh-github-ops
 ## 验证
 
 ```bash
-npm run check   # node --check × 11（全部 lib 文件）+ node --test（109 测试：门禁矩阵/注入矩阵/clone 改写/双重门禁/jq 裁剪 + integration 形/退化形收口）
+npm run check   # node --check × 11（全部 lib 文件）+ node --test（112 测试：门禁矩阵/注入矩阵/clone 改写/双重门禁/jq 裁剪 + integration 形/退化形收口）
 ```
 
 设计与社区对比全文见 `../11-社区插件调研与设计决策.md`；token/代理机制研究见 `/opt/workdata/公共/dsh-research/09-GitHub调研token与代理默认方案-报告.md`。

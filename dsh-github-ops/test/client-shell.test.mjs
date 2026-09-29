@@ -391,7 +391,9 @@ function fakeApi(routes) {
 }
 
 // —— 数据面结构化形样本（与 lib/settings-routes.js 响应形逐字段对齐）——
-const resetEpoch = Math.floor(Date.now() / 1000) + 3600
+// resetEpoch 钉「今天 12:00 本地」：now+3600 形在 23:00 后跨午夜落明日，formatReset 的「（今天）」分支永不命中
+//（2026-09-29 23:20 实测红——时点型定时炸弹，非产品缺陷）；断言口径不变（仍锁 HH:MM（今天））。
+const resetEpoch = Math.floor(new Date(new Date().toDateString()).getTime() / 1000) + 12 * 3600
 const STATUS_OK = {
   ok: true, stage: 'status', code: null, status: 200, login: 'fengcwf', message: '本地认证状态投影（零明文）', elapsedMs: 3, hint: null, quota: null,
   hosts: [{ host: 'github.com', activeAccount: 'fengcwf', gitProtocol: 'ssh', hasToken: true, users: 2 }],

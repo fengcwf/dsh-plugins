@@ -3,6 +3,7 @@
 > 纪律：每次更新 = 版本号 + 更新记录（本文件 + 各插件 `CHANGELOG.md` + tag `<插件名>-v<版本>`）。
 
 ## 2026-09-29
+- `dsh-github-ops` **0.3.0（设置栏目 + 数据面 + 层①命令强制层修复，未发版）**：dsh 设置菜单「GitHub 集成」栏目（六卡：认证状态/访问检验/Token 维护/多账号库/仓库上下文/插件自检）+ 数据面 `/api/github-ops/*` 8 端点（首行鉴权、1MiB 请求有界、zod 白名单校验）+ **层①命令强制层接线死锁修复**（0.2.1 `ctx.effect` 拆除器形致包壳即死，curl/wget token 注入与 `git clone` 改写从未生效 → 工厂形接线 + 双断言锁死）；`node --test` 全绿 **112/112**（终审判定基线 109/109 + 终审修复波 3 断言）+ `.testenv` boot 冒烟四关全绿（含多 chunk 嵌套链与 GUI 栏目在场双断言）。详见 `dsh-github-ops/CHANGELOG.md` 与 `dsh-github-ops/changes/20260929-phase0/`；tag `dsh-github-ops-v0.3.0` 归发版波。
 - `dsh-rtk-kit` / `dsh-github-ops` **0.2.1（兼容面，随 dsh 0.2.0-rc.1 升级发版）**：`peerDependencies`（`@deepseek-ai/dsh-tools`/`dsh-llm`）与 `dsh.plugin.json` engines 上界 `<0.2.0-0` → `<0.3.0-0`，放行 dsh 0.2.x；行为零变更。背景=0.2.0-rc.1 版本门禁拒载（`docs/test-env-upgrade-020-2026-09-29.md` §2 + `dsh-research/31-dsh升级0.2.0-rc.1分析.md`）；两插件 checkout 测试绿（rtk-kit 9/9、github-ops 16/16）。
 
 ## 2026-09-28
