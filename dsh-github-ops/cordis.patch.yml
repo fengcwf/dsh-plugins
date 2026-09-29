@@ -15,7 +15,7 @@
         #   ask  —— 交用户审批一次
         #   off  —— 不管
         webFetchPolicy: deny
-        # 注册 10 个 github_repo_* / github_auth_status 仓库管理工具（schema ≈ 2k token）
+        # 注册 11 个 github_repo_* / github_auth_status 仓库管理工具（schema ≈ 2k token）
         registerRepoTools: true
         # ⚠️ github_repo_delete 的部署级总开关（默认关；confirm 参数是第二道门）
         allowDelete: false

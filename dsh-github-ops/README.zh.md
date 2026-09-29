@@ -1,7 +1,7 @@
 # dsh-github-ops —— GitHub token 强制层 + 仓库管理工具集（DeepSeek Harness 插件）
 
 > 一句话：GitHub 相关命令**默认强制走 token 模式**（curl 自动注入 `Bearer $(gh auth token)`、`git clone https` 自动改走 `gh repo clone`、web_fetch 匿名抓 API 被门禁）+ **11 个仓库管理工具**（gh 后端，含 `github_api` 万能入口）。
-> 零构建纯 ESM JS；测试 `node --test`（15/15 通过）。
+> 零构建纯 ESM JS；测试 `node --test`（109/109 通过，含 load 冒烟 + integration 形/退化形）。
 
 ## 为什么需要它
 
@@ -54,6 +54,11 @@ dsh plugin --profile web add /root/.dsh/plugins/dsh-github-ops
 | `allowDelete` | `false` | `github_repo_delete` 部署级总开关 |
 | `awareness` | `true` | 会话启动注入 GitHub 访问约定 |
 | `ghTimeoutMs` | `60000` | 单条 gh 命令超时 |
+| `probeTimeoutMs` | `3000` | 访问检验探针独立超时（毫秒，1000-600000，设置页访问检验用） |
+
+## 包内文件说明（`dsh.plugin.json`）
+
+`dsh.plugin.json` 是**社区工具发现惯例**（社区 dsh 生态的插件元数据约定），**官方 dsh 不读取**——插件生效靠 `package.json` 的 `dsh.bundle.patch` → `cordis.patch.yml`。保留它只为社区目录/发现工具可读；因严格 JSON 禁注释（LRN-035），其用途说明记在本 README 而不写进 JSON 文件本身。版本号随 `package.json` 一起 bump。
 
 ## 设计来源（社区吸收）
 
@@ -68,7 +73,7 @@ dsh plugin --profile web add /root/.dsh/plugins/dsh-github-ops
 ## 验证
 
 ```bash
-npm run check   # node --check × 3 + node --test（15 测试：门禁矩阵/注入矩阵/clone 改写/双重门禁/jq 裁剪）
+npm run check   # node --check × 11（全部 lib 文件）+ node --test（109 测试：门禁矩阵/注入矩阵/clone 改写/双重门禁/jq 裁剪 + integration 形/退化形收口）
 ```
 
 设计与社区对比全文见 `../11-社区插件调研与设计决策.md`；token/代理机制研究见 `/opt/workdata/公共/dsh-research/09-GitHub调研token与代理默认方案-报告.md`。

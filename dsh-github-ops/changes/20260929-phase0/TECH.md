@@ -88,8 +88,8 @@
 | `lib/enforce.js` | 微调 | 不动语义（INV-7）；如需 redact 工具函数从 gh-auth.js 引用 |
 | `lib/repo-tools.js` | 微调 | 执行器缝标注（runGh 由 index.js 经 gh-auth.makeRunGh 注入；本模块纯 argv 构造零 spawn 耦合，语义不变） |
 | `cordis.patch.yml` | 修改 | config 增 `probeTimeoutMs: 3000`（整行替换语义注意全键重述） |
-| `package.json` | 修改 | `dsh.client{platform:'web',inject}` + `exports['./client']`（缺=启动报错）；`files` 补 CHANGELOG.md；补 `repository`（W-3） |
-| `dsh.plugin.json` | 修改 | N-2 处置：标注用途或移除（防误导） |
+| `package.json` | 修改 | `dsh.client{platform:'web',inject}` + `exports['./client']`（缺=启动报错）；`files` 补 CHANGELOG.md；补 `repository`（W-3）；`scripts.check` 补全 lib 11 文件 `node --check` 面（T13 carry） |
+| `dsh.plugin.json` | 修改 | **N-2 处置（已裁决）：保留**——社区工具发现惯例（社区目录/发现工具可读），官方 dsh 不读取（生效靠 `dsh.bundle.patch`）；LRN-035 严格 JSON 禁注释，用途说明写 `README.zh.md` 不写 JSON；version 随 `package.json` bump 0.3.0 |
 | `test/settings-routes.test.mjs` | 新建 | integration 形：假 ctx 真 apply() + 真 handler——鉴权矩阵/留空不修改/1MiB 限/零明文投影 |
 | `test/gh-auth.test.mjs` | 新建 | 纯逻辑单测：状态投影/探针三段/失败分级/切换降级 |
 | `test/client-shell.test.mjs` | 新建 | 模块壳形：`__ModuleLoader__` 注册形 + 槽位探测 + 缺席 fail-open |
@@ -100,7 +100,7 @@
 | `test/client-degrade.test.mjs` | 新建（Task 15，C-2 先登记） | UI 面退化形：超时分级结果→分级卡终态不挂死（INV-5）、repo-context 失败降级不炸栏目（INV-6）、UI 投影零明文对抗（INV-1/P-5）、假 ctx 无 slots apply() 不炸 |
 | `test/client-shell.test.mjs` | 修改（Task 15 携带） | D1「禁站内绝对 /api/」正则补合成正/反例自证（防扫描假保险）；Empty 空态「添加账号」断言限定 `.gho-empty` 子树（原全树 find 会命中常驻卡头按钮，锁不住空态自带入口） |
 | `changes/20260929-phase0/DESIGN.md` + `visual/final.png` | 新建 | Phase 2.5 视觉定稿（gate-phase2 机械要求） |
-| `CHANGELOG.md` / 根 `README.md` 版本表 | 修改 | 发版五步②③（0.3.0） |
+| `CHANGELOG.md` / 根 `README.md` 版本表 / `README.zh.md` | 修改 | 发版五步②③（0.3.0）；README.zh.md 补 `dsh.plugin.json` 用途说明（N-2）与计数同步（11 工具/109 测试/`node --check` × 11/`probeTimeoutMs` 配置行） |
 
 ### 文件依赖关系
 

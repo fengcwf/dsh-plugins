@@ -6,7 +6,7 @@
 | 插件 | 版本 | 职责 |
 |---|---|---|
 | [dsh-rtk-kit](dsh-rtk-kit/) | 0.2.1 | RTK 集成：bash 命令自动改写走 rtk 压缩（resolve 缝、fail-open）+ 会话 awareness + rtk_doctor 诊断（0.2.1=peer/engines 上界放宽至 <0.3.0-0，放行 dsh 0.2.x） |
-| [dsh-github-ops](dsh-github-ops/) | 0.2.1 | GitHub 集成：GitHub 命令强制 token 模式 + web_fetch 匿名 API 门禁 + 11 个仓库管理工具（gh 后端）（0.2.1=peer/engines 上界放宽至 <0.3.0-0，放行 dsh 0.2.x） |
+| [dsh-github-ops](dsh-github-ops/) | 0.3.0（待发版） | GitHub 集成：GitHub 命令强制 token 模式（0.3.0 修复接线死锁）+ web_fetch 匿名 API 门禁 + 11 个仓库管理工具（gh 后端）+ 数据面 `/api/github-ops/*` 8 端点（0.3.0=设置菜单「GitHub 集成」栏目 + 数据面 + 层①命令强制层接线死锁修复；**待发版**：发版五步⑤ tag/push 未执行，待用户确认） |
 | [dsh-login-gate](dsh-login-gate/) | 0.3.0（待发版） | 登录门禁：表单登录（scrypt + HMAC 会话）+ 认证反代 + 原生 DSH 会话 + WS tunnel 修复 + 设置菜单配置面（端口维护/参数可配/账号 CRUD/超时说明，保存语义=即时生效+事前警示 R-16）（0.3.0=设置面与认证优化；**待发版**：发版五步未执行，tag/push 待确认） |
 | [kb-context](kb-context/) | 0.3.2 | 知识库上下文：vault 增量索引（FTS5）+ 检索（BM25/LIKE 兜底+deadline 守卫）+ 会话注入（触发/脱敏/截断）+ wiki_read/wiki_search/kb_diagnose 工具 + 设置菜单配置面（0.3.2=设置面 UI 对齐 dsh token + 填写示例/功能说明文案） |
 | [wiki-steward](wiki-steward/) | 0.5.0 | wiki 管家：会话捕获入 raw/ + kb_validate 六规则校验 + kb_mark sha256 原子回写 + wiki CRUD（.trash 可逆/journal 事务/wikilink 重写）+ 入队告警 + tools/pre-execute 写入拦截 + 设置菜单配置面 + ingest 控制面（历史记录弹层/手动 ingest/定时执行）（0.5.0=设置页/ingest 控制面改造批：首页侧栏面板行移除入设置页、修裸 import 与 vite define（process.env.NODE_ENV 真浏览器根因）、ingest.schedule 定时执行控制） |
