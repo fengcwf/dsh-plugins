@@ -6,9 +6,16 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-export default defineConfig({
+// 构建模式取值（vite lib 形惯例）：lib 模式故意不自动替换 process.env.NODE_ENV（留给消费方），
+// 但宿主前端无 process 垫片——必须显式 define 成字面量，否则构建物保留 process.env.NODE_ENV，
+// 浏览器 import() 模块求值即抛 ReferenceError: process is not defined（T-F1 blocker，回归锁
+// test/dist-browser-load.test.mjs 锁死：残留扫描 + 无 process 环境真 ESM 加载）。
+export default defineConfig(({ mode }) => ({
   root: fileURLToPath(new URL('.', import.meta.url)),
   plugins: [vue()],
+  define: {
+    'process.env.NODE_ENV': JSON.stringify(mode === 'development' ? 'development' : 'production'),
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: true,
@@ -26,4 +33,4 @@ export default defineConfig({
       },
     },
   },
-})
+}))
