@@ -272,7 +272,7 @@
 
 ## Task 16: 发版面欠账清理（W-3 / N-1 / N-2）+ 版本文档同步
 
-- status: ✅（89fd160，Spec PASS + Approved；四对齐+tag TODO；Q-1/Q-2 nit 转终审）
+- status: ✅（89fd160，Spec PASS + Approved；四对齐+tag 待补（发版五步⑤ 已于 2026-09-29 执行补 tag）；Q-1/Q-2 nit 转终审）
 - phase: Phase 6
 - role: coder
 - skills: clsh-project、dsh-plugin-ops

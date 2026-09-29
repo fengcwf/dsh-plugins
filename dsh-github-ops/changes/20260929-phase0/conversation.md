@@ -105,7 +105,9 @@
 **Skill 锚定**：我正在使用 clsh-project 的优化循环处理反馈。反馈类型: 确认/流程。路由: Phase 7 归档修正。
 **现象记录**（用户报告）：①项目归档总结未反映「派活未用 agent-teams（PATH C），全部子代理（PATH A）执行」的事实与偏离成本；②归档总结未反映「未进入 Phase 8」的状态事实。
 **派发链**（diagnostic → fix → review，fresh context）：
-- 诊断派发记录：见 tasks.md Task 18（subagent session 待回填）
-- 修复派发记录：见 tasks.md Task 19（subagent session 待回填）
-- 审查派发记录：见 tasks.md Task 20（subagent session 待回填）
+- 诊断派发记录：tasks.md Task 18（skills: clsh-project；subagent session c558e343-e6cd-427a-94da-35da6e8589e7）
+- 修复派发记录：tasks.md Task 19（skills: clsh-project；subagent session 88986d02-1976-4170-bb0d-bbf42f5158b2）**parent=Task 18 诊断派发记录**
+- 审查派发记录：tasks.md Task 20（skills: validate-changes-match-specs；subagent session e1a8d83b-7ac0-4378-86d4-924a26adb51e）**parent=Task 19 修复派发记录**
+- 依赖链（tasks.md depends 字段同源）：Task 19 parents=Task 18（诊断）；Task 20 parents=Task 19（修复）
+- skill 注入（每卡 skills 字段随任务契约注入派发 prompt）：Task 18 → skill('clsh-project')；Task 19 → skill('clsh-project')；Task 20 → skill('validate-changes-match-specs')
 **路由证据**：确认/流程 → Phase 7 归档修正（路由表）；代码面零改动。
