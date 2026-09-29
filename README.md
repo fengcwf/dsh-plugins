@@ -5,7 +5,7 @@
 
 | 插件 | 版本 | 职责 |
 |---|---|---|
-| [dsh-rtk-kit](dsh-rtk-kit/) | 0.2.1 | RTK 集成：bash 命令自动改写走 rtk 压缩（resolve 缝、fail-open）+ 会话 awareness + rtk_doctor 诊断（0.2.1=peer/engines 上界放宽至 <0.3.0-0，放行 dsh 0.2.x） |
+| [dsh-rtk-kit](dsh-rtk-kit/) | 0.3.0 | RTK 集成：bash 命令自动改写走 rtk 压缩（resolve 缝、fail-open）+ 会话 awareness + rtk_doctor 诊断 + **设置页「RTK Kit」**（版本检查/节省统计 0 token/健康七项）；0.3.0=⚠️修复自动改写接线从未生效（B2 effect 工厂形）+ doctor 瘦身 |
 | [dsh-github-ops](dsh-github-ops/) | 0.3.0 | GitHub 集成：GitHub 命令强制 token 模式（0.3.0 修复接线死锁）+ web_fetch 匿名 API 门禁 + 11 个仓库管理工具（gh 后端）+ 数据面 `/api/github-ops/*` 8 端点（0.3.0=设置菜单「GitHub 集成」栏目 + 数据面 + 层①命令强制层接线死锁修复；**待发版**：发版五步⑤ tag/push 未执行，待用户确认） |
 | [dsh-login-gate](dsh-login-gate/) | 0.3.0 | 登录门禁：表单登录（scrypt + HMAC 会话）+ 认证反代 + 原生 DSH 会话 + WS tunnel 修复 + 设置菜单配置面（端口维护/参数可配/账号 CRUD/超时说明，保存语义=即时生效+事前警示 R-16）（0.3.0=设置面与认证优化；**待发版**：0.3.0 发版（2026-09-29）） |
 | [kb-context](kb-context/) | 0.3.2 | 知识库上下文：vault 增量索引（FTS5）+ 检索（BM25/LIKE 兜底+deadline 守卫）+ 会话注入（触发/脱敏/截断）+ wiki_read/wiki_search/kb_diagnose 工具 + 设置菜单配置面（0.3.2=设置面 UI 对齐 dsh token + 填写示例/功能说明文案） |

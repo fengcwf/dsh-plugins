@@ -33,7 +33,7 @@ dsh plugin --profile web add /root/.dsh/plugins/dsh-rtk-kit
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `enabled` | `true` | 总开关 |
+| `enabled` | `true` | 自动改写开关（仅门控 bash 改写缝；rtk_doctor 工具/awareness/设置页面板不受此门控） |
 | `rtkBin` | `rtk` | rtk 可执行文件 |
 | `rewriteTimeoutMs` | `150` | `rtk rewrite` 超时；超时 = 原样放行 |
 | `conservative` | `true` | 保守模式（见上表）；想激进省 token 可 `false` |
