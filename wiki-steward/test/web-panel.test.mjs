@@ -1,12 +1,15 @@
 // 面板渲染纯函数单测（设置页签 Vue 面的框架无关纯模块，容器/展示分离——.vue 只做展示）。
 // 被测件：web/src/lib/log-view.js（日志视图模型）/ web/src/lib/trigger-model.js（触发状态机）/
-// web/src/lib/settings-model.js（设置展示模型）。零框架依赖 → node --test 直测。
+// web/src/lib/settings-model.js（设置展示模型）/ web/src/lib/log-history.js（历史记录数据面状态机，
+// Task F1 历史入口复用）/ web/src/lib/view-model.js（panel.js 挂载视图选择）。零框架依赖 → node --test 直测。
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
 const { groupBySource, prependChunk, lineKey, shortTag } = await import('../web/src/lib/log-view.js')
 const { initialTriggerState, beginTrigger, finishTrigger, TRIGGERS } = await import('../web/src/lib/trigger-model.js')
 const { settingsGroups } = await import('../web/src/lib/settings-model.js')
+const { initialHistory, applyLatest, applyOlder, applyError, canLoadOlder, PAGE_SIZE } = await import('../web/src/lib/log-history.js')
+const { resolveView } = await import('../web/src/lib/view-model.js')
 
 const L = (source, name, line, text) => ({ source, label: `label:${source}`, name, line, text })
 
@@ -162,4 +165,60 @@ test('settingsGroups：通道不可用如实标注（不编造按钮语义）', 
   const channelRow = flat.find((r) => r.key === 'distill.channel')
   assert.match(channelRow.value, /不可用/)
   assert.ok(channelRow.note.length > 0)
+})
+
+// ── log-history：历史记录数据面状态机（Task F1 历史入口；尾部 N 行 + 滚动加载语义保持）──
+test('initialHistory：空态起点（无行/无游标/无来源/无错）+ PAGE_SIZE=尾部 N 行分页常量', () => {
+  const h = initialHistory()
+  assert.deepEqual(h.lines, [])
+  assert.deepEqual(h.meta, { hasMore: false, cursor: null, sources: [], stale: false })
+  assert.equal(h.error, '')
+  assert.ok(Number.isInteger(PAGE_SIZE) && PAGE_SIZE > 0, '单页行数须为正整数（尾部 N 行语义）')
+})
+
+test('applyLatest：整页替换（尾部 N 行）+ 清错 + meta 归一（stale 严格 === true 判定——与原面板语义一致）', () => {
+  const prev = applyError(initialHistory(), new Error('旧错'))
+  const data = { lines: [L('a', 'f', 5, 'c5')], hasMore: true, cursor: 'k1', sources: [{ id: 'a', label: 'A' }], stale: true }
+  const h = applyLatest(prev, data)
+  assert.deepEqual(h.lines.map((l) => l.text), ['c5'])
+  assert.equal(h.meta.hasMore, true)
+  assert.equal(h.meta.cursor, 'k1')
+  assert.equal(h.meta.stale, true)
+  assert.equal(h.error, '', '新页载入清错')
+  const plain = applyLatest(prev, { lines: [], hasMore: false, cursor: null, sources: [] })
+  assert.equal(plain.meta.stale, false, '缺席=严格 === true 判定为 false（非真值化，语义保持）')
+})
+
+test('applyOlder：滚动加载拼前（prependChunk 锚点键去重不重不漏）+ 来源标注沿用既有 meta + stale 归一', () => {
+  let h = applyLatest(initialHistory(), {
+    lines: [L('a', 'f', 3, 'c3'), L('a', 'f', 4, 'c4')],
+    hasMore: true, cursor: 'k1', sources: [{ id: 'a', label: 'A' }],
+  })
+  h = applyOlder(h, {
+    lines: [L('a', 'f', 2, 'c2'), L('a', 'f', 3, 'c3')], // 含锚点重复行
+    hasMore: false, cursor: null,
+  })
+  assert.deepEqual(h.lines.map((l) => l.text), ['c2', 'c3', 'c4'], '更早块拼前 + 去重')
+  assert.deepEqual(h.meta.sources, [{ id: 'a', label: 'A' }], '来源标注沿用既有 meta（与原面板语义一致）')
+  assert.equal(h.meta.hasMore, false)
+  assert.equal(h.meta.stale, false, 'stale 归一为布尔（缺席=false）')
+})
+
+test('applyError：错误如实留痕（不吞不编造）+ 已载行保留；canLoadOlder 仅 hasMore 才滚', () => {
+  const ready = applyLatest(initialHistory(), { lines: [L('a', 'f', 1, 'c1')], hasMore: true, cursor: 'k', sources: [] })
+  const h = applyError(ready, new Error('fetch failed'))
+  assert.equal(h.error, 'fetch failed')
+  assert.deepEqual(h.lines.map((l) => l.text), ['c1'], '已载行保留')
+  assert.equal(canLoadOlder(h), true)
+  const done = applyOlder(h, { lines: [], hasMore: false, cursor: null })
+  assert.equal(canLoadOlder(done), false, '翻到底=不再滚')
+  assert.equal(canLoadOlder(initialHistory()), false, '空态无更早')
+})
+
+// ── view-model：panel.js 挂载视图选择（历史入口只挂日志视图）──────────────────
+test('resolveView："log"=日志视图（历史入口）；缺省/未知=全量面板（mount(el,{apiBase}) 契约向后兼容）', () => {
+  assert.equal(resolveView('log'), 'log')
+  assert.equal(resolveView(undefined), 'full')
+  assert.equal(resolveView('x'), 'full')
+  assert.equal(resolveView(null), 'full')
 })
