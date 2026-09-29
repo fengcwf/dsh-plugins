@@ -108,7 +108,20 @@ export default defineConfig(({ mode }) => ({
 
 ## 7. dist 新鲜度锁（commit 级校验，回填）
 
-`check-release.sh` 的 dist 新鲜度锁 = commit 级校验（web 源变更必伴 web/dist 同 commit 重建，基线=上个 tag `wiki-steward-v0.4.1`）。本修复 commit 同时含 `web/vite.config.js`（构建输入）与 `web/dist/panel.js`（重建产物）→ 1 个 web 源变更 commit 伴 dist 同 commit = **PASS**（commit 后实跑输出见下方追记）。
+`check-release.sh` 的 dist 新鲜度锁 = commit 级校验（web 源变更必伴 web/dist 同 commit 重建，基线=上个 tag `wiki-steward-v0.4.1`）。本修复 commit 同时含 `web/vite.config.js`（构建输入）与 `web/dist/panel.js`（重建产物）。**commit 后实跑**（`bash scripts/check-release.sh wiki-steward`）：
+
+```
+[PASS] package.json version = 0.4.1
+[PASS] CHANGELOG.md 含 '## 0.4.1' 更新记录
+[PASS] 根 README.md 版本表已同步
+[PASS] tag wiki-steward-v0.4.1 已存在
+[PASS] dist 新鲜度锁：3 个 web 源变更 commit 均伴 web/dist 同 commit（基线=上个 tag wiki-steward-v0.4.1）
+[NOTE] 工作树有未提交变更 —— push 前提交
+---
+[VERDICT] PASS
+```
+
+> 注：窗口内 3 个 web 源变更 commit = `c88be4a`（Task F1 面板搬家）+ `b555e82`（Task F2 设置页对齐）+ 本修复环，均伴 `web/dist` 同 commit，锁未触发；`[NOTE]` 工作树未提交变更 = 本工作区其他插件（obsidian-web 等）在改中的文件，非本环改动面。
 
 ## 8. 红线自查
 
