@@ -481,7 +481,7 @@ test('接线正路径：假 ctx 带 webServer/connection + ctx.plugin 子插件�
     pluginCalls.push(spec)
   }
   apply(ctx, { enabled: false, registerDoctorTool: false, awareness: 'off' })
-  assert.equal(pluginCalls.length, 1, '数据面走 ctx.plugin 孅插件形接线')
+  assert.equal(pluginCalls.length, 1, '数据面走 ctx.plugin 子插件形接线')
   const spec = pluginCalls[0]
   assert.deepEqual(spec.inject, ['webServer', 'connection'])
   // 模拟宿主：子插件 ctx 拿到两缝后跑 apply（注册动作在 effect 执行体内当场跑）

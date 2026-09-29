@@ -412,11 +412,12 @@ export async function runDoctorTool(args = {}, opts = {}) {
   lines.push(`version: ${v.version ?? '(unknown)'}`)
   lines.push(`auto-rewrite: ${autoRewrite ? 'on' : 'off'} | conservative: ${conservative} | awareness: ${awareness}`)
   if (doctorGain === true && args?.gain !== false) {
-    // gain 段 fail-soft：统计源异常回 (no data yet)（与瘦身前降级形一致），绝不让诊断工具抛错
+    // gain 段 fail-soft：统计源异常 / summary 缺位回 (no data yet)（与瘦身前降级形一致），
+    // 绝不让诊断工具抛错、绝不对 summary===null 输出字面 "null"（T8 审查 F-M2）
     let out = '(no data yet)'
     try {
       const g = await getGain({ rtkBin, exec, timeoutMs })
-      out = JSON.stringify(g.summary) || '(no data yet)'
+      out = g.summary == null ? '(no data yet)' : JSON.stringify(g.summary) || '(no data yet)'
     } catch {
       /* 统计源不可用 → 占位回显 */
     }
