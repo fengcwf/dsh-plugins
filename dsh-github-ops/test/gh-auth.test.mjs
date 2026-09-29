@@ -69,6 +69,19 @@ const HOSTS_YAML = `github.com:
 `
 const STATUS_OK = JSON.stringify({ hosts: { 'github.com': [{ state: 'active', active: true, host: 'github.com', login: 'alice', gitProtocol: 'https', tokenSource: 'hosts.yml' }] } })
 const RATE_OK = JSON.stringify({ resources: { core: { limit: 5000, remaining: 4999, reset: 1700000000 }, search: { limit: 30, remaining: 29, reset: 1700000001 } } })
+// 生产 hosts.yml 真实形（F-1）：users 为 YAML 序列项、active_account 值非 login；legacy 形无 users 段
+const HOSTS_PROD_YAML = `github.com:
+    active_account: 'true'
+    git_protocol: https
+    oauth_token: ${SECRET_A}
+    user: fengcwf
+    users:
+    - fengcwf
+`
+const HOSTS_LEGACY_YAML = `github.com:
+    oauth_token: ${SECRET_A}
+    user: fengcwf
+`
 
 test('makeRunGh：stdin 传 token、argv/env 恒定、返回值零明文', () => {
   const runGh = makeRunGh({ ghBin: fakeGh, timeoutMs: 3000 })
@@ -80,6 +93,12 @@ test('makeRunGh：stdin 传 token、argv/env 恒定、返回值零明文', () =>
   assert.deepEqual(c.env, { GH_PROMPT_DISABLED: '1', NO_COLOR: '1', PAGER: 'cat' })
   assert.match(r.stdout, /\[REDACTED\]/)                                  // 即便 gh 回显也被擦除（INV-1）
   assertNoPlaintext(r, 'runGh 返回值')
+  // F-2 返回值 redact 契约：stdout 秘密擦除+token 形态扫描（保真 JSON，URL 凭据擦除属 redact() 层）；stderr 全量 redact
+  const r2 = withPlan({ 'api user': { exit: 1, stdout: `{"url":"https://user:pass@keep.example/x","tok":"${SECRET_B}"}`, stderr: 'dial https://user:p@ss@host/x failed' } }, () => runGh(['api', 'user']))
+  assert.ok(!r2.stdout.includes(SECRET_B) && r2.stdout.includes('[REDACTED]'))
+  assert.ok(r2.stdout.includes('https://user:pass@keep.example/x'))
+  assert.equal(r2.stderr, 'dial https://host/x failed')
+  assertNoPlaintext(r2, 'runGh 返回值(F-2)')
 })
 
 test('makeRunGh：超时出 timedOut、gh 缺失出 ENOENT、输出有界（4MiB maxBuffer）', () => {
@@ -146,6 +165,17 @@ test('listAccounts：{login,active,configured,verified} 投影（不读 token �
     { login: 'bob', active: false, configured: true, verified: true },
   ])
   assertNoPlaintext(accounts, 'listAccounts 输出')
+})
+
+test('F-1 生产真实形 + legacy 形：users 序列项/active_account 非 login 回退 user/无 users 合成', () => {
+  const meta = parseHostsMeta(HOSTS_PROD_YAML)
+  assert.deepEqual(meta.hosts[0].users, [{ login: 'fengcwf', hasToken: true }])
+  assert.equal(meta.hosts[0].activeAccount, 'fengcwf')
+  assert.deepEqual(listAccounts(HOSTS_PROD_YAML), [{ login: 'fengcwf', active: true, configured: true, verified: false }])
+  const legacy = parseHostsMeta(HOSTS_LEGACY_YAML)
+  assert.deepEqual(legacy.hosts[0].users, [{ login: 'fengcwf', hasToken: true }])
+  assert.deepEqual(listAccounts(HOSTS_LEGACY_YAML), [{ login: 'fengcwf', active: true, configured: true, verified: false }])
+  assertNoPlaintext(meta, '生产形投影')
 })
 
 test('probeAccess 三段全通：stage=latency-quota + login/quota/elapsedMs + 探针 argv 顺序', () => {
@@ -238,6 +268,8 @@ test('redact：git remote URL 凭据擦除 + token 形态扫描，普通文本�
   assert.equal(redact('git@github.com:o/r.git'), 'git@github.com:o/r.git')
   assert.equal(redact(`token=${FAKE_TOKEN} pat=github_pat_11AAAAAAAAAAAAAAAAAAAAAA end`), 'token=[REDACTED] pat=[REDACTED] end')
   assert.equal(redact('plain text stays'), 'plain text stays')
+  assert.equal(redact('https://user:p@ss@host/x'), 'https://host/x')          // F-9 userinfo 含 @ 全擦
+  assert.equal(redact('https://github.com/a/b?u=foo@bar'), 'https://github.com/a/b?u=foo@bar') // 路径邮箱安全
 })
 
 test('零明文总扫描：探针/写入/账号投影全链路无 token 形态串（P-10、INV-1）', () => {

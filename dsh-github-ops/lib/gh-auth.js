@@ -15,12 +15,14 @@ export const REDACTED = '[REDACTED]'
 const MAX_BUFFER = 4 * 1024 * 1024
 
 // ── 凭据擦除（INV-1）：git remote URL userinfo + token 形态串 ──
+function redactTokens(s) {
+  return String(s ?? '')
+    .replace(/gh[pousr]_[A-Za-z0-9_]{16,}/g, REDACTED)
+    .replace(/github_pat_[A-Za-z0-9_]{16,}/g, REDACTED)
+}
 export function redact(text) {
-  let s = String(text ?? '')
-  s = s.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi, '$1') // https://user:pass@host → https://host
-  s = s.replace(/gh[pousr]_[A-Za-z0-9_]{16,}/g, REDACTED)
-  s = s.replace(/github_pat_[A-Za-z0-9_]{16,}/g, REDACTED)
-  return s
+  // F-9：userinfo 用 [^/\s]*@ —— 含 @ 的 userinfo 全擦；不跨 /，路径邮箱安全
+  return redactTokens(String(text ?? '').replace(/([a-z][a-z0-9+.-]*:\/\/)[^/\s]*@/gi, '$1'))
 }
 
 // ── 统一执行器：token 一律 stdin 传递，env 恒定，输出有界且零明文 ──
@@ -36,11 +38,12 @@ export function makeRunGh({ ghBin = 'gh', timeoutMs = 60000 } = {}) {
       input: stdin,
       env: { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1', PAGER: 'cat' },
     })
-    // 返回值零明文（INV-1）：即便 gh 回显 stdin（token）也精确擦除
-    const scrub = (t) => (secret ? String(t ?? '').split(secret).join(REDACTED) : String(t ?? ''))
+    // 返回值零明文（INV-1/F-2）：stdin 秘密精确擦除 + token 形态扫描；
+    // stdout 保真（URL 凭据擦除属 redact() 层职责，展示/投影边界由调用方 redact）；stderr 全量 redact
+    const scrubSecret = (t) => (secret ? String(t ?? '').split(secret).join(REDACTED) : String(t ?? ''))
     return {
-      stdout: scrub(r.stdout),
-      stderr: scrub(r.stderr),
+      stdout: redactTokens(scrubSecret(r.stdout)),
+      stderr: redact(scrubSecret(r.stderr)),
       status: r.status ?? 1,
       elapsedMs: Date.now() - t0,
       timedOut: r.error?.code === 'ETIMEDOUT',
@@ -58,6 +61,15 @@ export function parseHostsMeta(yamlText) {
   for (const raw of String(yamlText ?? '').split(/\r?\n/)) {
     if (!raw.trim() || /^\s*#/.test(raw)) continue
     const indent = /^ */.exec(raw)[0].length
+    // 序列项（生产真实形 users: → `- login`）：无冒号行，走 users 上下文
+    const seq = /^-\s+(.+)$/.exec(raw.trim())
+    if (seq) {
+      while (stack.length && stack[stack.length - 1].indent > indent) stack.pop()
+      const parent = stack.length ? stack[stack.length - 1] : null
+      const login = seq[1].trim().replace(/^(['"])(.*)\1$/, '$2')
+      if (parent?.kind === 'users' && host && login) host.users.push({ login, hasToken: false })
+      continue
+    }
     const m = /^([^:\s][^:]*):(?:\s*(.*))?$/.exec(raw.trim())
     if (!m) continue
     const key = m[1].trim()
@@ -83,6 +95,14 @@ export function parseHostsMeta(yamlText) {
       if (key === 'oauth_token') currentUser.hasToken = true // 只判在位（INV-1）
     }
   }
+  // 投影归一（F-1）：user 补录/合成 + active_account 仅匹配已知 login 才认（生产形值='true'）+ token 在位归因
+  for (const h of hosts) {
+    const known = new Set(h.users.map((u) => u.login))
+    if (h.user && !known.has(h.user)) { h.users.push({ login: h.user, hasToken: false }); known.add(h.user) }
+    if (!h.users.length && h.activeAccount) h.users.push({ login: h.activeAccount, hasToken: false })
+    h.activeAccount = known.has(h.activeAccount) ? h.activeAccount : (known.has(h.user) ? h.user : (h.users[0]?.login ?? null))
+    for (const u of h.users) u.hasToken = Boolean(u.hasToken || (u.login === h.activeAccount && h.hasToken))
+  }
   return { hosts }
 }
 
@@ -93,8 +113,11 @@ export function listAccounts(metaOrText, { verified } = {}) {
   const accounts = []
   const seen = new Set()
   for (const host of meta.hosts ?? []) {
-    const activeLogin = host.activeAccount ?? host.user ?? null
-    for (const user of host.users ?? []) {
+    // F-1：users 空/缺时从 user 字段合成；active_account 匹配已知 login 才认，否则回退 user
+    const users = host.users?.length ? host.users : (host.user ? [{ login: host.user, hasToken: host.hasToken }] : [])
+    const known = new Set(users.map((u) => u.login))
+    const activeLogin = known.has(host.activeAccount) ? host.activeAccount : (host.user ?? null)
+    for (const user of users) {
       if (!user?.login || seen.has(user.login)) continue
       seen.add(user.login)
       const active = user.login === activeLogin
