@@ -95,6 +95,10 @@
 | `test/client-shell.test.mjs` | 新建 | 模块壳形：`__ModuleLoader__` 注册形 + 槽位探测 + 缺席 fail-open |
 | `test/index-mount.test.mjs` | 新建 | 挂载与声明 integration 形（假 ctx 真 apply()）：inject/Config（INV-5 钳制）/四层逐层（INV-7）/设置面挂载与撤销（C-1 收敛释放）/deps.workspaceDir 宿主工作区缝 |
 | `test/load.test.mjs` | 修改 | 保持真 `import('../lib/index.js')` 冒烟（INV-8） |
+| `test/gh-auth-degrade.test.mjs` | 新建（Task 15，C-2 先登记） | 退化形/失败形单测：假 gh 慢响应超时分级（INV-5）、401/403/429/非零退出/写入失败分级归因（INV-10）、F-7 遗留缺口（writeToken 网络错形 GHO-TOKEN-06、switchActive 空 login、畸形 hosts.yml 垃圾行/Tab、probeAccess JSON 不可解析）、全链零明文（P-5/P-10/R-6）。gh-auth.test.mjs 290 行近 300 上限，本轮补测拆此文件（每文件 ≤300 行） |
+| `test/settings-routes-degrade.test.mjs` | 新建（Task 15，C-2 先登记） | 数据面退化形 integration 形：真 makeRunGh + 假 gh 脚本全链（慢响应 >probeTimeoutMs 超时分级不挂死、R-1 写入失败形 stderr 敏感串不透传）、失败形分级矩阵（401/403/429/非零退出/写入失败 GHO-TOKEN-06）、缺缝 fail-open（INV-6）、warn 日志/返回值零明文 |
+| `test/client-degrade.test.mjs` | 新建（Task 15，C-2 先登记） | UI 面退化形：超时分级结果→分级卡终态不挂死（INV-5）、repo-context 失败降级不炸栏目（INV-6）、UI 投影零明文对抗（INV-1/P-5）、假 ctx 无 slots apply() 不炸 |
+| `test/client-shell.test.mjs` | 修改（Task 15 携带） | D1「禁站内绝对 /api/」正则补合成正/反例自证（防扫描假保险）；Empty 空态「添加账号」断言限定 `.gho-empty` 子树（原全树 find 会命中常驻卡头按钮，锁不住空态自带入口） |
 | `changes/20260929-phase0/DESIGN.md` + `visual/final.png` | 新建 | Phase 2.5 视觉定稿（gate-phase2 机械要求） |
 | `CHANGELOG.md` / 根 `README.md` 版本表 | 修改 | 发版五步②③（0.3.0） |
 

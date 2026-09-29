@@ -24,7 +24,8 @@ window.__ModuleLoader__.load({
     }
 
     function labelOf(code, status) {
-      if (code && code.indexOf('GHO-AUTH-') === 0) return status === 401 ? '未登录' : '来源受限'
+      // 鉴权缝码恰为 GHO-AUTH-01/02（两位）；探针业务码 GHO-AUTH-CONNECT-<NN> 走 NN 口径（T15 修复环：前缀误配=归因标题错显）
+      if (code === 'GHO-AUTH-01' || code === 'GHO-AUTH-02') return status === 401 ? '未登录' : '来源受限'
       if (code && code.indexOf('GHO-ROUTE-') === 0) return LABEL_BY_HTTP[status] ?? '请求被拒'
       var m = /-(\d\d)$/.exec(code ?? '')
       return (m ? LABEL_BY_NN[m[1]] : null) ?? LABEL_BY_HTTP[status] ?? (status >= 500 ? '服务内部错误' : status >= 400 ? '请求被拒' : '未知错误')

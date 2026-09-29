@@ -84,6 +84,7 @@ const allClientSources = () => [
 // P-7/M1 红线扫描形（模块级共享：M1 回归用例自证正反例都真命中）
 const banCall = /slots\.(inject|register)\(\s*['"`](root|sidebar|rightbar)['"`]/
 const banName = /name:\s*['"`](root|sidebar|rightbar)['"`]/
+const banAbsApi = /['"`]\/api\/github-ops/ // D1（T15 携带）：站内绝对 '/api/…' 字面（fetch 必须文档相对）
 
 // 假 ctx（忠实 slots.inject 语义：callback 返回拆除器，声明塌缩/卸载时调用；register 返回拆除器）
 function makeCtx({ withSlots = true, registerThrows = false, injectThrows = false } = {}) {
@@ -175,9 +176,9 @@ test('fetch 帮手文档相对（login-gate 基址铁律）：api/github-ops/…
   await mod.apiFetch('/accounts/verify')
   assert.equal(seen[1].url, 'api/github-ops/accounts/verify', '防御性归一：剥前导斜杠')
 
-  // 源码面：壳与 UI 全 chunk 不得出现站内绝对 '/api/github-ops' 字面
+  // 源码面：壳与 UI 全 chunk 不得出现站内绝对 '/api/github-ops' 字面（扫描形=banAbsApi，正反例自证见 M1/S1 用例）
   for (const src of allClientSources()) {
-    assert.equal(/['"`]\/api\/github-ops/.test(src), false, '禁站内绝对 /api/… 字面')
+    assert.equal(banAbsApi.test(src), false, '禁站内绝对 /api/… 字面')
   }
 })
 
@@ -493,9 +494,18 @@ test('T14 Empty（多账号库空态）：「尚无其他账号」+ 添加账号
   const tree = cards.renderSettingsView(model.getState(), model.actions)
   const texts = textsOf(tree)
   assert.match(texts, /尚无其他账号/, '空态文案')
-  assert.match(texts, /添加账号/, '添加入口在场')
-  const addBtn = collectNodes(tree).find((el) => el.type === 'button' && textsOf(el).includes('添加账号'))
-  assert.ok(addBtn, '添加账号按钮')
+  // T15 携带收口：入口断言限定 .gho-empty 子树——全树 find 会命中常驻卡头按钮（cards 里 gho-actions 常驻「添加账号」），
+  // 锁不住空态自带入口；且非空态不得出空态子树（判据不空转）。
+  const empty = findByClass(tree, 'gho-empty')
+  assert.ok(empty, '空态子树 .gho-empty 在场')
+  assert.match(textsOf(empty), /尚无其他账号/, '空态文案在 .gho-empty 子树内')
+  const addBtn = collectNodes(empty).find((el) => el.type === 'button' && textsOf(el).includes('添加账号'))
+  assert.ok(addBtn, '空态自带「添加账号」入口（限定 .gho-empty 子树）')
+  const full = modelMod.createModel({ api: fakeApi(ROUTES_ALL_OK) })
+  await full.actions.boot()
+  const fullTree = cards.renderSettingsView(full.getState(), full.actions)
+  assert.equal(findByClass(fullTree, 'gho-empty'), null, '非空态不出空态子树（空态判据不空转）')
+  assert.match(textsOf(fullTree), /添加账号/, '常驻卡头入口仍在（与空态入口互不混淆）')
 })
 
 test('T14 限额可视化 + 三段检验行（US-3/US-6）：remaining/reset + 分类 hint 贯穿', async () => {
@@ -704,10 +714,14 @@ test('M1/S1 扫描面回归：源码锁真读到壳（SEATS name: 靶子），�
   assert.equal(banCall.test("ctx.slots.inject('sidebar', fn)"), true, '反例自证：调用形必命中')
   assert.equal(/method:\s*['"`]DELETE['"`]/i.test("api.fetch('x', { method: 'DELETE' })"), true, '反例自证：DELETE 形必命中')
   assert.equal(/#[0-9A-Fa-f]{3,8}/.test('.x{color:#4176E6}'), true, '反例自证：hex 形必命中')
+  // D1（T15 携带）：站内绝对 '/api/' 扫描形自证正反例（坏形必命中/好形不命中，防正则失配=假保险）
+  assert.equal(banAbsApi.test("fetch('/api/github-ops/status')"), true, '反例自证：站内绝对 /api/ 形必命中')
+  assert.equal(banAbsApi.test("fetch('api/github-ops/status')"), false, '正例自证：文档相对形不误伤')
   // 真实源码（壳 + 全 chunk）零命中
   const all = srcs.join('\n')
   assert.equal(banName.test(all), false)
   assert.equal(banCall.test(all), false)
   assert.equal(/method:\s*['"`]DELETE['"`]/i.test(all), false)
   assert.equal(/#[0-9A-Fa-f]{3,8}/.test(all), false)
+  assert.equal(banAbsApi.test(all), false, '站内绝对 /api/ 形真实源码零命中')
 })
