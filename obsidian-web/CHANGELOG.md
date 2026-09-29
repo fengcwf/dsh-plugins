@@ -1,5 +1,19 @@
 # Changelog — obsidian-web
 
+## 0.2.2 — 2026-09-29
+- **运行时阻塞根治（0.2.1 生产反馈：一直慢/dsh 掉线/读取挂起）**：
+  - backlinks 索引化：每次开笔记同步扫全库 15277 md（47.4s，CIFS 放大）→ docs 表派生链接级缓存+增量维护，复验 22-25ms（rchar 硬证全量扫消失）；
+  - tree 缓存：4.3s/次全量重扫 → 事件增量+TTL 30s+journal 幂等，6-8ms；
+  - index-service 异步化：主线程同步 fs 三面清零（fs.promises+批让出），对账窗 12.6s 阻塞→事件循环尖峰 134.6ms；
+  - search fts 修复：<3 码点短中文词结构性走 scan 的路由盲区 → canHandle 声明制+SQL≡regex 下推安全门（不窄化召回），q=用友 15.2ms（原 scan 902ms）；
+  - 前端 8s 加载状态机：AbortController+超时中止+请求身份+读写文案区分+写失败 reloadTree 兜底——「一直加载中无报错」根治；
+  - 新增只读 `GET /ob/api/index/status`（索引/fts/对账/degraded 可观测）。
+- **UI C+A 优化**（视觉 Spike 定稿）：C 公共底座（4/8 间距/圆角/焦点环/保存徽标四态/面板统一头/hairline/状态面治理+对比度 AA 五修，color-mix 派生自 dsh token 推导式入注释）+ A 阅读优先（行长 68ch/字阶四档/阅读头/专注模式）+ 按钮四档与排印微调。零 IA 变更（B 方向另波）。
+- **测试面 492→570（新增 78 用例）**（口径更正：此前提交信息「510→570/+60」系波内中途快照，分支真实口径以此为准）：integration 两轴+状态机行为锁+反链/树缓存等价锁+fts 等价锁+manifest 四对齐联动锁与安装钉版一致性锁（发版失同步病根根治）+flaky 断言净口径稳定化。
+- 运维件（/root/.dsh/，随重启生效）：watchdog 探测 15s+连续 3 次才自愈+坏件签名分流回滚；start-dsh.sh 端口真释放再启（重启竞争链根治）。
+- 验证：tester 终验 PASS 零 findings（.testenv 钉 sha 四关+功能探针+性能验收对照：backlinks 47.4s→22-25ms/tree 4.3s→6-8ms/file p95 11.9ms/阻塞传导消失）；整分支终审 PASS（0 Critical/Major）。
+
+
 ## 0.2.1 — 2026-09-28
 - **B2 修复（功能面全 404 根因）**：`ctx.effect` 工厂语义误用——五位点（`lib/index.js` ×4 + `lib/client.js`）改「注册在执行体内当场跑、返回值=拆除器」形 + 注册抛错先收敛已注册资源再上抛 + 拆除幂等；修前路由注册完即自拆（`/ob/*` 全 404/405）、独立分享面 close 在 start 前空跑 + 拆除期泄漏监听。宿主契约对照 cordis `_execute`（立即执行、返回函数=拆除器）。
 - **测试契约同源化**：6 测试文件伪 ctx `effect` 改真语义（含 `TypeError('Invalid effect')` 分支，6/6 逐副本 `assert.throws` 锁死、删行变异必红）+ 新增 `test/apply-integration.test.mjs` 两轴 integration 测试（注册面在场 / 拆除面正确 / 真 handler 双向 / 独立 listener 真关）；482→492 全绿。

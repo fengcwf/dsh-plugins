@@ -84,6 +84,7 @@ test('发版纪律：版本四对齐联动锁（pkg version == CHANGELOG 首条 
   // 形 = 安装示例钉 `obsidian-web-v<合法 semver>` tag 快照；具体版本一致性由上方版本四对齐联动锁承担
   //（pkg version ↔ CHANGELOG ↔ 根 README 版本表 ↔ semver），故发版 bump 不再触发本断言失同步。
   // 强度不降：仍锁「必须钉 tag 快照、不得 link:/file:/裸 main/HEAD」，另锁示例钉版形合法 + 段内钉版唯一一致。
+  // 双层口径（2026-09-29 F-1 补齐）：**形锁 + 一致性锁**双层——形锁=钉版形合法 + 段内唯一一致；一致性锁=钉版 semver == pkg.version（发版 bump 同步，README 钉版不得落后/超前）。上方四对齐联动锁不含安装段钉版，一致性由下方显式断言承担，非四对齐隐含。
   const installSection = readme.split(/^## /m).find((s) => s.startsWith('安装')) ?? ''
   assert.ok(installSection, 'README 缺「安装」段（安装钉版本）')
   const pinCands = [...installSection.matchAll(/obsidian-web-v([^\s'"`)&]+)/g)].map((m) => m[1])
@@ -92,6 +93,7 @@ test('发版纪律：版本四对齐联动锁（pkg version == CHANGELOG 首条 
     assert.match(cand, SEMVER_RE, `安装钉版形非法：obsidian-web-v${cand}（须为 obsidian-web-v<合法 semver> tag）`)
   }
   assert.equal(new Set(pinCands).size, 1, `安装段钉版 tag 不唯一一致：${[...new Set(pinCands)].join(' / ')}（示例钉版须一致）`)
+  assert.equal(pinCands[0], version, '安装段钉版须 == pkg.version（发版 bump 同步）')
   const addLine = installSection.split('\n').find((l) => l.includes('dsh plugin') && l.includes(' add ')) ?? ''
   assert.ok(addLine, '安装段缺 `dsh plugin add` 安装命令（安装钉版本）')
   assert.match(addLine, /github:fengcwf\/dsh-plugins#obsidian-web-v[^'"\s&]+&path:obsidian-web/, '安装示例必须钉 tag 快照（github:fengcwf/dsh-plugins#obsidian-web-v<semver>&path:obsidian-web）')
