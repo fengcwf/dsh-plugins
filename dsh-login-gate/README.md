@@ -92,8 +92,8 @@ dsh 设置菜单内提供「dsh-login-gate」栏目（`settings.section` 槽）�
 
 | # | 联动点 | 位置 | 同步内容 |
 |---|---|---|---|
-| 1 | gate-watchdog 探活 | `gate-watchdog.sh:34` | `curl http://127.0.0.1:3500/__gate/health` 的探活地址/端口 |
-| 2 | start-dsh.sh 监听检查 | `start-dsh.sh:101-113` | 启动时监听/health 检查的端口 |
+| 1 | gate-watchdog 探活 | `gate-watchdog.sh:36`（探活 curl 行） | `curl http://127.0.0.1:3500/__gate/health` 的探活地址/端口 |
+| 2 | start-dsh.sh 监听检查 | `start-dsh.sh:118-129`（[3/3] 验证监听端口与门禁段） | 启动时监听/health 检查的端口 |
 | 3 | obsidian-web 分享契约 | obsidian-web 3500 `/ob_share` | 外发分享链接的端口契约 |
 | 4 | Lucky 外网反代 | 家宽侧设备（外部） | 反代目标端口，**需人工同步**（NEEDS_HUMAN） |
 

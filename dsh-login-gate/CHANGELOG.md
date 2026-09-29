@@ -2,7 +2,7 @@
 
 ## 0.3.0 — 2026-09-29（待发版：发版五步未执行，tag/push 待用户确认）
 - **设置栏目**：dsh 设置菜单「dsh-login-gate」栏目（`settings.section` 槽）——端口维护 / 参数区 / 账号区 / 超时说明段四区一段；零构建单文件 `lib/client.js`（`__ModuleLoader__` 工厂形 + React.createElement）。
-- **端口维护（US-1 / INV-7）**：端口可改（默认 3500，整数 1-65535）+ 服务端端口占用预检 + 保存前断连警示确认条（R-16 事前警示：确认才写入、取消零请求）+ 联动清单四行（gate-watchdog.sh:34 探活 / start-dsh.sh:101-113 监听检查 / obsidian-web 3500 `/ob_share` 分享契约 / Lucky 外网反代需人工同步）。
+- **端口维护（US-1 / INV-7）**：端口可改（默认 3500，整数 1-65535）+ 服务端端口占用预检 + 保存前断连警示确认条（R-16 事前警示：确认才写入、取消零请求）+ 联动清单四行（gate-watchdog.sh:36 探活 curl 行 / start-dsh.sh:118-129 [3/3] 验证监听端口与门禁段 / obsidian-web 3500 `/ob_share` 分享契约 / Lucky 外网反代需人工同步）。
 - **参数可配（US-2）**：`sessionDays`（1~3650）/`maxFailures`/`secureCookie`/`wsAllow`/`gzipPass` 5 键可改；`listenHost`/`upstreamPort`/`rewriteHost` 3 键只读展示；写入只经 `configEditor.edit` 白名单（白名单外整单拒 `not_editable`）。
 - **账号 CRUD（US-4）**：新增/删除/改密，scrypt 哈希服务端生成 + `usersFile` 原子写 + 热加载即时生效；删除防自锁（`currentName` 取自 `/__gate/status`，拒删当前登录账号，取不到即 fail-closed）；响应/日志永不回显哈希（INV-3）。
 - **保存语义（R-16）**：**即时生效 + 事前警示**——保存即经宿主 re-apply 应用（九键 apply 期快照、重 apply 重取），无需重启；唯一事前警示 = 端口保存前断连确认条。
