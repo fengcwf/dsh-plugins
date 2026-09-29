@@ -7,12 +7,12 @@
 
 const HEAD = `# 命令输出说明（RTK 压缩）
 
-这里的 shell 命令输出经过 RTK（Rust Token Killer）过滤压缩以节省 token：保留全部信号、去掉噪声（git/cargo/pytest 等按失败与统计收敛）。**把它当作完整结果**：正常继续工作，相关命令可批量合并到一次调用。被截断的结果会自带恢复提示（形如 \`rtk recall <hash>\`），照抄执行即可取回全量输出。仅当结果明显不可用（本该有输出却为空、与退出码矛盾、乱码）时，用 \`rtk proxy <cmd>\` 无过滤重跑，或用 \`RTK_DISABLED=1 <cmd>\` 绕过一次。`;
+这里的 shell 命令输出经过 RTK（Rust Token Killer）过滤压缩以节省 token：保留全部信号、去掉噪声（git/cargo/pytest 等按失败与统计收敛）。**把它当作完整结果**：正常继续工作，相关命令可批量合并到一次调用。被截断的结果会自带恢复提示（形如 \`rtk recall <hash>\`），照抄执行即可取回全量输出。仅当结果明显不可用（本该有输出却为空、与退出码矛盾、乱码）时，用 \`rtk proxy <cmd>\` 无过滤重跑，或用 \`RTK_DISABLED=1 <cmd>\` 绕过一次。统计输出默认关：\`rtk_doctor\` 不带 gain 统计段，会话里零统计数字；要看压缩收益统计，去 dsh 设置页的「RTK Kit」面板（统计唯一入口，零 token）。`;
 
 const HIGH = `
 
 ## 逃生舱（按需使用）
-- \`rtk gain\` / \`rtk gain --history\` —— 查看压缩收益统计
+- \`rtk gain\` / \`rtk gain --history\` —— 查看压缩收益统计（完整统计看设置页「RTK Kit」面板）
 - \`rtk proxy <cmd>\` —— 无过滤执行（仍计统计）
 - \`RTK_DISABLED=1 <cmd>\` —— 单条命令禁用 RTK
 - \`rtk recall <hash>\` —— 取回被截断的全量输出`;
