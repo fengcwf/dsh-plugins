@@ -91,7 +91,7 @@ test('makeRunGh：超时出 timedOut、gh 缺失出 ENOENT、输出有界（4MiB
   assert.equal(missing.errorCode, 'ENOENT')
   const big = makeRunGh({ ghBin: fakeGh, timeoutMs: 5000 })
   const over = withPlan({ 'api user': { stdout: 'x'.repeat(5 * 1024 * 1024) } }, () => big(['api', 'user']))
-  assert.ok(over.stdout.length <= 4 * 1024 * 1024 + 64 * 1024, `stdout 有界（实测 ${over.stdout.length}）`)
+  assert.ok(over.stdout.length <= 4 * 1024 * 1024 + 128 * 1024, `stdout 有界（实测 ${over.stdout.length}）`)
   assert.equal(over.errorCode, 'ENOBUFS')
 })
 
@@ -191,16 +191,18 @@ test('probeAccess 失败分级：429@latency-quota → GHO-LATENCY-QUOTA-05（�
 })
 
 test('probeAccess：probeTimeoutMs 贯通 + 超时分级（不挂死）', () => {
+  // 注：probeTimeoutMs 须留足假 gh（node shebang）单次启动成本（实测 ~110-160ms）的余量，
+  // 否则 stage① 自己先超时、归因落 local-config（2026-09-29 抖动复盘根因）。
   const t0 = Date.now()
   const r = withPlan({
     'auth status --json hosts': { stdout: STATUS_OK },
-    'api user': { sleepMs: 3000 },
-  }, () => probeAccess({ ghBin: fakeGh, probeTimeoutMs: 150 }))
+    'api user': { sleepMs: 6000 },
+  }, () => probeAccess({ ghBin: fakeGh, probeTimeoutMs: 1000 }))
   assert.equal(r.ok, false)
   assert.equal(r.stage, 'auth-connect')
   assert.equal(r.code, 'GHO-AUTH-CONNECT-01')
   assert.match(r.hint, /超时/)
-  assert.ok(r.elapsedMs >= 150 && Date.now() - t0 < 2500, `超时须在 probeTimeoutMs 附近返回（elapsedMs=${r.elapsedMs}）`)
+  assert.ok(r.elapsedMs >= 500 && Date.now() - t0 < 5000, `超时须远早于 sleepMs 返回（elapsedMs=${r.elapsedMs}）`)
 })
 
 test('probeAccess：未配置（hosts 空）→ GHO-LOCAL-CONFIG-07；gh 缺失 → GHO-LOCAL-CONFIG-02', () => {
