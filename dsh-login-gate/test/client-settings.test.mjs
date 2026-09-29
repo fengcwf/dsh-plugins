@@ -27,9 +27,13 @@ function loadClientFace() {
   const win = { __ModuleLoader__: { load: (m) => loaded.push(m) } }
   const effects = []
   let hookState = null
+  let refSlot = null // useRef 持久化（真 React 语义：同实例重渲染返回同一 ref；卸载守卫依赖此）
   const reactStub = {
     createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
-    useRef: (init) => ({ current: init }),
+    useRef: (init) => {
+      if (refSlot === null) refSlot = { current: init }
+      return refSlot
+    },
     useEffect: (fn) => { effects.push(fn) },
     useState: (init) => {
       if (hookState === null) hookState = { v: init }
@@ -326,6 +330,38 @@ test('保存失败：服务端 message 原文回显（not_editable），绝不�
   assert.ok(allText(render()).includes('字段 listenHost 不在可改白名单'), '服务端 message 原文显示')
 })
 
+test('卸载守卫（审查顺手清 c）：卸载后 save 异步回调零 setState（noticeEl 静默、状态冻结）', async () => {
+  const { mod, effects } = loadClientFace()
+  const registered = []
+  mod.apply(mkCtx(registered, []))
+  const Section = registered[0].component
+  let release
+  const held = new Promise((resolve) => { release = resolve })
+  mod.__fetch = async (url, init) => {
+    if (url === '__gate/status') return { json: async () => ({ ok: true, user: 'me', exp: 0, mode: 'hmac' }) }
+    if (url === 'api/login-gate/settings' && !(init && init.method)) return { json: async () => JSON.parse(JSON.stringify(BASE_SETTINGS)) }
+    if (url === 'api/login-gate/settings' && init && init.method === 'POST') {
+      await held // 响应压到卸载之后才放行（在途请求的迟到响应）
+      return { json: async () => ({ data: { config: { ...BASE_CONFIG, sessionDays: 42 }, restartRequired: true } }) }
+    }
+    throw new Error('unexpected fetch: ' + url)
+  }
+  Section()
+  const cleanup = effects[0]() // 载入 effect（返回 alive 清理器）
+  await settle()
+  let tree = Section()
+  rowOf(tree, 'sessionDays').props.onChange(7)
+  tree = Section()
+  find(tree, (n) => n.type === 'button' && n.props.className?.includes('save')).props.onClick() // 保存在途
+  cleanup() // 卸载（置 alive=false）
+  release()
+  await settle()
+  tree = Section()
+  assert.equal(noticeEl(tree), null, '卸载后零 setState：成功 notice 绝不落地（未守卫=RED）')
+  assert.equal(rowOf(tree, 'sessionDays').props.value, 7, '卸载后状态冻结（迟到响应 config 42 绝不合并）')
+  assert.ok(allText(tree).includes('保存中…'), 'saving 态冻结（不被迟到响应改写）')
+})
+
 test('writable:false：全部输入只读 + 注记，无保存按钮', async () => {
   const { tree } = await mount({
     settings: { data: { writable: false, restartRequired: false, config: { ...BASE_CONFIG }, users: [{ name: 'alice' }] } },
@@ -371,6 +407,10 @@ test('账号新增/改密：POST api/login-gate/settings/users 契约形 + 成�
   })
   const addForm = find(tree, (n) => n.props['data-login-gate-form'] === 'add')
   assert.ok(addForm, '新增账号表单在')
+  // 测试钩子真落 DOM（审查顺手清 a）：AccountAddForm 渲染出的 div props 带该标记
+  const addFormDom = addForm.type(addForm.props)
+  assert.equal(addFormDom.type, 'div', '账号表单根元素=div')
+  assert.equal(addFormDom.props['data-login-gate-form'], 'add', 'data-login-gate-form 真落组件 div props（非寄生 props）')
   addForm.props.onName('carol')
   addForm.props.onPassword('s3cret')
   let t = render()

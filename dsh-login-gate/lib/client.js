@@ -196,6 +196,7 @@ window.__ModuleLoader__.load({
     function AccountAddForm(props) {
       return react.createElement('div', {
         className: 'login-gate-settings-user-form',
+        'data-login-gate-form': props['data-login-gate-form'], // 测试钩子真落 DOM（非寄生 props）
       },
         react.createElement('input', {
           type: 'text', className: 'login-gate-settings-input', placeholder: '用户名',
@@ -228,6 +229,8 @@ window.__ModuleLoader__.load({
       })
       var state = pair[0]
       var setState = pair[1]
+      // 卸载守卫（与 load effect 的 alive 同纪律）：save/userAction 在途请求的迟到回调卸载后零 setState
+      var aliveRef = react.useRef(true)
 
       /** 状态合并（纯函数）：基于 prev 而非闭包快照（防连发更新丢字段） */
       function mergeState(prev, patch) {
@@ -236,13 +239,15 @@ window.__ModuleLoader__.load({
         for (var p in patch) if (Object.hasOwn(patch, p)) next[p] = patch[p]
         return next
       }
-      /** 函数式 setState 包装（React updater 形：以最新 prev 为基准） */
+      /** 函数式 setState 包装（React updater 形：以最新 prev 为基准）；卸载守卫单点强制 */
       function update(fn) {
+        if (!aliveRef.current) return // 卸载后异步回调不落 setState（React 卸载更新=无效+告警）
         setState(function (prev) { return fn(prev) })
       }
 
       react.useEffect(function load() {
         var alive = true
+        aliveRef.current = true
         Promise.resolve()
           .then(function () { return exports.__fetch(SETTINGS_URL) })
           .then(function (res) { return res.json() })
@@ -272,7 +277,7 @@ window.__ModuleLoader__.load({
             if (!alive) return
             update(function (prev) { return mergeState(prev, { status: 'error', data: null, error: String((e && e.message) || e) }) })
           })
-        return function cleanup() { alive = false }
+        return function cleanup() { alive = false; aliveRef.current = false }
       }, [])
 
       function draftValue(key) {
