@@ -25,10 +25,12 @@
     "zod": "^4.6.5"
   },
   "peerDependencies": {
+    "@deepseek-ai/dsh-client-ui-primitives": ">=0.2.0-rc.1",
     "@deepseek-ai/dsh-llm": ">=0.1.7-rc.1",
     "@deepseek-ai/dsh-tools": ">=0.1.7-rc.1"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-client-ui-primitives": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-primitives",
     "@deepseek-ai/dsh-llm": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm",
     "@deepseek-ai/dsh-tools": "link:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-tools",
     "vue": "^3.5.43",
@@ -44,7 +46,8 @@
       "inject": [
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-renderer",
-        "@deepseek-ai/dsh-client-ui-layout"
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-primitives"
       ]
     }
   },

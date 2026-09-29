@@ -26,16 +26,27 @@ test('panel.js 是构建产物：导出 mount 契约、不残留 dev 源码运�
   assert.ok(!js.includes('<template'), 'SFC 模板必须已被编译（不得残留模板原文）')
 })
 
-test('清单契约：dsh.client（platform=web, inject=locale/renderer/layout 官方三件）+ exports["./client"] 指向工厂形', () => {
+test('清单契约：dsh.client（platform=web, inject=locale/renderer/layout/primitives）+ exports["./client"] 指向工厂形', () => {
   assert.equal(pkg.dsh.client.platform, 'web')
+  // 断言修订理由（Task F2）：inject 扩 @deepseek-ai/dsh-client-ui-primitives（设置节原生控件包
+  // Switch/Button/Input/Modal——require 表须先 materialize 该包才能同步 require，诊断 §2.2 明示此步）。
   assert.deepEqual(pkg.dsh.client.inject, [
     '@deepseek-ai/dsh-client-locale',
     '@deepseek-ai/dsh-client-ui-renderer',
     '@deepseek-ai/dsh-client-ui-layout',
-  ], 'dsh.client.inject=客户端模块包面（skill-explorer 契约形；旧 ["slots"] 为误形已弃）')
+    '@deepseek-ai/dsh-client-ui-primitives',
+  ], 'dsh.client.inject=客户端模块包面（skill-explorer 契约形；旧 ["slots"] 为误形已弃；F2 扩原生控件包）')
   assert.equal(pkg.exports['./client'], './lib/client.js', 'dsh-client-modules clientExportOf 契约：exports["./client"]')
   const client = fs.readFileSync(path.join(PKG_DIR, 'lib', 'client.js'), 'utf8')
   assert.match(client, /^(\s*\/\/[^\n]*\n)*\s*window\.__ModuleLoader__\.load\(\{/, 'client.js 必须是工厂形 bundle（头注释可前置）')
+})
+
+test('依赖口径（dsh-plugin-ops）：@deepseek-ai/* 共享包 peer+dev 双声明——primitives 走拦截层供给 + devDep link: 运行时副本', () => {
+  const prim = '@deepseek-ai/dsh-client-ui-primitives'
+  assert.ok(pkg.peerDependencies?.[prim], 'peer 声明（宿主拦截层供给；peer 不代装，仅 @deepseek-ai/* 可走）')
+  assert.ok(pkg.devDependencies?.[prim], 'dev 声明（独立 node --test 面）')
+  assert.match(pkg.devDependencies[prim], /^link:/, 'devDep=link: 运行时副本（dsh-plugin-ops 依赖三件套）')
+  assert.equal(pkg.dependencies?.[prim], undefined, '共享包不进 dependencies（zod 等第三方才进）')
 })
 
 test('files 面覆盖交付物：lib + web + cordis.patch.yml + CHANGELOG.md', () => {

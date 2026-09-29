@@ -32,10 +32,20 @@ function loadClientFace() {
   }
   // 假 React 钩子（最小形）：createElement 记树、useRef 返对象、useEffect 排队（测试驱动执行）、useState 单槽
   // （测试驱动重渲染；setter 支持函数形 updater——React 真语义补齐，设置节 delta 更新用 prev=>next 形）。
+  // F2 控件形对齐（Task F2）：原生 primitives（@deepseek-ai/dsh-client-ui-primitives）以「最小契约假缝」承接——
+  // 假组件渲染形严格镜像官方 .d.ts/实现的 DOM 契约（Switch→button[role=switch][aria-checked]、
+  // Button→原生 button 属性透传、Input→span>input 属性透传、Modal→open=false 渲染 null，开则
+  // [role=dialog][aria-label=title]+closeLabel 关闭钮+children），且标记 __primitive 由 createElement
+  // 即时展开成 DOM 树——被测件是「我们传给原生控件的 props 接线」，控件内部渲染归宿主组件自身测试面。
   const effects = []
   let hookState = null
   const reactStub = {
-    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+    createElement: (type, props, ...children) => {
+      const merged = { ...(props ?? {}) }
+      if (children.length > 0) merged.children = children.length === 1 ? children[0] : children
+      if (typeof type === 'function' && type.__primitive === true) return type(merged)
+      return { type, props: merged, children }
+    },
     useRef: (init) => ({ current: init }),
     useEffect: (fn) => { effects.push(fn) },
     useState: (init) => {
@@ -44,8 +54,51 @@ function loadClientFace() {
       return [ref.v, (next) => { ref.v = typeof next === 'function' ? next(ref.v) : next }]
     },
   }
+  /** 原生控件假缝（最小契约形，镜像 dsh-client-ui-primitives .d.ts；无钩子——不扰 useState 单槽/effects 队列） */
+  function prim(name, render) {
+    Object.defineProperty(render, 'name', { value: name })
+    render.__primitive = true
+    return render
+  }
+  const uiStub = {
+    Switch: prim('Switch', (p) => reactStub.createElement('button', {
+      type: 'button',
+      role: 'switch',
+      'aria-checked': p.checked === true,
+      'aria-label': p.label,
+      title: p.title,
+      disabled: p.disabled === true,
+      className: p.className,
+      onClick: () => p.onChange(!(p.checked === true)),
+    }, reactStub.createElement('span', { className: 'ws-stub-switch-thumb' }))),
+    Button: prim('Button', (p) => {
+      const rest = { ...p }
+      delete rest.variant
+      delete rest.size
+      delete rest.icon
+      delete rest.children
+      // 假缝回显被消费的变体/尺寸 props（真 Button 只用其选样式；回显供接线断言，非 DOM 契约）
+      rest['data-ws-variant'] = p.variant
+      rest['data-ws-size'] = p.size
+      return reactStub.createElement('button', { type: 'button', ...rest }, p.children)
+    }),
+    Input: prim('Input', (p) => {
+      const rest = { ...p }
+      delete rest.icon
+      delete rest.className
+      delete rest.children
+      return reactStub.createElement('span', { className: p.className }, reactStub.createElement('input', rest))
+    }),
+    Modal: prim('Modal', (p) => {
+      if (p.open !== true) return null
+      return reactStub.createElement('div', { role: 'dialog', 'aria-label': p.title, className: p.className },
+        reactStub.createElement('button', { type: 'button', 'aria-label': p.closeLabel, onClick: p.onClose }),
+        p.children)
+    }),
+  }
   const req = (name) => {
     if (name === 'react') return reactStub
+    if (name === '@deepseek-ai/dsh-client-ui-primitives') return uiStub
     throw new Error(`unexpected require: ${name}`)
   }
   const fn = new Function('window', source)
@@ -121,6 +174,30 @@ function findComp(node, name) {
     if (hit) return hit
   }
   return null
+}
+
+/** 树内收集全部同名组件节点（F2：行卡结构重排后按语义收集 SettingsRow，不依赖 children 槽位形状） */
+function findAllComp(node, name, out = []) {
+  if (Array.isArray(node)) {
+    for (const c of node) findAllComp(c, name, out)
+    return out
+  }
+  if (node === null || node === undefined || typeof node !== 'object') return out
+  if (typeof node.type === 'function' && node.type.name === name) out.push(node)
+  for (const c of node.children ?? []) findAllComp(c, name, out)
+  return out
+}
+
+/** 设置节字段行（F2 断言修订：旧 `tree.children.find(Array.isArray)` 依赖 rows 直挂根的槽位形状——
+ *  §3.2 rows 容器契约要求 rows 收进 `.rows` 列表容器，改按组件语义收集（行为面断言不变）。 */
+function rowsOf(tree) {
+  return findAllComp(tree, 'SettingsRow')
+}
+
+/** 保存按钮（F2 断言修订：控件形对齐后 Switch 也呈 button 语义，「树内首个 button」不再=保存——
+ *  改语义锚 data-ws-action="save" 定位（原生属性透传，行为面断言不变）。 */
+function saveButton(tree) {
+  return find(tree, (n) => n.type === 'button' && n.props['data-ws-action'] === 'save')
 }
 
 /** 设置节跑进 ready 态并返回渲染树（GET 载入完成） */
@@ -366,7 +443,7 @@ test('设置面组件：GET api/wiki-steward/settings 载入 → ready 渲染配
   assert.deepEqual(calls, ['api/wiki-steward/settings'], '设置取数必须文档相对')
   const tree = Section()
   assert.equal(tree.props['data-dsh-plugin'], 'wiki-steward')
-  assert.ok(find(tree, (n) => n.type === 'button') !== null, '可写面有保存按钮')
+  assert.ok(saveButton(tree) !== null, '可写面有保存按钮（F2 断言修订：语义锚 data-ws-action=save——控件形对齐后 Switch 也呈 button 语义，「树内首个 button」判别力失真）')
   const note = JSON.stringify(tree.children)
   assert.match(note, /INV-7/, 'write.readOnly 只读项带 INV-7 注记')
 })
@@ -390,11 +467,10 @@ test('设置面组件：保存=POST {patch:变更叶子}（文档相对），成
   await tick()
   // 改一项（捕获开关）→ 重渲染 → 点保存
   let tree = Section()
-  const rowElems = tree.children.find((c) => Array.isArray(c)) ?? []
-  const editableRow = rowElems.find((c) => c && c.props && c.props.field && c.props.field.path.join('.') === 'capture.enabled')
+  const editableRow = rowsOf(tree).find((c) => c.props.field && c.props.field.path.join('.') === 'capture.enabled')
   editableRow.props.onChange(false)
   tree = Section()
-  const button = find(tree, (n) => n.type === 'button')
+  const button = saveButton(tree)
   button.props.onClick()
   await tick()
   await tick()
@@ -423,11 +499,10 @@ test('设置面组件：服务端拒绝（not_editable）= 错误文案如实展
   await tick()
   await tick()
   let tree = Section()
-  const rowElems = tree.children.find((c) => Array.isArray(c)) ?? []
-  const editableRow = rowElems.find((c) => c && c.props && c.props.field)
+  const editableRow = rowsOf(tree).find((c) => c.props.field)
   editableRow.props.onChange(false)
   tree = Section()
-  find(tree, (n) => n.type === 'button').props.onClick()
+  saveButton(tree).props.onClick()
   await tick()
   await tick()
   tree = Section()
@@ -592,21 +667,28 @@ test('定时控制：时间输入（input[type=time]）+ 启用开关入设置�
   await tick()
   await tick()
   const tree = Section()
-  const rows = tree.children.find((c) => Array.isArray(c)) ?? []
-  const timeRow = rows.find((c) => c && c.props && c.props.field && c.props.field.path.join('.') === 'ingest.schedule.time')
-  const enableRow = rows.find((c) => c && c.props && c.props.field && c.props.field.path.join('.') === 'ingest.schedule.enabled')
+  const timeRow = rowsOf(tree).find((c) => c.props.field && c.props.field.path.join('.') === 'ingest.schedule.time')
+  const enableRow = rowsOf(tree).find((c) => c.props.field && c.props.field.path.join('.') === 'ingest.schedule.enabled')
   assert.ok(timeRow, '定时执行时间字段入设置节（F3 验收②）')
   assert.ok(enableRow, '定时启用开关字段入设置节（F3 验收②）')
 
   const timeTree = timeRow.type(timeRow.props)
   const input = find(timeTree, (n) => n.type === 'input' && n.props.type === 'time')
-  assert.ok(input, '时间输入=原生 time 控件（简单形，样式 F2 收口）')
+  assert.ok(input, '时间输入=原生 time 控件（语义保持：F2 控件形对齐只换壳为 Input 原生控件，type=time 透传）')
   assert.equal(input.props.value, '23:30', '当前配置值如实回显')
 
+  // F2 断言修订：启用开关从裸 checkbox 换原生 Switch（§3.2「开关用 Switch（行内 switch 形）」）——
+  // 数据面契约不变（onChange(bool)→draft→{patch}），断言从 input[type=checkbox].checked 改
+  // button[role=switch].aria-checked + 点击=onChange(false)（功能面=布尔翻转，零行为变化）。
   const enableTree = enableRow.type(enableRow.props)
-  const cb = find(enableTree, (n) => n.type === 'input' && n.props.type === 'checkbox')
-  assert.ok(cb, '启用开关=既有简单形 checkbox')
-  assert.equal(cb.props.checked, true)
+  const sw = find(enableTree, (n) => n.props && n.props.role === 'switch')
+  assert.ok(sw, '启用开关=原生 Switch（role=switch 行内形，§3.2 控件形）')
+  assert.equal(sw.props['aria-checked'], true)
+  let toggled = null
+  const enableRow2 = rowsOf(Section()).find((c) => c.props.field && c.props.field.path.join('.') === 'ingest.schedule.enabled')
+  const swTree = enableRow2.type({ ...enableRow2.props, onChange: (v) => { toggled = v } })
+  find(swTree, (n) => n.props && n.props.role === 'switch').props.onClick()
+  assert.equal(toggled, false, 'Switch 点击=onChange(翻转值)——与原 checkbox onChange(checked) 数据契约一致')
 
   assert.match(
     JSON.stringify(tree.children),
@@ -633,15 +715,169 @@ test('定时控制：改时间随保存走 {patch:{ingest:{schedule:{time}}}}（
   await tick()
   await tick()
   let tree = Section()
-  const rows = tree.children.find((c) => Array.isArray(c)) ?? []
-  const timeRow = rows.find((c) => c && c.props && c.props.field && c.props.field.path.join('.') === 'ingest.schedule.time')
+  const timeRow = rowsOf(tree).find((c) => c.props.field && c.props.field.path.join('.') === 'ingest.schedule.time')
   timeRow.props.onChange('23:30')
   tree = Section()
-  find(tree, (n) => n.type === 'button').props.onClick() // 保存
+  saveButton(tree).props.onClick() // 保存
   await tick()
   await tick()
   const post = calls.find((c) => c.init && c.init.method === 'POST')
   assert.ok(post, '必须发保存请求')
   assert.equal(post.url, 'api/wiki-steward/settings')
   assert.deepEqual(JSON.parse(post.init.body), { patch: { ingest: { schedule: { time: '23:30' } } } }, '只发变更叶子（ingest.schedule.time）')
+})
+
+// ===== Task F2：设置节 UI 对齐 dsh 原生设置风格（诊断 §3 风格契约逐项）============
+// 参照：changes/2026-09-29-settings-ingest-controls/diagnostic-report.md §3（对齐清单）/§3.3（差异清单）。
+// 红线口径：视觉与结构可动，功能面零行为变化（{data}/{error} 契约、timer 语义、白名单、历史入口行为面）。
+// 原生控件假缝=uiStub（见 loadClientFace）：断言的是「我们传给原生控件的 props 接线」+ 自绘布局几何契约；
+// 控件内部渲染形归宿主组件自身测试面（Switch/Button/Input/Modal 的 DOM 契约镜像官方 .d.ts）。
+
+/** 取 SETTINGS_CSS 内单条规则体（源码级：样式集中 var SETTINGS_CSS=[…].join，零构建单文件自包含） */
+function cssRule(css, cls) {
+  const m = css.match(new RegExp(`\\.${cls}\\{([^}]*)\\}`))
+  assert.ok(m, `缺 .${cls} 规则（§3.2 对齐清单落点）`)
+  return m[1]
+}
+
+/** 载入就绪设置树（复用 readySection：GET 载入完成后的渲染树 + 重渲染句柄） */
+async function f2Tree(config, extra = {}) {
+  const { mod, effects } = loadClientFace()
+  mod.__fetch = async () => ({ json: async () => ({ data: { config, writable: true, editable: [], ...extra } }) })
+  return readySection(mod, effects)
+}
+
+test('F2 原生控件包接入：dsh.client.inject 扩 @deepseek-ai/dsh-client-ui-primitives（peer/dev 双声明），设置节用 Switch/Button/Input/Modal 四控件', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(path.dirname(CLIENT_PATH), '..', 'package.json'), 'utf8'))
+  assert.ok(pkg.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-primitives'), 'inject 必须含 primitives（require 表供给：dsh-client-modules makeRequire）')
+  assert.ok(pkg.peerDependencies['@deepseek-ai/dsh-client-ui-primitives'], 'peer 声明（@deepseek-ai/* 共享包宿主拦截层供给）')
+  assert.ok(pkg.devDependencies['@deepseek-ai/dsh-client-ui-primitives'], 'dev 声明（独立 node --test 面）')
+  assert.match(source, /require\(['"]@deepseek-ai\/dsh-client-ui-primitives['"]\)/, 'factory 真 require 原生控件包')
+  for (const comp of ['Switch', 'Button', 'Input', 'Modal']) {
+    assert.match(source, new RegExp(`ui\\.${comp}\\b`), `设置节须用原生 ${comp}（§3.2 原生控件组件行）`)
+  }
+})
+
+test('F2 样式面（§3.2）：dsh token 唯一色板（零硬编码色值/零暗色分支）+ 节容器/标题/引言/rows/rowCard/行名/字段几何契约 + 幂等注入', () => {
+  assert.match(source, /typeof document\s*!==\s*['"]undefined['"]/, 'style 注入必须守卫 document（Node/测试环境无 document 不炸）')
+  assert.match(source, /data-plugin-css/, 'style 幂等标记（claimStyles 归属）')
+  assert.match(source, /getElementById\(STYLE_ID\)/, 'style 幂等注入（重入不重复插）')
+  const cssMatch = source.match(/var SETTINGS_CSS = \[([\s\S]*?)\]\.join/)
+  assert.ok(cssMatch, '样式集中在 SETTINGS_CSS（单文件自包含，零构建可注入）')
+  const css = cssMatch[1]
+  assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b/, '禁硬编码色值（hex）')
+  assert.doesNotMatch(css, /rgba?\(/i, '禁硬编码色值（rgb/rgba）')
+  assert.doesNotMatch(css, /hsla?\(/i, '禁硬编码色值（hsl/hsla）')
+  assert.doesNotMatch(source, /prefers-color-scheme|data-ds-dark-theme/, '暗色随宿主 --dsw-alias-* 别名自动适配，禁 media query/分支')
+
+  // §3.2 逐项几何（zGbnIq 原生设置节契约）
+  const section = cssRule(css, 'wiki-steward-settings')
+  assert.match(section, /max-width:720px/, '节容器 max-width 720px')
+  assert.match(section, /flex-direction:column/, '节容器纵向')
+  assert.match(section, /gap:12px/, '节容器 column gap 12px')
+  const title = cssRule(css, 'wiki-steward-settings-title')
+  assert.match(title, /font-size:16px/, '标题 16px')
+  assert.match(title, /font-weight:500/, '标题 500')
+  assert.match(title, /line-height:24px/, '标题 24px 行高')
+  const intro = cssRule(css, 'wiki-steward-settings-intro')
+  assert.match(intro, /font-size:14px/, '引言 14px')
+  assert.match(intro, /line-height:22px/, '引言 22px 行高')
+  assert.match(intro, /var\(--dsw-alias-label-tertiary\)/, '引言 tertiary（§3.2）')
+  const rows = cssRule(css, 'wiki-steward-settings-rows')
+  assert.match(rows, /gap:8px/, 'rows 间距 8px')
+  assert.match(rows, /margin:12px 0 0/, 'rows 上边距 12px')
+  const card = cssRule(css, 'wiki-steward-settings-rowCard')
+  assert.match(card, /padding:12px 14px/, '行卡片 padding 12px 14px')
+  assert.match(card, /gap:12px/, '行卡片 gap 12px')
+  assert.match(card, /border:\.5px solid var\(--dsw-alias-settings-card-stroke\)/, '行卡片描边 card-stroke token')
+  assert.match(card, /background:var\(--dsw-alias-settings-card-fill\)/, '行卡片底 card-fill token')
+  assert.match(card, /border-radius:var\(--dsw-radius-xl\)/, '行卡片圆角 radius-xl')
+  const rowName = cssRule(css, 'wiki-steward-settings-rowName')
+  assert.match(rowName, /font-size:14px/, '行名 14px')
+  assert.match(rowName, /font-weight:500/, '行名 500')
+  assert.match(rowName, /line-height:22px/, '行名 22px 行高')
+  const field = cssRule(css, 'wiki-steward-settings-field')
+  assert.match(field, /flex-direction:column/, '字段纵向')
+  assert.match(field, /gap:6px/, '字段列 gap 6px')
+  // 输入框几何：宿主 Input 原生控件（.wrap=32px 高/.5px l4 描边/radius-md/bg layer-1/focus business-primary，
+  // Input.module.css）+ 本节补齐 §3.2 剩余项（padding 0 10px、宽度 100%）
+  const input = cssRule(css, 'wiki-steward-settings-input')
+  assert.match(input, /height:32px/, '输入框高 32px')
+  assert.match(input, /padding:0 10px/, '输入框 padding 0 10px')
+  assert.match(input, /width:100%/, '输入框撑满字段列')
+})
+
+test('F2 设置节 DOM 形（§3.2）：节容器 > 标题/引言 > rows 容器 > rowCard 每字段一卡（行名/字段/注记分层）', async () => {
+  const { tree } = await f2Tree({ capture: { enabled: true, bufferRounds: 3 }, vaultRoot: '/mnt/unraid_data/Obsidian' })
+  assert.equal(tree.props['data-dsh-plugin'], 'wiki-steward', '根容器插件标记保持')
+  assert.match(tree.props.className, /wiki-steward-settings/, '根=节容器类（720px/column/12px）')
+  assert.ok(find(tree, (n) => typeof n.props?.className === 'string' && n.props.className.includes('wiki-steward-settings-title')), '标题层（16px/24px 500）')
+  assert.ok(find(tree, (n) => typeof n.props?.className === 'string' && n.props.className.includes('wiki-steward-settings-intro')), '引言层（14px/22px tertiary）')
+  assert.ok(find(tree, (n) => typeof n.props?.className === 'string' && n.props.className.includes('wiki-steward-settings-rows')), 'rows 列表容器（gap 8px/margin 12px 0 0）')
+  const rows = rowsOf(tree)
+  assert.ok(rows.length >= 3, '每字段一行卡（editable+readonly 全量）')
+  let noted = 0
+  for (const row of rows) {
+    const card = row.type(row.props)
+    assert.match(card.props.className, /rowCard/, '每卡=rowCard（stroke/fill/radius-xl/padding 12px 14px）')
+    assert.ok(find(card, (n) => typeof n.props?.className === 'string' && n.props.className.includes('rowName')), '卡内行名（14px/22px 500）')
+    assert.ok(find(card, (n) => typeof n.props?.className === 'string' && n.props.className.includes('wiki-steward-settings-field')), '卡内字段列（gap 6px）')
+    if (row.props.field.note) {
+      noted += 1
+      assert.ok(find(card, (n) => typeof n.props?.className === 'string' && n.props.className.includes('wiki-steward-settings-note')), '卡内注记（12px/18px tertiary）')
+    }
+  }
+  assert.ok(noted >= 2, '带 note 字段（定时开关/执行时间双源提示）的注记分层在场')
+})
+
+test('F2 控件形（§3.2）：布尔=Switch 行内形、数字=number、时间=time（原生语义保持）；按钮=原生 Button 36px 形（保存 primary/动作 outline）', async () => {
+  const { tree } = await f2Tree({ capture: { enabled: true, bufferRounds: 3 }, ingest: { schedule: { enabled: false, time: '23:30' } } })
+  const rows = rowsOf(tree)
+  const boolRow = rows.find((c) => c.props.field.kind === 'boolean')
+  const numRow = rows.find((c) => c.props.field.kind === 'number')
+  const timeRow = rows.find((c) => c.props.field.kind === 'time')
+  assert.ok(boolRow && numRow && timeRow, '三类控件各就位')
+  assert.ok(find(boolRow.type(boolRow.props), (n) => n.props && n.props.role === 'switch'), '布尔=原生 Switch（行内形）')
+  assert.ok(find(numRow.type(numRow.props), (n) => n.type === 'input' && n.props.type === 'number'), '数字=number 输入（原生语义保持）')
+  assert.ok(find(timeRow.type(timeRow.props), (n) => n.type === 'input' && n.props.type === 'time'), '时间=time 输入（原生语义保持）')
+
+  const save = saveButton(tree)
+  assert.ok(save, '保存按钮（语义锚）')
+  assert.equal(save.props['data-ws-variant'], 'primary', '保存=Button primary（button-primary-fill/foreground 族）')
+  assert.equal(save.props['data-ws-size'], 'md', '保存=Button md（36px 形，Button.module.css .md）')
+  assert.equal(save.props.disabled, false, '未保存态可点（行为面保持：空保存→如实提示）')
+
+  const actions = findComp(tree, 'WikiStewardManualActions')
+  const at = actions.type(actions.props)
+  const scanBtn = find(at, (n) => n.type === 'button' && n.props['data-ws-action'] === 'scan')
+  const distillBtn = find(at, (n) => n.type === 'button' && n.props['data-ws-action'] === 'distill')
+  assert.ok(scanBtn && distillBtn, '手动两按钮带语义锚（行为面断言走既有 F3 测试）')
+  assert.equal(scanBtn.props['data-ws-variant'], 'outline', '动作按钮=Button outline（secondary 形：.5px l3 描边）')
+  assert.equal(scanBtn.props.disabled, false)
+
+  const hist = findComp(tree, 'WikiStewardHistoryEntry')
+  const histBtn = find(hist.type(hist.props), (n) => n.type === 'button' && n.props['data-ws-action'] === 'history')
+  assert.ok(histBtn, '历史入口按钮带语义锚')
+  assert.equal(histBtn.props['data-ws-variant'], 'outline', '历史入口=Button outline')
+})
+
+test('F2 历史弹层=原生 Modal（title/closeLabel 契约）；开合/挂载行为面零变化', async () => {
+  const { Section, tree } = await f2Tree({})
+  const entry = findComp(tree, 'WikiStewardHistoryEntry')
+  const closedTree = entry.type(entry.props)
+  assert.equal(find(closedTree, (n) => n.props && n.props.role === 'dialog'), null, '未开=无 dialog')
+
+  entry.props.onToggle()
+  const openEntry = findComp(Section(), 'WikiStewardHistoryEntry')
+  const openTree = openEntry.type(openEntry.props)
+  const dialog = find(openTree, (n) => n.props && n.props.role === 'dialog')
+  assert.ok(dialog, '点开=原生 Modal dialog')
+  assert.equal(dialog.props['aria-label'], 'wiki-steward · 历史记录', 'Modal title 契约（aria-label）')
+  const closeBtn = find(dialog, (n) => n.type === 'button' && n.props['aria-label'] === '关闭')
+  assert.ok(closeBtn, 'Modal 关闭钮（closeLabel=关闭）')
+  assert.ok(findComp(openTree, 'WikiStewardHistoryMount'), '弹层内日志视图挂载容器（行为面不变）')
+
+  closeBtn.props.onClick() // 关闭
+  const after = findComp(Section(), 'WikiStewardHistoryEntry')
+  assert.equal(after.props.open, false, '关闭=收起（Modal onClose→onToggle，行为面不变）')
 })

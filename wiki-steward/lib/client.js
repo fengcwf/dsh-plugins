@@ -16,6 +16,11 @@
 //      白名单双侧一致），双源如实提示（系统 cron 仍在 00:25，flock 防重入）。
 //   ⑤ `sidebar.panellist` 行 + `main` 槽页注册已移除（旧面板入口随诉求摘除；其裸 import 说明符
 //      =TypeError: Failed to resolve module specifier 根因，诊断 §1.2）。
+//   ⑥ 设置节 UI 对齐 dsh 原生设置节契约（Task F2，诊断 §3.2 zGbnIq 契约）：控件用宿主原生
+//      primitives（@deepseek-ai/dsh-client-ui-primitives 的 Switch/Button/Input/Modal，经
+//      dsh.client.inject 供进 require 表）；自绘布局样式=SETTINGS_CSS 注入（--dsw-alias-*/--dsw-radius-*
+//      token 唯一色板，零硬编码色值/零暗色分支——暗色随宿主别名重定义自动适配）。功能面零行为变化：
+//      {data}/{error} 契约、timer 语义、白名单、历史入口行为面全保持（只动视觉与结构）。
 // 弃自造 `settings.plugins.tab` 页签 + 站内绝对 '/wiki-steward/panel.js' 动态 import（旧 404 面）；
 // panel.js 改由 ctx.webServer prefix /api/wiki-steward 官方路由面静态服务，动态 import 说明符经
 // new URL(url, document.baseURI).href 转真 URL 再 import（与 fetch 同基解析，<base> 有无两口径均正确）。
@@ -28,6 +33,10 @@ window.__ModuleLoader__.load({
     var module = { exports: {} }
     var exports = module.exports
     var react = require('react')
+    // 原生控件包（Task F2）：Switch（布尔开关）/Button（36px md 形）/Input（32px 输入壳）/Modal（历史弹层）。
+    // require 表语义（dsh-client-modules makeRequire）：包须列进 package.json dsh.client.inject 才会
+    // 先行 materialize 供本工厂同步 require；peer+dev 双声明（宿主拦截层供给 + 独立测试面）。
+    var ui = require('@deepseek-ai/dsh-client-ui-primitives')
 
     // 文档相对（无前导斜杠）：与宿主 <base href="./"> 同基；API 路径同此形
     var PANEL_URL = 'api/wiki-steward/panel.js'
@@ -86,23 +95,72 @@ window.__ModuleLoader__.load({
       return obj
     }
 
-    /** 行组件：布尔=checkbox、数字=number input、字符串数组=textarea（一行一项）、其他=只读文本 */
+    // —— 设置节样式（Task F2：诊断 §3.2 dsh 原生设置节契约对齐——自绘布局 + dsh token）——
+    // 色板唯一来源=--dsw-alias-* 语义别名 + --dsw-radius-* 圆角刻度（宿主暗色态重定义别名即自动暗色
+    // 适配，本文件零暗色分支/零硬编码色值）。控件形几何归宿主原生控件自身（Button.module.css .md=36px、
+    // Input.module.css .wrap=32px/.5px l4/radius-md/layer-1/focus business-primary），本表只补：
+    // 节容器/标题/引言/rows/rowCard/行名/字段/注记分层 + 输入壳 §3.2 剩余项（padding 0 10px/宽度 100%）。
+    var STYLE_ID = 'wiki-steward-settings-css'
+    var SETTINGS_CSS = [
+      '.wiki-steward-settings{max-width:720px;display:flex;flex-direction:column;gap:12px;color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family);font-size:14px;line-height:22px}',
+      '.wiki-steward-settings-title{margin:0;font-size:16px;font-weight:500;line-height:24px;color:var(--dsw-alias-label-primary)}',
+      '.wiki-steward-settings-intro{margin:0;font-size:14px;line-height:22px;color:var(--dsw-alias-label-tertiary)}',
+      '.wiki-steward-settings-rows{display:flex;flex-direction:column;gap:8px;margin:12px 0 0;padding:0;list-style:none}',
+      '.wiki-steward-settings-rowCard{display:flex;flex-direction:column;gap:12px;padding:12px 14px;border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);border-radius:var(--dsw-radius-xl)}',
+      '.wiki-steward-settings-rowHead{display:flex;align-items:center;gap:10px}',
+      '.wiki-steward-settings-rowName{font-size:14px;font-weight:500;line-height:22px;color:var(--dsw-alias-label-primary)}',
+      '.wiki-steward-settings-field{display:flex;flex-direction:column;gap:6px}',
+      '.wiki-steward-settings-note{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}',
+      '.wiki-steward-settings-value{font-family:var(--ds-font-family-code);font-size:13px;line-height:18px;color:var(--dsw-alias-label-secondary);word-break:break-all}',
+      '.wiki-steward-settings .wiki-steward-settings-input{width:100%;height:32px;padding:0 10px}',
+      '.wiki-steward-settings .wiki-steward-settings-input:has(input:disabled){opacity:.6;cursor:default}',
+      '.wiki-steward-settings-textarea{box-sizing:border-box;width:100%;min-height:64px;padding:6px 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);font:inherit;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary)}',
+      '.wiki-steward-settings-textarea:focus{border-color:var(--dsw-alias-state-business-primary);outline:none}',
+      '.wiki-steward-settings-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}',
+      '.wiki-steward-settings-ok{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-success-primary)}',
+      '.wiki-steward-settings-error{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary)}',
+      '.wiki-steward-history-mount{min-height:120px}',
+    ].join('')
+
+    /** 样式注入（幂等 + document 守卫）：Node/测试环境无 document 直接跳过，绝不炸模块加载。 */
+    function ensureStyles() {
+      if (typeof document !== 'undefined') {
+        try {
+          if (document.getElementById(STYLE_ID)) return
+          var el = document.createElement('style')
+          el.id = STYLE_ID
+          el.setAttribute('data-plugin-css', 'wiki-steward')
+          el.textContent = SETTINGS_CSS
+          ;(document.head || document.documentElement).appendChild(el)
+        } catch { /* 样式注入失败不炸插件（视觉降级=浏览器默认） */ }
+      }
+    }
+    ensureStyles()
+
+    /**
+     * 行组件（§3.2 行卡形）：rowCard > 行名（+布尔行内 Switch）> 字段列（控件 + 注记）。
+     * 控件形：布尔=原生 Switch（行内形）、数字=原生 Input type=number、时间=原生 Input type=time
+     * （原生语义保持：type 透传，改的只是壳）、字符串数组=textarea、其他=只读文本值。
+     * 数据契约零变化：onChange(值) → draft 叶子 → 保存 {patch}（与原 checkbox/number/time 同构）。
+     */
     function SettingsRow(props) {
       var field = props.field
       var value = props.value
       var readOnly = props.readOnly === true
       var onChange = props.onChange
-      var input
+      var control = null
       if (field.kind === 'boolean') {
-        input = react.createElement('input', {
-          type: 'checkbox',
+        control = react.createElement(ui.Switch, {
           checked: value === true,
           disabled: readOnly,
-          onChange: function (e) { onChange(e.target.checked) },
+          label: field.label,
+          title: readOnly ? '只读项，不可改' : undefined,
+          onChange: function (next) { onChange(next === true) },
         })
       } else if (field.kind === 'number') {
-        input = react.createElement('input', {
+        control = react.createElement(ui.Input, {
           type: 'number',
+          className: 'wiki-steward-settings-input',
           value: value === undefined || value === null ? '' : String(value),
           disabled: readOnly,
           onChange: function (e) {
@@ -111,14 +169,16 @@ window.__ModuleLoader__.load({
           },
         })
       } else if (field.kind === 'time') {
-        input = react.createElement('input', {
+        control = react.createElement(ui.Input, {
           type: 'time',
+          className: 'wiki-steward-settings-input',
           value: typeof value === 'string' ? value : '',
           disabled: readOnly,
           onChange: function (e) { onChange(e.target.value) },
         })
       } else if (field.kind === 'string[]') {
-        input = react.createElement('textarea', {
+        control = react.createElement('textarea', {
+          className: 'wiki-steward-settings-textarea',
           rows: 3,
           value: Array.isArray(value) ? value.join('\n') : '',
           disabled: readOnly,
@@ -128,19 +188,27 @@ window.__ModuleLoader__.load({
           },
         })
       } else {
-        input = react.createElement('span', { className: 'wiki-steward-settings-value' }, String(value === undefined ? '' : value))
+        control = react.createElement('span', { className: 'wiki-steward-settings-value' }, String(value === undefined ? '' : value))
       }
-      return react.createElement('div', { className: 'wiki-steward-settings-row' },
-        react.createElement('label', { className: 'wiki-steward-settings-label' }, field.label),
-        input,
-        field.note ? react.createElement('p', { className: 'wiki-steward-settings-note' }, field.note) : null,
+      var head = field.kind === 'boolean'
+        ? react.createElement('div', { className: 'wiki-steward-settings-rowHead' },
+            react.createElement('span', { className: 'wiki-steward-settings-rowName' }, field.label),
+            control)
+        : react.createElement('span', { className: 'wiki-steward-settings-rowName' }, field.label)
+      return react.createElement('div', { className: 'wiki-steward-settings-rowCard' },
+        head,
+        react.createElement('div', { className: 'wiki-steward-settings-field' },
+          field.kind === 'boolean' ? null : control,
+          field.note ? react.createElement('p', { className: 'wiki-steward-settings-note' }, field.note) : null,
+        ),
       )
     }
 
     /**
-     * 设置面贡献组件（settings.section）：配置展示/可改 + 历史记录入口。
+     * 设置面贡献组件（settings.section）：配置展示/可改 + 历史记录入口 + 手动 ingest 动作。
      * 载入=GET api/wiki-steward/settings（文档相对）；保存=POST 同址 {patch}（只发变更叶子）。
      * 失败/拒绝=容器内如实报错（not_editable/invalid 服务端判据原文），绝不静默。
+     * 结构（Task F2 §3.2）：节容器 > 标题/引言 > 历史入口 > 手动动作 > rows（rowCard 列表）> 保存/提示。
      */
     function WikiStewardSettingsSection() {
       var pair = react.useState({ status: 'loading', data: null, error: null, draft: {}, saving: false, notice: null, historyOpen: false, actions: { scan: { status: 'idle', text: '' }, distill: { status: 'idle', text: '' } } })
@@ -287,8 +355,8 @@ window.__ModuleLoader__.load({
         }))
       }
       return react.createElement('div', { className: 'wiki-steward-settings', 'data-dsh-plugin': 'wiki-steward' },
-        react.createElement('h3', null, 'wiki-steward · 设置'),
-        react.createElement('p', { className: 'wiki-steward-settings-note' }, '可改项即时热生效（写路径=官方路由面 api/wiki-steward/settings → configEditor 持久化缝）；只读项语义勿动。'),
+        react.createElement('h3', { className: 'wiki-steward-settings-title' }, 'wiki-steward · 设置'),
+        react.createElement('p', { className: 'wiki-steward-settings-intro' }, '可改项即时热生效（写路径=官方路由面 api/wiki-steward/settings → configEditor 持久化缝）；只读项语义勿动。'),
         react.createElement(WikiStewardHistoryEntry, { open: state.historyOpen === true, onToggle: toggleHistory }),
         react.createElement(WikiStewardManualActions, {
           scan: state.actions.scan,
@@ -296,9 +364,16 @@ window.__ModuleLoader__.load({
           onScan: function () { runAction('scan', INGEST_SCAN_URL) },
           onDistill: function () { runAction('distill', INGEST_DISTILL_URL) },
         }),
-        rows,
+        react.createElement('div', { className: 'wiki-steward-settings-rows' }, rows),
         writable
-          ? react.createElement('button', { type: 'button', className: 'wiki-steward-settings-save', disabled: state.saving, onClick: save }, state.saving ? '保存中…' : '保存')
+          ? react.createElement(ui.Button, {
+              type: 'button',
+              variant: 'primary',
+              size: 'md',
+              'data-ws-action': 'save',
+              disabled: state.saving,
+              onClick: save,
+            }, state.saving ? '保存中…' : '保存')
           : react.createElement('p', { className: 'wiki-steward-settings-note' }, '本部署配置写入缝缺失（configEditor 未挂载），暂只读展示。'),
         state.notice
           ? react.createElement('p', { className: state.notice.kind === 'ok' ? 'wiki-steward-settings-ok' : 'wiki-steward-settings-error' }, state.notice.text)
@@ -311,22 +386,26 @@ window.__ModuleLoader__.load({
      * （POST api/wiki-steward/ingest/{scan,distill}，文档相对——issue #1707 教训）。
      * 蒸馏经 headless 任务通道不真跑 LLM；按钮状态反馈沿 {data}/{error} 契约形：
      * data.note 如实原文（在跑/通道缺文案）、{error} 原文展示，绝不静默。
-     * 展示组件（无钩子；状态由设置节持有——历史入口同纪律）。
+     * 展示组件（无钩子；状态由设置节持有——历史入口同纪律）；按钮=原生 Button outline（§3.2 secondary 形）。
      */
     function WikiStewardManualActions(props) {
       var scan = props.scan || { status: 'idle', text: '' }
       var distill = props.distill || { status: 'idle', text: '' }
       var busy = scan.status === 'running' || distill.status === 'running'
       return react.createElement('div', { className: 'wiki-steward-settings-actions' },
-        react.createElement('button', {
+        react.createElement(ui.Button, {
           type: 'button',
-          className: 'wiki-steward-settings-action-scan',
+          variant: 'outline',
+          size: 'md',
+          'data-ws-action': 'scan',
           disabled: busy,
           onClick: function () { if (!busy) props.onScan() },
         }, scan.status === 'running' ? '扫描中…' : '扫描增量'),
-        react.createElement('button', {
+        react.createElement(ui.Button, {
           type: 'button',
-          className: 'wiki-steward-settings-action-distill',
+          variant: 'outline',
+          size: 'md',
+          'data-ws-action': 'distill',
           disabled: busy,
           onClick: function () { if (!busy) props.onDistill() },
         }, distill.status === 'running' ? '触发中…' : '触发蒸馏'),
@@ -339,37 +418,32 @@ window.__ModuleLoader__.load({
       )
     }
 
-    // 弹层壳仅最小结构样式（fixed 覆盖 + 限高滚动——功能必需）；视觉/token 对齐留 F2 收口（本波不越界改样式）。
-    var HISTORY_OVERLAY_STYLE = { position: 'fixed', inset: '0', zIndex: '1000', background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center' }
-    var HISTORY_PANEL_STYLE = { background: 'var(--dsw-alias-bg-layer-2, #fff)', color: 'var(--dsw-alias-label-primary, inherit)', borderRadius: 'var(--dsw-radius-panel, 8px)', width: 'min(760px, 92vw)', maxHeight: '80vh', overflow: 'auto', padding: '12px 14px' }
-
     /**
-     * 历史记录入口（设置节内，Task F1 面板搬家落点）：「查看历史记录」按钮点开弹层，呈现原面板的
-     * ingest 日志查看能力（来源标注/尾部 N 行/滚动加载——web/dist 日志视图 view:'log'，
-     * 逻辑复用 web/src/lib/log-view*）。展示组件（无钩子；开合态由设置节持有）。
+     * 历史记录入口（设置节内，Task F1 面板搬家落点；Task F2 弹层收口原生 Modal）：
+     * 「查看历史记录」按钮点开弹层，呈现原面板的 ingest 日志查看能力（来源标注/尾部 N 行/滚动加载——
+     * web/dist 日志视图 view:'log'，逻辑复用 web/src/lib/log-view*）。
+     * 弹层=原生 Modal（title/closeLabel 契约，遮罩/Escape/关闭钮收口归宿主控件；onClose→onToggle）。
+     * 展示组件（无钩子；开合态由设置节持有）。
      */
     function WikiStewardHistoryEntry(props) {
       var open = props.open === true
       var onToggle = props.onToggle
       return react.createElement('div', { className: 'wiki-steward-settings-history' },
-        react.createElement('button', {
+        react.createElement(ui.Button, {
           type: 'button',
-          className: 'wiki-steward-settings-history-toggle',
+          variant: 'outline',
+          size: 'md',
+          'data-ws-action': 'history',
           'aria-expanded': open ? 'true' : 'false',
           onClick: function () { onToggle() },
         }, open ? '收起历史记录' : '查看历史记录'),
         open
-          ? react.createElement('div', {
-              className: 'wiki-steward-settings-history-overlay',
-              role: 'dialog',
-              'aria-label': 'wiki-steward · 历史记录',
-              style: HISTORY_OVERLAY_STYLE,
-            },
-            react.createElement('div', { className: 'wiki-steward-settings-history-panel', style: HISTORY_PANEL_STYLE },
-              react.createElement('div', { className: 'wiki-steward-settings-history-head' },
-                react.createElement('h4', null, 'wiki-steward · 历史记录'),
-                react.createElement('button', { type: 'button', className: 'wiki-steward-settings-history-close', onClick: function () { onToggle() } }, '关闭')),
-              react.createElement(WikiStewardHistoryMount, null)))
+          ? react.createElement(ui.Modal, {
+              open: true,
+              onClose: function () { onToggle() },
+              title: 'wiki-steward · 历史记录',
+              closeLabel: '关闭',
+            }, react.createElement(WikiStewardHistoryMount, null))
           : null,
       )
     }

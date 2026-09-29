@@ -222,3 +222,54 @@ test('resolveView："log"=日志视图（历史入口）；缺省/未知=全量�
   assert.equal(resolveView('x'), 'full')
   assert.equal(resolveView(null), 'full')
 })
+
+// ── Task F2：web/src/styles.css 对齐 dsh token + §3.2 几何（历史弹层日志视图面=设置节子件）────
+// 依据：changes/2026-09-29-settings-ingest-controls/diagnostic-report.md §3.2/§3.3#6（壳按 §3.2 重做，
+// 日志面与 rowCard/banner 语义对齐）+ §5.1（F2 ★ styles.css 全面对齐 §3.2）。
+const fs = await import('node:fs')
+const STYLES = fs.readFileSync(new URL('../web/src/styles.css', import.meta.url), 'utf8')
+
+/** 取样式表内单条规则体 */
+function styleRule(cls, suffix = '') {
+  const m = STYLES.match(new RegExp(`\\.${cls}${suffix}\\s*\\{([^}]*)\\}`))
+  assert.ok(m, `styles.css 缺 .${cls}${suffix} 规则`)
+  return m[1]
+}
+
+test('F2 styles.css：dsh token 唯一色板（零硬编码色值）——禁 hex/rgb/hsl，暗色随宿主别名适配', () => {
+  assert.doesNotMatch(STYLES, /#[0-9a-fA-F]{3,8}\b/, '禁硬编码 hex（唯一色板来源=--dsw-alias-*）')
+  assert.doesNotMatch(STYLES, /rgba?\(/i, '禁硬编码 rgb/rgba')
+  assert.doesNotMatch(STYLES, /hsla?\(/i, '禁硬编码 hsl/hsla')
+  assert.doesNotMatch(STYLES, /prefers-color-scheme|data-ds-dark-theme/, '禁暗色分支（别名重定义即适配）')
+})
+
+test('F2 styles.css：§3.2 几何逐项——按钮 36px/radius-md/0 14px/14px 22px/disabled .4/focus 环、primary 双 token、标题 16px/24px 500、注记 12px/18px tertiary', () => {
+  // 注：styles.css 为可读形（冒号后有空格），属性值断言一律容空白——断言语义=几何值本身
+  const btn = styleRule('ws-btn')
+  assert.match(btn, /height:\s*36px/, '按钮高 36px')
+  assert.match(btn, /border-radius:\s*var\(--dsw-radius-md\)/, '按钮 radius-md')
+  assert.match(btn, /padding:\s*0 14px/, '按钮 padding 0 14px')
+  assert.match(btn, /font-size:\s*14px/, '按钮 14px')
+  assert.match(btn, /line-height:\s*22px/, '按钮 22px 行高')
+  const disabled = styleRule('ws-btn', ':disabled')
+  assert.match(disabled, /opacity:\s*0?\.4/, 'disabled opacity .4（§3.2）')
+  assert.match(STYLES, /\.ws-btn:focus-visible\s*\{[^}]*var\(--dsw-focus-ring-color/, 'focus 环引 --dsw-focus-ring-* token')
+  const primary = styleRule('ws-btn-primary')
+  assert.match(primary, /background:\s*var\(--dsw-alias-button-primary-fill\)/, 'primary 底=button-primary-fill')
+  assert.match(primary, /color:\s*var\(--dsw-alias-label-primary-foreground\)/, 'primary 字=label-primary-foreground')
+  const ghost = styleRule('ws-btn-ghost')
+  assert.match(ghost, /height:\s*28px/, '行内小按钮 28px（zGbnIq rowActions 形）')
+  assert.match(ghost, /border-radius:\s*var\(--dsw-radius-sm\)/, '行内小按钮 radius-sm')
+  const title = styleRule('ws-title')
+  assert.match(title, /font-size:\s*16px/, '标题 16px（§3.2 title）')
+  assert.match(title, /font-weight:\s*500/, '标题 500')
+  assert.match(title, /line-height:\s*24px/, '标题 24px 行高')
+  const note = styleRule('ws-note')
+  assert.match(note, /font-size:\s*12px/, '注记 12px')
+  assert.match(note, /line-height:\s*18px/, '注记 18px 行高')
+  assert.match(note, /var\(--dsw-alias-label-tertiary\)/, '注记 tertiary（§3.2 description）')
+  const root = styleRule('ws-root')
+  assert.match(root, /font-size:\s*14px/, '视图根 14px（§3.2 section 字号）')
+  assert.match(root, /line-height:\s*22px/, '视图根 22px 行高')
+  assert.match(root, /gap:\s*12px/, '视图根 gap 12px（§3.2 节容器）')
+})
