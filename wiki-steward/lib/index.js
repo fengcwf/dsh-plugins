@@ -30,7 +30,8 @@ import { kbMark } from './mark.js'
 import { wikiWrite, wikiDelete, wikiRename } from './crud.js'
 import { createWriteGate } from './gate.js'
 import { defaultLogSources } from './ingest-log.js'
-import { createIngestTrigger } from './ingest-trigger.js'
+import { createIngestTrigger, DISTILL_TASK_NAME } from './ingest-trigger.js'
+import { createIngestScheduler } from './ingest-schedule.js'
 import { registerIngestRoutes } from './ingest-routes.js'
 import { createApplyPatch } from './settings-write.js'
 
@@ -65,6 +66,17 @@ export const Config = z.object({
   // 脱敏（T8，INV-11）：落盘/注入前哨兵中和开关（lib/secrets.js）
   secrets: z.object({
     enabled: z.boolean().default(true),
+  }).prefault({}),
+  // 定时蒸馏（Task F3，诊断 §4.2 选项 A 终裁=插件自管 timer）：到点 spawn 既有 dsh-cron.sh
+  // wiki-ingest 通道（flock 防重入天然兜底）。缺省 enabled:false=零行为变化（旧配置无 ingest 键
+  // 不炸、parse 后行为与升级前一致——现系统 cron 00:25 仍是唯一触发源，插件 timer 为 opt-in）；
+  // time:'00:25'=与现系统 cron 同点（开启即等价迁移现状时间）。时间严格 HH:MM（settings-write
+  // 白名单同源校验，非法整单拒 invalid）。
+  ingest: z.object({
+    schedule: z.object({
+      enabled: z.boolean().default(false),
+      time: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, '时间格式须为 HH:MM').default('00:25'),
+    }).prefault({}),
   }).prefault({}),
 }).prefault({}) // 顶层同样容忍 undefined（热改路径上 rawConfig 可缺省 → 全默认；非法类型仍拒）
 
@@ -352,6 +364,9 @@ export function buildTools({ defineTool, configSource = () => ({}) }) {
  *          indexRefresh?: (info: object) => Promise<object>|object}} [opts]
  *   测试缝（mark.js opts._write 同款纪律，共 4 个）：paths=队列/账本/告警落点（缺省 ~/.dsh/…）、
  *   now=假时钟、tickIntervalMs=timer 间隔、indexRefresh=索引增量刷新钩子（本包不持索引，缺省明示不归我管）。
+ *   另 opts.web={home,logDir,distDir,trigger,sources}（web 数据面缝）+ opts.ingest={distill,now,logDir,
+ *   taskName,runRecordExists,setTimeout,clearTimeout,setInterval,clearInterval,reconcileIntervalMs}
+ *   （Task F3 定时调度缝，lib/ingest-schedule.js 同名语义）。
  */
 export function apply(ctx, rawConfig, opts = {}) {
   // 配置防御性校验：非法配置留痕告警后 fail-open（INV-15 禁静默）。只在 apply 期告警一次
@@ -495,6 +510,45 @@ export function apply(ctx, rawConfig, opts = {}) {
     warn(ctx, '[wiki-steward] timer 服务缺失（cordis-plugin-timer），定时轻活未接线（fail-open）：队列补交/索引刷新/告警汇总暂停，tick() 可手动触发；timer 后到将随首个事件自动补接')
   }
 
+  // ---- ingest 定时调度（Task F3；诊断 §4.2 选项 A 终裁=插件自管 timer）----
+  // 到点 spawn 既有 dsh-cron.sh wiki-ingest 通道（复用 ingest-trigger distill 缝——通道缺/在跑=
+  // 如实回报不 spawn，flock 防重入天然兜底）；enabled=false 不调度；错过补跑判据=既有日志面
+  // 当日跑记录（lib/ingest-schedule.js 契约头注）。触发缝与 web 数据面共用一个 trigger 实例
+  // （opts.web.trigger 注入缝同源）。生命周期挂 ctx.effect（INV-3 零残留定时器）：
+  // 缺 effect 缝=不裸起定时器 + 功能启用时留痕如实（缺省 disabled 零留痕）。
+  const ingestHome = opts?.web?.home ?? os.homedir()
+  const ingestLogDir = opts?.web?.logDir ?? path.join(ingestHome, '.dsh', 'logs', 'cron')
+  const ingestTrigger = opts?.web?.trigger ?? createIngestTrigger({ home: ingestHome, logDir: ingestLogDir, now: () => new Date(nowMs()) })
+  const schedOpts = opts?.ingest ?? {}
+  const scheduler = createIngestScheduler({
+    getCfg: () => readCfg().ingest.schedule,
+    distill: typeof schedOpts.distill === 'function' ? schedOpts.distill : (meta) => ingestTrigger.distill(meta),
+    now: typeof schedOpts.now === 'function' ? schedOpts.now : nowMs,
+    logDir: schedOpts.logDir ?? ingestLogDir,
+    taskName: schedOpts.taskName ?? DISTILL_TASK_NAME,
+    runRecordExists: schedOpts.runRecordExists,
+    setTimeoutFn: schedOpts.setTimeout,
+    clearTimeoutFn: schedOpts.clearTimeout,
+    setIntervalFn: schedOpts.setInterval,
+    clearIntervalFn: schedOpts.clearInterval,
+    reconcileIntervalMs: schedOpts.reconcileIntervalMs,
+    warn: (line) => warn(ctx, line),
+  })
+  // effect 软取得（cordis:676 代理语义：未 inject 属性访问即抛——B1 地基锁钉住）：
+  // try/catch 兜底 + 缺位=不裸起定时器（INV-3），绝不让属性访问抛穿 apply。
+  let effectFn = null
+  try {
+    if (typeof ctx?.effect === 'function') effectFn = ctx.effect
+  } catch { /* cordis 代理在属性缺席时抛——走兜底 */ }
+  if (effectFn !== null) {
+    effectFn.call(ctx, () => {
+      scheduler.start()
+      return () => scheduler.stop()
+    }, 'wiki-steward: ingest-schedule')
+  } else if (readCfg().ingest.schedule.enabled) {
+    warn(ctx, '[wiki-steward] ingest 定时调度未接线：宿主 ctx.effect 缺失（无拆除器通道；INV-3 零残留纪律不裸起定时器，定时蒸馏本部署不生效）')
+  }
+
   // ---- 捕获接线（T9；Q7a/Q17 组合裁定）----
   // 三缝：session/event（投影+completed 校验）+ agent/turn-stopping（收口）+ session/disposed（收尾 flush）。
   // 每缝独立 try/catch 吞+留痕——捕获绝不阻塞会话（turn-stopping 是 serial 钩子，上抛=挡收口）。
@@ -620,10 +674,8 @@ export function apply(ctx, rawConfig, opts = {}) {
             }
             try {
               const webOpts = opts.web ?? {}
-              const ingestHome = webOpts.home ?? os.homedir()
-              const ingestLogDir = webOpts.logDir ?? path.join(ingestHome, '.dsh', 'logs', 'cron')
               const distDir = webOpts.distDir ?? fileURLToPath(new URL('../web/dist', import.meta.url))
-              const trigger = webOpts.trigger ?? createIngestTrigger({ home: ingestHome, logDir: ingestLogDir, now: () => new Date(nowMs()) })
+              const trigger = webOpts.trigger ?? ingestTrigger // 与定时调度共用同一触发缝实例（Task F3）
               const sources = webOpts.sources ?? defaultLogSources({ home: ingestHome })
               for (const d of registerIngestRoutes({
                 register,

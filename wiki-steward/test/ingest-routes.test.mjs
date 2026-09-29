@@ -244,7 +244,9 @@ test('GET settings：Config 面 + 可改白名单 + writable 缺缝如实（fals
   assert.equal(res.status, 200)
   const data = res.json().data
   assert.equal(data.config.vaultRoot, '/mnt/unraid_data/Obsidian')
-  assert.deepEqual(data.editable.map((p) => p.join('.')), ['capture.enabled', 'capture.bufferRounds', 'queue.maxRetries', 'queue.ttlDays', 'secrets.enabled'])
+  // 断言修订理由（Task F3，验收③）：可改白名单随「settings-write 白名单扩项」由 5 叶子扩 7 叶子
+  //（+ingest.schedule.enabled / ingest.schedule.time）——扩展非弱化，响应契约形（data 四键）不变。
+  assert.deepEqual(data.editable.map((p) => p.join('.')), ['capture.enabled', 'capture.bufferRounds', 'queue.maxRetries', 'queue.ttlDays', 'secrets.enabled', 'ingest.schedule.enabled', 'ingest.schedule.time'])
   assert.equal(data.writable, false, '缺 configEditor 缝=writable:false 如实')
 })
 
@@ -271,6 +273,48 @@ test('POST settings：真写缝（createApplyPatch+configEditor 最小缝）→ 
   assert.equal(res.json().data.ok, true)
   assert.deepEqual(editCalls, [{ capture: { bufferRounds: 5, enabled: false } }])
   assert.deepEqual(res.json().data.config, { capture: { bufferRounds: 5, enabled: false } })
+})
+
+test('POST settings：ingest.schedule 补丁走白名单→持久化缝（F3 定时控制写入通路）', async (t) => {
+  const editCalls = []
+  const applyPatch = createApplyPatch({
+    configEditor: {
+      entries: () => [{ options: { id: 'wiki-steward' } }],
+      edit: async (entry, change) => { editCalls.push(change({ ingest: { schedule: { enabled: false, time: '00:25' } } }, {})) },
+    },
+    entryId: 'wiki-steward',
+    Config,
+  })
+  const { host } = mkSetup(t, { applyPatch })
+  const res = await call(host, { method: 'POST', url: '/api/wiki-steward/settings', body: { patch: { ingest: { schedule: { enabled: true, time: '23:30' } } } } })
+  assert.equal(res.status, 200)
+  assert.equal(res.json().data.ok, true)
+  assert.deepEqual(editCalls, [{ ingest: { schedule: { enabled: true, time: '23:30' } } }], '白名单两叶子真落写入形')
+  assert.deepEqual(res.json().data.config, { ingest: { schedule: { enabled: true, time: '23:30' } } })
+})
+
+test('POST settings：ingest.schedule 非法时间 → 400 invalid（真 zod 判据原文，持久化不完成）', async (t) => {
+  // 缝语义（既有架构，POST settings 类型非法测试同款）：真 zod 校验在 edit 内对合并生效面收口，
+  // 校验失败=change 抛错 → edit 中止不落盘（持久化绝不完成）。
+  let persisted = false
+  const applyPatch = createApplyPatch({
+    configEditor: {
+      entries: () => [{ options: { id: 'wiki-steward' } }],
+      edit: async (entry, change) => {
+        const next = change({}, {})
+        persisted = true // change 不抛才走到这=落盘（校验失败必到不了）
+        return next
+      },
+    },
+    entryId: 'wiki-steward',
+    Config,
+  })
+  const { host } = mkSetup(t, { applyPatch })
+  const res = await call(host, { method: 'POST', url: '/api/wiki-steward/settings', body: { patch: { ingest: { schedule: { time: '25:00' } } } } })
+  assert.equal(res.status, 400)
+  assert.equal(res.json().error.code, 'invalid')
+  assert.match(res.json().error.message, /配置校验失败/)
+  assert.equal(persisted, false, '校验失败持久化不完成（edit 中止）')
 })
 
 test('POST settings：白名单外（write.readOnly）→ 400 not_editable，持久化缝绝不触达', async (t) => {

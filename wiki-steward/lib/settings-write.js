@@ -7,13 +7,15 @@
 //   · patch 叶子路径不在白名单 → 整单拒（not_editable，绝不静默丢键）；
 //   · 合并语义=对象深合并、数组整替（词表/清单类整替语义与 config 整行替换一致）；
 //   · 校验=真 zod（Config.safeParse 合并后的**生效面** inherited∪current∪patch），失败如实回 invalid。
-/** 可改字段白名单（叶子路径）：capture/queue/secrets 的行为开关；vaultRoot 与 write.readOnly 只读展示 */
+/** 可改字段白名单（叶子路径）：capture/queue/secrets 的行为开关 + ingest 定时两项（Task F3）；vaultRoot 与 write.readOnly 只读展示 */
 export const EDITABLE_PATHS = Object.freeze([
   Object.freeze(['capture', 'enabled']),
   Object.freeze(['capture', 'bufferRounds']),
   Object.freeze(['queue', 'maxRetries']),
   Object.freeze(['queue', 'ttlDays']),
   Object.freeze(['secrets', 'enabled']),
+  Object.freeze(['ingest', 'schedule', 'enabled']),
+  Object.freeze(['ingest', 'schedule', 'time']),
 ])
 
 function isPlainObject(value) {

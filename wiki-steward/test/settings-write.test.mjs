@@ -10,13 +10,18 @@ import assert from 'node:assert/strict'
 import { Config } from '../lib/index.js'
 import { EDITABLE_PATHS, applyEditablePatch, createApplyPatch, isEditablePath } from '../lib/settings-write.js'
 
-test('可改白名单契约：5 叶子；vaultRoot / write.readOnly 永不在列（INV-7 语义勿动）', () => {
+test('可改白名单契约：7 叶子（F3 扩 ingest.schedule 两项）；vaultRoot / write.readOnly 永不在列（INV-7 语义勿动）', () => {
+  // 断言修订理由（Task F3，验收③）：白名单随「配置面写入持久化（settings-write 白名单扩项+校验）」
+  // 由 5 叶子扩为 7 叶子（+ingest.schedule.enabled / ingest.schedule.time）——扩展非弱化：
+  // 原 5 叶子逐条仍在列，vaultRoot/write.readOnly 禁改断言与越界整单拒语义原样保留。
   assert.deepEqual(EDITABLE_PATHS.map((p) => p.join('.')), [
     'capture.enabled',
     'capture.bufferRounds',
     'queue.maxRetries',
     'queue.ttlDays',
     'secrets.enabled',
+    'ingest.schedule.enabled',
+    'ingest.schedule.time',
   ])
   for (const banned of [['vaultRoot'], ['write', 'readOnly'], ['write'], []]) {
     assert.equal(isEditablePath(banned), false, `不可改：${banned.join('.')}`)
@@ -49,6 +54,35 @@ test('白名单外叶子=整单拒（not_editable）：write.readOnly / vaultRoo
     assert.equal(r.ok, false, `必拒：${JSON.stringify(patch)}`)
     assert.equal(r.code, 'not_editable')
     assert.match(r.message, /不在可改白名单/)
+  }
+})
+
+test('ingest.schedule 可改：深合并非整替 + 真 zod 校验（时间 HH:MM / 开关 boolean）', () => {
+  const r = applyEditablePatch({
+    current: { ingest: { schedule: { enabled: true, time: '00:25' } } },
+    patch: { ingest: { schedule: { time: '23:30' } } },
+  }, Config)
+  assert.equal(r.ok, true)
+  assert.deepEqual(r.config, { ingest: { schedule: { enabled: true, time: '23:30' } } }, '深合并非整替（enabled 保留）')
+  assert.equal(r.parsed.ingest.schedule.time, '23:30')
+
+  const r2 = applyEditablePatch({ current: {}, patch: { ingest: { schedule: { enabled: false } } } }, Config)
+  assert.equal(r2.ok, true)
+  assert.deepEqual(r2.parsed.ingest.schedule, { enabled: false, time: '00:25' }, '缺省时间由 zod 真解析补齐')
+})
+
+test('ingest.schedule 校验：非法时间/非法开关=invalid（时间格式 HH:MM 严格拒 25:00/0:25/数值形）', () => {
+  for (const patch of [
+    { ingest: { schedule: { time: '25:00' } } },
+    { ingest: { schedule: { time: '0:25' } } },
+    { ingest: { schedule: { time: '0025' } } },
+    { ingest: { schedule: { time: 2500 } } },
+    { ingest: { schedule: { enabled: 'yes' } } },
+  ]) {
+    const r = applyEditablePatch({ current: {}, patch }, Config)
+    assert.equal(r.ok, false, `必拒：${JSON.stringify(patch)}`)
+    assert.equal(r.code, 'invalid')
+    assert.match(r.message, /配置校验失败/)
   }
 })
 

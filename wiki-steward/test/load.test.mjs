@@ -36,9 +36,16 @@ test('Config 全键默认值与契约精确一致（delta-spec §2 整行 + T9 v
     write: { readOnly: true },
     queue: { maxRetries: 3, ttlDays: 7 },
     secrets: { enabled: true },
+    // 断言修订理由（Task F3，验收④）：F3 明文授权「配置键入 Config（zod）并保持向后兼容」——
+    // 新键 ingest.schedule（定时蒸馏开关+执行时间）。上波 INV-5『Config 键集零变化』系 B1/B2 波
+    // 契约（当时无新键需求）；本波验收面即含新键，缺省 enabled:false + time:'00:25' = 旧配置
+    // （无 ingest 键）parse 后行为零变化（向后兼容），原 5 组键默认值逐条锁定不变。
+    ingest: { schedule: { enabled: false, time: '00:25' } },
   }
   assert.deepEqual(Config.parse({}), expected)
   assert.deepEqual(Config.parse(undefined), expected)
+  // 向后兼容（验收④）：旧配置形（无 ingest 键）不炸、定时缺省关闭
+  assert.deepEqual(Config.parse({ capture: { bufferRounds: 5 } }).ingest, { schedule: { enabled: false, time: '00:25' } })
 })
 
 test('Config 部分覆盖只改触达键（热改语义：每次读当前 config）', async () => {
@@ -59,6 +66,8 @@ test('Config 拒绝错误类型（schema 真校验，非透传）', async () => 
   assert.throws(() => Config.parse({ queue: { maxRetries: 'three' } }))
   assert.throws(() => Config.parse({ secrets: { enabled: 1 } }))
   assert.throws(() => Config.parse({ vaultRoot: 1 }))
+  assert.throws(() => Config.parse({ ingest: { schedule: { time: '25:00' } } }), '定时时间严格 HH:MM')
+  assert.throws(() => Config.parse({ ingest: { schedule: { enabled: 'yes' } } }), '定时开关严格 boolean')
 })
 
 test('Config 默认值无可变共享引用（多次 parse 互不污染）', async () => {

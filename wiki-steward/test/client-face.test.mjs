@@ -93,6 +93,18 @@ function stripComments(src) {
     .join('\n')
 }
 
+/** 树内找全部匹配节点（F3 手动动作双按钮需要全量收集） */
+function findAll(node, pred, out = []) {
+  if (Array.isArray(node)) {
+    for (const c of node) findAll(c, pred, out)
+    return out
+  }
+  if (node === null || node === undefined || typeof node !== 'object') return out
+  if (typeof node.type === 'string' && pred(node)) out.push(node)
+  for (const c of node.children ?? []) findAll(c, pred, out)
+  return out
+}
+
 /** 树内找组件节点（React 子组件元素：type 为函数；数组 children 也下钻） */
 function findComp(node, name) {
   if (Array.isArray(node)) {
@@ -438,4 +450,198 @@ test('设置面组件：载入失败 = 容器内如实报错（不白屏不吞�
   const err = find(tree, (n) => typeof n.props?.className === 'string' && n.props.className.includes('error'))
   assert.ok(err, '失败必须如实可见')
   assert.match(JSON.stringify(err.children), /fetch failed|载入失败/)
+})
+
+// ── Task F3：手动 ingest 动作（扫描增量/触发蒸馏，走既有通路）──────────────────
+test('手动动作：设置节「扫描增量」「触发蒸馏」两按钮走既有 ingest 通路（文档相对 POST），{data} 反馈如实', async () => {
+  const { mod, effects } = loadClientFace()
+  const registered = []
+  mod.apply(mkCtx(registered, []))
+  const { component: Section } = registered.find((r) => r.decl.name === 'settings.section')
+  const calls = []
+  mod.__fetch = async (url, init) => {
+    calls.push({ url, init })
+    if (init && init.method === 'POST' && url === 'api/wiki-steward/ingest/scan') {
+      return { json: async () => ({ data: { ok: true, exitCode: 0, summary: { total: 3, skipped: 2, pending: 1, pendingFiles: [] }, output: '', logFile: 'l', argv: [] } }) }
+    }
+    if (init && init.method === 'POST' && url === 'api/wiki-steward/ingest/distill') {
+      return { json: async () => ({ data: { started: true, reason: 'started', note: '蒸馏由任务执行：已触发 headless 任务（dsh-cron wiki-ingest），wiki 编译由任务会话按 wiki-ingest skill 完成；进度与结果见任务日志（本按钮不做 LLM 蒸馏）。', logFile: 'l' } }) }
+    }
+    return { json: async () => ({ data: { config: {}, writable: true, editable: [] } }) }
+  }
+  Section()
+  effects[0]()
+  await tick()
+  await tick()
+  let tree = Section()
+  const actions = findComp(tree, 'WikiStewardManualActions')
+  assert.ok(actions, '设置节必须含手动动作组件（F3 验收①）')
+  const at = actions.type(actions.props)
+  const btns = findAll(at, (n) => n.type === 'button')
+  assert.equal(btns.length, 2, '两按钮')
+  const labels = JSON.stringify(btns.map((b) => b.children))
+  assert.match(labels, /扫描增量/)
+  assert.match(labels, /触发蒸馏/)
+
+  btns[0].props.onClick() // 扫描增量
+  const runningTree = findComp(Section(), 'WikiStewardManualActions').type(findComp(Section(), 'WikiStewardManualActions').props)
+  const runningBtns = findAll(runningTree, (n) => n.type === 'button')
+  assert.equal(runningBtns[0].props.disabled, true, '执行中禁用（防重复触发）')
+  await tick()
+  await tick()
+  const scanCall = calls.find((c) => c.url === 'api/wiki-steward/ingest/scan')
+  assert.ok(scanCall, '扫描增量必须 POST 既有通路（ingest-routes scanPost）')
+  assert.equal(scanCall.init.method, 'POST')
+  tree = Section()
+  const scanText = JSON.stringify(findComp(tree, 'WikiStewardManualActions').type(findComp(tree, 'WikiStewardManualActions').props).children)
+  assert.match(scanText, /exit 0/, '{data} 反馈如实（exit code）')
+  assert.match(scanText, /待编译 1/, '{data} 反馈如实（summary 增量面）')
+
+  const actions2 = findComp(Section(), 'WikiStewardManualActions')
+  const btns2 = findAll(actions2.type(actions2.props), (n) => n.type === 'button')
+  btns2[1].props.onClick() // 触发蒸馏
+  await tick()
+  await tick()
+  const distillCall = calls.find((c) => c.url === 'api/wiki-steward/ingest/distill')
+  assert.ok(distillCall, '触发蒸馏必须 POST 既有通路（ingest-routes distillPost）')
+  tree = Section()
+  const distillText = JSON.stringify(findComp(tree, 'WikiStewardManualActions').type(findComp(tree, 'WikiStewardManualActions').props).children)
+  assert.match(distillText, /蒸馏由任务执行/, '{data.note} 如实文案（按钮绝不做 LLM 蒸馏）')
+})
+
+test('手动动作：在跑/通道缺 = {data.note} 原文如实（ALREADY_RUNNING/CHANNEL_UNAVAILABLE 文案不改写）', async () => {
+  const { mod, effects } = loadClientFace()
+  const registered = []
+  mod.apply(mkCtx(registered, []))
+  const { component: Section } = registered.find((r) => r.decl.name === 'settings.section')
+  let n = 0
+  mod.__fetch = async (url, init) => {
+    if (init && init.method === 'POST' && url === 'api/wiki-steward/ingest/distill') {
+      n += 1
+      return {
+        json: async () => (n === 1
+          ? { data: { started: false, reason: 'already-running', note: '蒸馏任务已在执行（flock 防重入）：蒸馏由任务执行中，请稍后在日志面板查看结果。' } }
+          : { data: { started: false, reason: 'channel-unavailable', note: '蒸馏通道不可用（缺 dsh-cron.sh 或 21-wiki-ingest.md 任务文件）：蒸馏走夜间任务（00:25 cron）或手动会话执行 wiki-ingest skill。' } }),
+      }
+    }
+    return { json: async () => ({ data: { config: {}, writable: true, editable: [] } }) }
+  }
+  Section()
+  effects[0]()
+  await tick()
+  await tick()
+
+  let actions = findComp(Section(), 'WikiStewardManualActions')
+  findAll(actions.type(actions.props), (x) => x.type === 'button')[1].props.onClick()
+  await tick()
+  await tick()
+  actions = findComp(Section(), 'WikiStewardManualActions')
+  let text = JSON.stringify(actions.type(actions.props).children)
+  assert.match(text, /蒸馏任务已在执行（flock 防重入）/, '在跑文案原文如实')
+
+  actions = findComp(Section(), 'WikiStewardManualActions')
+  findAll(actions.type(actions.props), (x) => x.type === 'button')[1].props.onClick()
+  await tick()
+  await tick()
+  actions = findComp(Section(), 'WikiStewardManualActions')
+  text = JSON.stringify(actions.type(actions.props).children)
+  assert.match(text, /蒸馏通道不可用（缺 dsh-cron\.sh 或 21-wiki-ingest\.md 任务文件）/, '通道缺文案原文如实')
+})
+
+test('手动动作：{error:{code,message}} 原文展示（绝不静默）', async () => {
+  const { mod, effects } = loadClientFace()
+  const registered = []
+  mod.apply(mkCtx(registered, []))
+  const { component: Section } = registered.find((r) => r.decl.name === 'settings.section')
+  mod.__fetch = async (url, init) => {
+    if (init && init.method === 'POST') {
+      return { json: async () => ({ error: { code: 'internal', message: 'scan boom' } }) }
+    }
+    return { json: async () => ({ data: { config: {}, writable: true, editable: [] } }) }
+  }
+  Section()
+  effects[0]()
+  await tick()
+  await tick()
+  let actions = findComp(Section(), 'WikiStewardManualActions')
+  findAll(actions.type(actions.props), (x) => x.type === 'button')[0].props.onClick()
+  await tick()
+  await tick()
+  actions = findComp(Section(), 'WikiStewardManualActions')
+  const text = JSON.stringify(actions.type(actions.props).children)
+  assert.match(text, /scan boom/, '{error.message} 原文如实')
+})
+
+// ── Task F3：定时执行控制（时间输入 + 启用开关 + 双源如实提示）──────────────────
+test('定时控制：时间输入（input[type=time]）+ 启用开关入设置节，双源提示文案如实入 UI', async () => {
+  const { mod, effects } = loadClientFace()
+  const registered = []
+  mod.apply(mkCtx(registered, []))
+  const { component: Section } = registered.find((r) => r.decl.name === 'settings.section')
+  mod.__fetch = async () => ({
+    json: async () => ({
+      data: {
+        config: { ingest: { schedule: { enabled: true, time: '23:30' } } },
+        writable: true,
+        editable: [['ingest', 'schedule', 'enabled'], ['ingest', 'schedule', 'time']],
+      },
+    }),
+  })
+  Section()
+  effects[0]()
+  await tick()
+  await tick()
+  const tree = Section()
+  const rows = tree.children.find((c) => Array.isArray(c)) ?? []
+  const timeRow = rows.find((c) => c && c.props && c.props.field && c.props.field.path.join('.') === 'ingest.schedule.time')
+  const enableRow = rows.find((c) => c && c.props && c.props.field && c.props.field.path.join('.') === 'ingest.schedule.enabled')
+  assert.ok(timeRow, '定时执行时间字段入设置节（F3 验收②）')
+  assert.ok(enableRow, '定时启用开关字段入设置节（F3 验收②）')
+
+  const timeTree = timeRow.type(timeRow.props)
+  const input = find(timeTree, (n) => n.type === 'input' && n.props.type === 'time')
+  assert.ok(input, '时间输入=原生 time 控件（简单形，样式 F2 收口）')
+  assert.equal(input.props.value, '23:30', '当前配置值如实回显')
+
+  const enableTree = enableRow.type(enableRow.props)
+  const cb = find(enableTree, (n) => n.type === 'input' && n.props.type === 'checkbox')
+  assert.ok(cb, '启用开关=既有简单形 checkbox')
+  assert.equal(cb.props.checked, true)
+
+  assert.match(
+    JSON.stringify(tree.children),
+    /系统 cron 仍在 00:25 触发，flock 防重入；如需单一时间源请运维侧停用该行/,
+    '双源如实提示文案入 UI（去留交用户，F3 裁定③）',
+  )
+})
+
+test('定时控制：改时间随保存走 {patch:{ingest:{schedule:{time}}}}（白名单双侧一致）', async () => {
+  const { mod, effects } = loadClientFace()
+  const registered = []
+  mod.apply(mkCtx(registered, []))
+  const { component: Section } = registered.find((r) => r.decl.name === 'settings.section')
+  const calls = []
+  mod.__fetch = async (url, init) => {
+    calls.push({ url, init })
+    if (init && init.method === 'POST') {
+      return { json: async () => ({ data: { ok: true, config: { ingest: { schedule: { enabled: false, time: '23:30' } } } } }) }
+    }
+    return { json: async () => ({ data: { config: { ingest: { schedule: { enabled: false, time: '00:25' } } }, writable: true, editable: [] } }) }
+  }
+  Section()
+  effects[0]()
+  await tick()
+  await tick()
+  let tree = Section()
+  const rows = tree.children.find((c) => Array.isArray(c)) ?? []
+  const timeRow = rows.find((c) => c && c.props && c.props.field && c.props.field.path.join('.') === 'ingest.schedule.time')
+  timeRow.props.onChange('23:30')
+  tree = Section()
+  find(tree, (n) => n.type === 'button').props.onClick() // 保存
+  await tick()
+  await tick()
+  const post = calls.find((c) => c.init && c.init.method === 'POST')
+  assert.ok(post, '必须发保存请求')
+  assert.equal(post.url, 'api/wiki-steward/settings')
+  assert.deepEqual(JSON.parse(post.init.body), { patch: { ingest: { schedule: { time: '23:30' } } } }, '只发变更叶子（ingest.schedule.time）')
 })

@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "test": "node --test",
-    "check": "node --check lib/index.js && node --check lib/secrets.js && node --check lib/fs-safe.js && node --check lib/capture.js && node --check lib/buffer.js && node --check lib/validate.js && node --check lib/mark.js && node --check lib/crud.js && node --check lib/queue.js && node --check lib/alert.js && node --check lib/gate.js && node --check lib/ingest-log.js && node --check lib/ingest-trigger.js && node --check lib/ingest-routes.js && node --check lib/settings-write.js && node --check lib/client.js && node --test",
+    "check": "node --check lib/index.js && node --check lib/secrets.js && node --check lib/fs-safe.js && node --check lib/capture.js && node --check lib/buffer.js && node --check lib/validate.js && node --check lib/mark.js && node --check lib/crud.js && node --check lib/queue.js && node --check lib/alert.js && node --check lib/gate.js && node --check lib/ingest-log.js && node --check lib/ingest-trigger.js && node --check lib/ingest-schedule.js && node --check lib/ingest-routes.js && node --check lib/settings-write.js && node --check lib/client.js && node --test",
     "build": "vite build --config web/vite.config.js",
     "dev": "vite --config web/vite.config.js"
   },

@@ -9,7 +9,12 @@
 //      **无前导斜杠/相对 base**；站内绝对 '/…' 会逃出 <base href="./"> 前缀=生产 404 根因）。
 //   ② ingest 日志查看 = 设置节内「查看历史记录」按钮 → 弹层挂 web/dist 日志视图（view:'log'），
 //      来源标注/尾部 N 行/滚动加载语义保持（逻辑复用 web/src/lib/log-view*）。
-//   ③ `sidebar.panellist` 行 + `main` 槽页注册已移除（旧面板入口随诉求摘除；其裸 import 说明符
+//   ③ 手动 ingest 动作（Task F3）= 设置节内「扫描增量」「触发蒸馏」两按钮，走既有通路
+//      POST api/wiki-steward/ingest/{scan,distill}（蒸馏经 headless 任务通道不真跑 LLM）；
+//      状态反馈沿 {data}/{error} 契约形如实（data.note 原文=在跑/通道缺文案）。
+//   ④ 定时执行控制（Task F3，选项 A 插件自管 timer）= 设置节时间输入 + 启用开关（ingest.schedule
+//      白名单双侧一致），双源如实提示（系统 cron 仍在 00:25，flock 防重入）。
+//   ⑤ `sidebar.panellist` 行 + `main` 槽页注册已移除（旧面板入口随诉求摘除；其裸 import 说明符
 //      =TypeError: Failed to resolve module specifier 根因，诊断 §1.2）。
 // 弃自造 `settings.plugins.tab` 页签 + 站内绝对 '/wiki-steward/panel.js' 动态 import（旧 404 面）；
 // panel.js 改由 ctx.webServer prefix /api/wiki-steward 官方路由面静态服务，动态 import 说明符经
@@ -27,6 +32,8 @@ window.__ModuleLoader__.load({
     // 文档相对（无前导斜杠）：与宿主 <base href="./"> 同基；API 路径同此形
     var PANEL_URL = 'api/wiki-steward/panel.js'
     var SETTINGS_URL = 'api/wiki-steward/settings'
+    var INGEST_SCAN_URL = 'api/wiki-steward/ingest/scan'
+    var INGEST_DISTILL_URL = 'api/wiki-steward/ingest/distill'
     var API_BASE = 'api/wiki-steward'
 
     /**
@@ -52,6 +59,8 @@ window.__ModuleLoader__.load({
       { path: ['queue', 'maxRetries'], kind: 'number', label: '队列重试上限' },
       { path: ['queue', 'ttlDays'], kind: 'number', label: '队列条目 TTL（天）' },
       { path: ['secrets', 'enabled'], kind: 'boolean', label: '脱敏开关（落盘/注入前哨兵中和）' },
+      { path: ['ingest', 'schedule', 'enabled'], kind: 'boolean', label: '定时蒸馏开关（启用后每日到点触发 headless 蒸馏任务）', note: '开启后若当日无跑记录会补触发一次（重启/启用即按补跑判据收口）；执行改动约 1 分钟内热生效，无需重启。' },
+      { path: ['ingest', 'schedule', 'time'], kind: 'time', label: '定时蒸馏执行时间（HH:MM）', note: '系统 cron 仍在 00:25 触发，flock 防重入；如需单一时间源请运维侧停用该行' },
     ]
     var READONLY_FIELDS = [
       { path: ['vaultRoot'], kind: 'string', label: 'vault 根路径（只读展示）' },
@@ -101,6 +110,13 @@ window.__ModuleLoader__.load({
             onChange(n)
           },
         })
+      } else if (field.kind === 'time') {
+        input = react.createElement('input', {
+          type: 'time',
+          value: typeof value === 'string' ? value : '',
+          disabled: readOnly,
+          onChange: function (e) { onChange(e.target.value) },
+        })
       } else if (field.kind === 'string[]') {
         input = react.createElement('textarea', {
           rows: 3,
@@ -127,7 +143,7 @@ window.__ModuleLoader__.load({
      * 失败/拒绝=容器内如实报错（not_editable/invalid 服务端判据原文），绝不静默。
      */
     function WikiStewardSettingsSection() {
-      var pair = react.useState({ status: 'loading', data: null, error: null, draft: {}, saving: false, notice: null, historyOpen: false })
+      var pair = react.useState({ status: 'loading', data: null, error: null, draft: {}, saving: false, notice: null, historyOpen: false, actions: { scan: { status: 'idle', text: '' }, distill: { status: 'idle', text: '' } } })
       var state = pair[0]
       var setState = pair[1]
       /** 局部更新（函数形 updater：未列键一律沿用——含 historyOpen 开合态，异步回调无陈旧闭包风险） */
@@ -136,6 +152,51 @@ window.__ModuleLoader__.load({
       }
       function toggleHistory() {
         update({ historyOpen: state.historyOpen !== true })
+      }
+      /** 手动动作状态局部更新（函数形 updater：双按钮并发无陈旧闭包互踩） */
+      function updateAction(kind, delta) {
+        setState(function (prev) {
+          var actions = Object.assign({}, prev.actions)
+          var cur = actions[kind] || { status: 'idle', text: '' }
+          actions[kind] = Object.assign({}, cur, delta)
+          return Object.assign({}, prev, { actions: actions })
+        })
+      }
+      /**
+       * 手动动作（Task F3）：POST 既有 ingest 通路（ingest-routes scanPost/distillPost）。
+       * 反馈沿 {data}/{error} 契约形如实：{data.note} 原文展示（在跑/通道缺文案不改写）、
+       * {error} 原文展示；扫描增量回 {data.ok/exitCode/summary} 组合如实。
+       */
+      function runAction(kind, url) {
+        updateAction(kind, { status: 'running', text: '执行中…' })
+        Promise.resolve()
+          .then(function () { return exports.__fetch(url, { method: 'POST' }) })
+          .then(function (res) { return res.json() })
+          .then(function (body) {
+            if (body && body.error) {
+              updateAction(kind, { status: 'error', text: String(body.error.message || body.error.code || '触发失败') })
+              return
+            }
+            var data = (body && body.data) || {}
+            if (kind === 'distill') {
+              updateAction(kind, {
+                status: data.started === true ? 'ok' : 'error',
+                text: String(data.note || (data.started === true ? '已触发蒸馏任务' : '未触发')),
+              })
+              return
+            }
+            var summary = data.summary || {}
+            var counts = typeof summary.total === 'number'
+              ? '：总 ' + summary.total + ' / 待编译 ' + (typeof summary.pending === 'number' ? summary.pending : '?')
+              : ''
+            updateAction(kind, {
+              status: data.ok === true ? 'ok' : 'error',
+              text: (data.ok === true ? '扫描增量完成' : '扫描增量失败') + '（exit ' + String(data.exitCode) + '）' + counts,
+            })
+          })
+          .catch(function (e) {
+            updateAction(kind, { status: 'error', text: String((e && e.message) || e) })
+          })
       }
 
       react.useEffect(function load() {
@@ -229,12 +290,51 @@ window.__ModuleLoader__.load({
         react.createElement('h3', null, 'wiki-steward · 设置'),
         react.createElement('p', { className: 'wiki-steward-settings-note' }, '可改项即时热生效（写路径=官方路由面 api/wiki-steward/settings → configEditor 持久化缝）；只读项语义勿动。'),
         react.createElement(WikiStewardHistoryEntry, { open: state.historyOpen === true, onToggle: toggleHistory }),
+        react.createElement(WikiStewardManualActions, {
+          scan: state.actions.scan,
+          distill: state.actions.distill,
+          onScan: function () { runAction('scan', INGEST_SCAN_URL) },
+          onDistill: function () { runAction('distill', INGEST_DISTILL_URL) },
+        }),
         rows,
         writable
           ? react.createElement('button', { type: 'button', className: 'wiki-steward-settings-save', disabled: state.saving, onClick: save }, state.saving ? '保存中…' : '保存')
           : react.createElement('p', { className: 'wiki-steward-settings-note' }, '本部署配置写入缝缺失（configEditor 未挂载），暂只读展示。'),
         state.notice
           ? react.createElement('p', { className: state.notice.kind === 'ok' ? 'wiki-steward-settings-ok' : 'wiki-steward-settings-error' }, state.notice.text)
+          : null,
+      )
+    }
+
+    /**
+     * 手动 ingest 动作（Task F3）：「扫描增量」「触发蒸馏」两按钮走既有通路
+     * （POST api/wiki-steward/ingest/{scan,distill}，文档相对——issue #1707 教训）。
+     * 蒸馏经 headless 任务通道不真跑 LLM；按钮状态反馈沿 {data}/{error} 契约形：
+     * data.note 如实原文（在跑/通道缺文案）、{error} 原文展示，绝不静默。
+     * 展示组件（无钩子；状态由设置节持有——历史入口同纪律）。
+     */
+    function WikiStewardManualActions(props) {
+      var scan = props.scan || { status: 'idle', text: '' }
+      var distill = props.distill || { status: 'idle', text: '' }
+      var busy = scan.status === 'running' || distill.status === 'running'
+      return react.createElement('div', { className: 'wiki-steward-settings-actions' },
+        react.createElement('button', {
+          type: 'button',
+          className: 'wiki-steward-settings-action-scan',
+          disabled: busy,
+          onClick: function () { if (!busy) props.onScan() },
+        }, scan.status === 'running' ? '扫描中…' : '扫描增量'),
+        react.createElement('button', {
+          type: 'button',
+          className: 'wiki-steward-settings-action-distill',
+          disabled: busy,
+          onClick: function () { if (!busy) props.onDistill() },
+        }, distill.status === 'running' ? '触发中…' : '触发蒸馏'),
+        scan.text
+          ? react.createElement('p', { className: scan.status === 'ok' ? 'wiki-steward-settings-ok' : 'wiki-steward-settings-error' }, scan.text)
+          : null,
+        distill.text
+          ? react.createElement('p', { className: distill.status === 'ok' ? 'wiki-steward-settings-ok' : 'wiki-steward-settings-error' }, distill.text)
           : null,
       )
     }

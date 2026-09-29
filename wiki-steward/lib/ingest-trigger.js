@@ -22,8 +22,8 @@ export const DISTILL_NOTE = '蒸馏由任务执行：已触发 headless 任务�
 export const CHANNEL_UNAVAILABLE_NOTE = '蒸馏通道不可用（缺 dsh-cron.sh 或 21-wiki-ingest.md 任务文件）：蒸馏走夜间任务（00:25 cron）或手动会话执行 wiki-ingest skill。'
 export const ALREADY_RUNNING_NOTE = '蒸馏任务已在执行（flock 防重入）：蒸馏由任务执行中，请稍后在日志面板查看结果。'
 
-/** 本地时区 YYYYMMDD（与 dsh-cron.sh `date +%Y%m%d` 同口径） */
-function dateStamp(d) {
+/** 本地时区 YYYYMMDD（与 dsh-cron.sh `date +%Y%m%d` 同口径）；ingest-schedule 跑记录判据同源 */
+export function dateStamp(d) {
   const p = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`
 }
