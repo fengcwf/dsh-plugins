@@ -14,7 +14,9 @@ const props = defineProps({
   rendered: { type: Object, default: null },
   backlinks: { type: Array, default: () => [] },
   busy: { type: Boolean, default: false },
+  recents: { type: Array, default: () => [] },
   activePanel: { type: String, default: '' },
+  readView: { type: Object, default: null }, // 未用 props 仅吸收防落 DOM 属性（同页面板接口统一）
 })
 
 const form = ref({ externalBaseUrl: '', lanHost: '' })

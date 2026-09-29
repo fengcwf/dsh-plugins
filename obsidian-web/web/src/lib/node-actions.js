@@ -20,6 +20,11 @@ export function createNodeActions(deps) {
   const renameWarnings = ref('')
 
   // ── 删除（T6：双确认弹层→/ob/api/delete；成功刷新树并收拢打开态）──────────────
+  /** F-3（ui-review）：写失败/超时后自动 reloadTree() 兜底对齐服务端事实；兜底刷新失败不掩盖原写错误 */
+  async function refreshAfterWriteFailure() {
+    try { await deps.refreshTree() } catch { /* 兜底刷新失败不掩盖原写错误 */ }
+  }
+
   function onDeleteNode(node) {
     deleteError.value = ''
     deleteTarget.value = { path: node.key }
@@ -38,6 +43,7 @@ export function createNodeActions(deps) {
       const { data } = await deps.deleteFile(payload.path, payload.confirm)
       if (!data.ok) {
         deleteError.value = `删除未完成（${data.reason}）：${data.message}`
+        await refreshAfterWriteFailure() // F-3：写失败后自动 reloadTree() 兜底
         return
       }
       deleteTarget.value = null
@@ -46,6 +52,7 @@ export function createNodeActions(deps) {
       if (data.warnings?.length) deps.onNotice(data.warnings.join('；')) // 落点改名/收尾故障留痕（INV-15 风格）
     } catch (e) {
       deleteError.value = e.message
+      await refreshAfterWriteFailure() // F-3：写失败/超时后自动 reloadTree() 兜底
     } finally {
       deleteBusy.value = false
     }
@@ -84,14 +91,17 @@ export function createNodeActions(deps) {
         // 冲突=可解释 + 显式覆盖途径（再提交带 overwrite:true，永不静默覆盖）
         renameError.value = `${outcome.message}（可点「覆盖目标」显式替换）`
         renameTarget.value = { ...renameTarget.value, canOverwrite: true }
+        await refreshAfterWriteFailure() // F-3：写未完成后自动 reloadTree() 兜底
         return
       }
       renameError.value = outcome.kind === 'rolled-back'
         ? `改名未完成，已整体回滚：${outcome.message}`
         : outcome.message
       if (renameWarnings.value) deps.onNotice(renameWarnings.value) // 回滚/事务中止留痕同样展示
+      await refreshAfterWriteFailure() // F-3：写失败后自动 reloadTree() 兜底
     } catch (e) {
       renameError.value = e.message
+      await refreshAfterWriteFailure() // F-3：写失败/超时后自动 reloadTree() 兜底
     } finally {
       renameBusy.value = false
     }

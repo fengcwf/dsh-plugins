@@ -169,7 +169,7 @@ export function apply(ctx, rawConfig) {
     const registerRoutes = () => registerWebRoutes(ctx, getConfig, {
       distDir: DEFAULT_DIST_DIR,
       search: indexService === null ? undefined : { backends: { fts: indexService.ftsBackend } },
-      index: indexService === null ? undefined : { refresh: () => indexService.refresh() },
+      index: indexService === null ? undefined : { refresh: () => indexService.refresh(), status: () => indexService.status() },
     })
     if (typeof ctx.effect === 'function') {
       ctx.effect(() => {

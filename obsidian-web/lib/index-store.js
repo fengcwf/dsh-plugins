@@ -12,8 +12,9 @@
 //   （kb-context 实测坑：external content 的 'delete' 必须传 OLD 原文，否则静默残留索引行）。
 // 查询编译（compileQuery plan → FTS MATCH / LIKE，查询串转义义务=M4/ERR-004 防炸）：
 //   fts 词面 → 逐词加引号（内部 " 加倍转义）后 AND 连接进 MATCH；like 词面 → SQL LIKE（\ % _ 转义）。
-//   LIKE 预过滤=ASCII 大小写折叠（非 ASCII 大小写对可能比 regex /i 窄——service 层结构性兜底保证
-//   like 词面生产不可达本路径；命中行/AND 语义由 search.matchDocs 复核，绝不由 SQL 单独裁决）。
+//   A4 路由修复后 like 词面（2 字盲区/纯符号）生产可达本路径——下推安全门=SQL ≡ regex /i
+//   可证明等价才准下推（likePatterns/sqlExactChars，含非 ASCII 大小写词面一律拒下推走 scan）
+//   + (title|content) 双列；命中行/AND 语义由 search.matchDocs 终审，绝不由 SQL 单独裁决。
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -105,6 +106,40 @@ function likeParam(text) {
 /** FTS5 MATCH 词面：逐词加引号（内部 " 加倍）——防符号/关键字炸 MATCH 语法（ERR-004 同类） */
 function matchExpr(ftsTerms) {
   return ftsTerms.map((t) => `"${t.text.replace(/"/g, '""')}"`).join(' AND ')
+}
+
+// ── LIKE/MATCH 词面下推安全门（A4：SQL 预过滤必须 ≡ scan 后端 regex /i 才准下推）──────────
+// SQLite LIKE 的大小写折叠=ASCII-only（非 ASCII 走字节精确比较）；matchFile 的 regex /i 走 JS
+//   Canonicalize（toUpperCase 单字符 + 「非 ASCII→ASCII 不折叠」特例——实测 U+212A KELVIN SIGN
+//   与 U+017F LONG S 在 /i 下与 k/s **互不折叠**，与 LIKE 行为一致）。
+//   可证明「SQL ≡ /i」的词面（准下推）：① 全 ASCII——LIKE 原生 ASCII 折叠 ≡ /i；
+//   ② 非 ASCII 但**无大小写**字符（CJK 等）——字节精确 ≡ /i 自匹配。
+//   词面含「非 ASCII 且有大小写」字符（Ä/ä、Σ/σ/ς 三元类、К/к…）→ SQL 侧无法枚举 JS 折叠类
+//   （lower/upper 取不全，如 Σ/σ/ς），下推会**窄化召回** → 返回 null 拒下推，上层 canHandle
+//   拒 → scan 兜底（既有语义原样保持，绝不静默窄化召回）。
+//   命中行/AND 语义仍由 search.matchDocs 终审（预过滤只允许等价/超集，绝不允许窄化）。
+function sqlExactChars(text) {
+  const chars = [...String(text)]
+  if (chars.length === 0) return false // 空词面拒（防 %% 全表下推；compileQuery 已保证 token 非空，此处防御）
+  for (const ch of chars) {
+    if (ch.codePointAt(0) < 0x80) continue // ASCII：LIKE/MATCH 原生折叠 ≡ /i
+    if (ch.toLowerCase() !== ch || ch.toUpperCase() !== ch) return false // 非 ASCII 有大小写：不可证明等价
+  }
+  return true
+}
+
+/** LIKE 词面 pattern（纯函数）：[text]=可证明等价单 pattern；null=不可安全下推（上层走 scan 兜底） */
+export function likePatterns(text) {
+  return sqlExactChars(text) ? [String(text)] : null
+}
+
+/**
+ * A4 盲区/词面可安全窄化判定（纯函数、零副作用——路由期调用）：plan 全部词面 SQL 语义
+ * ≡ regex /i 才接（含 fts 词面——MATCH 的 ASCII 折叠同样只在可证明等价面内下推）。
+ */
+export function canPrefilterPlan(plan) {
+  const terms = Array.isArray(plan?.terms) ? plan.terms : []
+  return terms.length > 0 && terms.every((t) => sqlExactChars(t.text))
 }
 
 /**
@@ -242,8 +277,19 @@ function openOnce({ rootAbs, dirAbs, dbPath, busyMs }) {
     return out
   }
 
-  /** compileQuery plan → FTS MATCH / LIKE 候选选择（文件级 AND 预过滤；终审=search.matchDocs） */
-  function matchCandidates(plan) {
+  /** 全量内容快照（A1 反链索引面）：{rel, content}[] 按 path 升序——backlink-index.replaceFromDocs 消费 */
+  function listDocContents() {
+    return db.prepare('SELECT path, content FROM docs ORDER BY path').all()
+      .map((row) => ({ rel: row.path, content: row.content }))
+  }
+
+  /**
+   * compileQuery plan → FTS MATCH / LIKE 候选选择（文件级 AND 预过滤；终审=search.matchDocs）。
+   * A4 盲区召回口径：like 词面走 (title|content) LIKE（title 列覆盖 basename 派生标题——
+   *   matchFile 标题命中也在召回面）；下推安全门保证 SQL ≡ regex /i（绝不窄化召回）。
+   * opts.after/limit = path keyset 分批（fts 后端批间让出+超时预算用；缺省=一次全量=旧行为）。
+   */
+  function matchCandidates(plan, { after = null, limit = null } = {}) {
     const ftsTerms = plan.terms.filter((t) => t.strategy === 'fts')
     const likeTerms = plan.terms.filter((t) => t.strategy === 'like')
     const where = []
@@ -253,11 +299,30 @@ function openOnce({ rootAbs, dirAbs, dbPath, busyMs }) {
       params.push(matchExpr(ftsTerms))
     }
     for (const t of likeTerms) {
-      where.push('content LIKE ? ESCAPE \'\\\'')
-      params.push(likeParam(t.text))
+      const patterns = likePatterns(t.text)
+      if (patterns === null) {
+        // canHandle 已拒（路由期），此处防御：绝不静默窄化召回——上抛可解释错码，服务层走 scan 兜底
+        throw Object.assign(new Error(`LIKE 词面不可安全下推（SQL 与 regex /i 折叠语义不可证明等价）：${t.text}`), { code: 'like_unbounded' })
+      }
+      const ors = []
+      for (const p of patterns) {
+        ors.push("(title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')")
+        params.push(likeParam(p), likeParam(p))
+      }
+      where.push(ors.length === 1 ? ors[0] : `(${ors.join(' OR ')})`)
+    }
+    if (after !== null) {
+      where.push('path > ?')
+      params.push(after)
     }
     if (where.length === 0) return []
-    return db.prepare(`SELECT path, content FROM docs WHERE ${where.join(' AND ')} ORDER BY path`).all(...params)
+    const lim = limit === null ? null : Math.max(1, Math.floor(limit))
+    let sql = `SELECT path, content FROM docs WHERE ${where.join(' AND ')} ORDER BY path`
+    if (lim !== null) {
+      sql += ' LIMIT ?'
+      params.push(lim)
+    }
+    return db.prepare(sql).all(...params)
   }
 
   function count() {
@@ -275,6 +340,7 @@ function openOnce({ rootAbs, dirAbs, dbPath, busyMs }) {
       removeFile,
       removeTree,
       listDocs,
+      listDocContents,
       matchCandidates,
       count,
       close: () => db.close(),

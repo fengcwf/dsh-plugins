@@ -1,27 +1,69 @@
 // api — /ob/ JSON 接口客户端（API 形：成功 {data, total?}；失败 {error:{code,message}}）
+// A5（p8-r3c-repro.md §3/§7）：AbortController + 读接口 8 秒超时中止——服务端挂起（如 /ob/api/backlinks
+// 全库同步扫描 47.4s）不再无限等待；到期 ctrl.abort() 并上抛 name='TimeoutError'（可解释超时，
+// 由 web/src/lib/load-state.js 归入 timeout 态）。阈值 LOAD_TIMEOUT_MS（8000，用户定稿）唯一源。
+// F-1（ui-review 形 a）：200 但 body 非 JSON（null 信封，如反代错误页）上抛「响应不是有效 JSON（HTTP n）」
+// → 经 load-state 归 error 态（可解释+重试），不再让 TypeError 逃出加载状态机（静默失败回归）。
+// F-3（ui-review）：写接口（save/create/rename/delete 等长任务）不设前端超时（WRITE_TIMEOUT_MS=0）；
+// 读/写超时与错误文案区分；写失败/超时后由调用方自动 reloadTree() 兜底（App.vue / node-actions）。
 import { buildDownloadUrl, dispositionFilename } from './lib/download.js'
+import { LOAD_TIMEOUT_MS, isTimeoutError } from './lib/load-state.js'
+
+/** 写接口不设前端超时（F-3 长任务语义：全库改链 47s 级慢写——杀超时只会让用户在服务端仍在执行时得到误导性二次错误） */
+const WRITE_TIMEOUT_MS = 0
+/** 写超时提示（F-3：与读超时文案区分——写结果不确定，先刷新目录对齐服务端事实再决定是否重试） */
+const WRITE_TIMEOUT_HINT = '服务端可能仍在执行，请先刷新目录再决定是否重试'
+
 async function requestJson(url, options = {}) {
-  const res = await fetch(url, {
-    ...options,
-    headers: { accept: 'application/json', ...options.headers },
-  })
-  const body = await res.json().catch(() => null)
-  if (!res.ok) {
-    throw new Error(body?.error?.message ?? `请求失败（HTTP ${res.status}）`)
+  const { timeoutMs = LOAD_TIMEOUT_MS, write = false, ...init } = options
+  const ctrl = new AbortController()
+  let timedOut = false
+  const timer = timeoutMs > 0
+    ? setTimeout(() => {
+        timedOut = true
+        ctrl.abort()
+      }, timeoutMs)
+    : null
+  try {
+    const res = await fetch(url, {
+      ...init,
+      headers: { accept: 'application/json', ...init.headers },
+      signal: ctrl.signal,
+    })
+    const body = await res.json().catch(() => null)
+    if (!res.ok) {
+      throw new Error(body?.error?.message ?? (write ? `写入失败（HTTP ${res.status}）` : `请求失败（HTTP ${res.status}）`))
+    }
+    if (body == null) {
+      // F-1 形 a：200 非 JSON 信封 → 可解释错误（含「JSON」），经 load-state 归 error 态（零静默失败）
+      throw new Error(write ? `写入响应不是有效 JSON（HTTP ${res.status}）` : `响应不是有效 JSON（HTTP ${res.status}）`)
+    }
+    return body
+  } catch (e) {
+    if (timedOut || isTimeoutError(e)) {
+      throw Object.assign(new Error(write ? `写入超时：${WRITE_TIMEOUT_HINT}` : `请求超时：${Math.round(timeoutMs / 1000)} 秒内未收到响应`), {
+        name: 'TimeoutError',
+        timeoutMs,
+      })
+    }
+    throw e
+  } finally {
+    if (timer != null) clearTimeout(timer)
   }
-  return body
 }
 
 export function fetchTree() {
   return requestJson('/ob/api/tree')
 }
 
-export function fetchFile(path) {
-  return requestJson(`/ob/api/file?path=${encodeURIComponent(path)}`)
+// F-2：读包装层透传 options（requestJson 已收 options.timeoutMs——测试可注入短超时锁中止链；
+// 缺省=LOAD_TIMEOUT_MS 读 8s，行为不变）
+export function fetchFile(path, options) {
+  return requestJson(`/ob/api/file?path=${encodeURIComponent(path)}`, options)
 }
 
-export function fetchBacklinks(path) {
-  return requestJson(`/ob/api/backlinks?path=${encodeURIComponent(path)}`)
+export function fetchBacklinks(path, options) {
+  return requestJson(`/ob/api/backlinks?path=${encodeURIComponent(path)}`, options)
 }
 
 // 搜索（T3）：{data:{backend,degraded,query,results}, total}；score=排序权重非匹配概率（语义句在面板描述位）
@@ -31,10 +73,16 @@ export function fetchSearch(q, limit) {
   return requestJson(`/ob/api/search?${params}`)
 }
 
-function postJson(url, payload) {
+// 写通道（F-3）：默认写语义=不设前端超时（WRITE_TIMEOUT_MS=0）+ 写错误/超时文案；
+// 读计算型 POST（fetchRender）显式 { write:false } 回读语义（维持 8s）。
+function postJson(url, payload, options = {}) {
+  const { write = true, ...rest } = options
   return requestJson(url, {
+    timeoutMs: write ? WRITE_TIMEOUT_MS : LOAD_TIMEOUT_MS,
+    write,
+    ...rest,
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...rest.headers },
     body: JSON.stringify(payload),
   })
 }
@@ -46,8 +94,9 @@ export function saveFile(path, content, lock) {
 }
 
 // live 渲染（T4 分屏预览；ARC-1：前端零 markdown 解析，预览 HTML 全出自服务端唯一渲染源）
+// 渲染=读计算（write:false）：维持读 8s，不随写长任务语义挂起
 export function fetchRender(content) {
-  return postJson('/ob/api/render', { content })
+  return postJson('/ob/api/render', { content }, { write: false })
 }
 
 // 删除（T6/OW-US-6、OW-INV-5）：confirm=目标相对路径全等复述（服务端缺省拒，确认先于副作用）；

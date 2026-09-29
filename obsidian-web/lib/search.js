@@ -15,7 +15,15 @@
 //
 // 查询策略（2 字盲区口径，kb-context 同款语义、独立实现勿 import）：FTS5 trigram 下限 3 码点——
 //   短词（<3 码点，含 1/2 字）与纯符号词 strategy='like'（SQL LIKE '%q%' 子串语义 + 大小写折叠）；
-//   其余 strategy='fts'。service 层结构性兜底：非全 fts 查询一律走 scan 后端，不信任 fts 后端。
+//   其余 strategy='fts'。
+// service 层选择语义（A4 路由修复，runtime-fix-wave.md 卡 A4）：
+//   ① plan.allFts → 信任已注册 fts 后端（既有语义）；
+//   ② 含盲区词面（like）→ 仅当 fts 后端**显式声明盲区忠实能力**（canHandle(plan)===true）才走 fts；
+//   ③ 否则结构性走 scan 兜底——「不信任未声明能力的 fts 后端」语义保持（test/search.test.mjs ⑥）。
+//   盲区走 fts 的必要性（A4 根因：p8-r3c-repro §6 backend=scan/degraded timeout/scanned=0）：
+//   短词是中文检索常态（用友/链接/中国），结构性走 scan 在 1.5 万篇 CIFS vault 上 2s 预算内
+//   连 walk 都扫不完（实测 47s/全库）→ 恒超时零命中；索引 LIKE 窄化 + matchDocs 终审亚秒命中
+//   （test/search-fts-short.test.mjs 命中率/耗时断言）。
 //
 // scan 后端（本卡实现；T11 索引后端接管后的保底，后端切换零 API 变化）：
 //   候选=全 vault `.md` 笔记（dot 条目跳过，与 listTree 同口径）；frontmatter 行不作命中行（title 来源除外）。
@@ -185,6 +193,11 @@ function cmpHits(a, b) {
   return b.score - a.score || (a.path < b.path ? -1 : a.path > b.path ? 1 : a.line - b.line)
 }
 
+/** 全局命中排序（score 降序 → path → line；scan/fts 双后端同一口径）——additive：索引后端分批聚合后复用 */
+export function sortHits(hits) {
+  return hits.sort(cmpHits)
+}
+
 // ── T11 复用面（additive，API 形零变化）：索引后端按同一文件级 AND/命中行/score 口径产出 hits ──
 // fts 索引后端只做候选选择（FTS MATCH/LIKE 窄化），命中行/score/snippet 一律走本函数——
 // 与 scan 后端逐字节同口径（test/index-fts.test.mjs 双后端等价锁）；score=排序权重（越大越优）。
@@ -192,7 +205,7 @@ export function matchDocs(plan, docs) {
   const probes = compileProbes(plan)
   const hits = []
   for (const doc of docs) hits.push(...matchFile(doc.path, doc.content, plan, probes))
-  return hits.sort(cmpHits)
+  return sortHits(hits)
 }
 
 // ── scan 后端：全量扫描 + 并发限流 + 超时 fail-open 降级 ────────────────────────
@@ -268,11 +281,14 @@ export function createScanBackend({ concurrency = DEFAULT_CONCURRENCY, timeoutMs
 }
 
 // ── 检索服务：可插拔后端缝（T11 fts 索引后端即插即用，后端切换零 API 变化）────────
-// 后端契约：{name, search({root, plan, limit}) → {hits, degraded}}；hits=结果项形（键集锁定）。
+// 后端契约：{name, search({root, plan, limit, timeoutMs}) → {hits, degraded}}；hits=结果项形（键集锁定）。
+//   可选能力声明：canHandle(plan) → boolean（盲区词面忠实处理能力，A4 路由依据——见上方选择语义）。
 //   查询串转义义务（fts 后端，M4）：plan.terms 词面进 FTS MATCH / LIKE 之前必须逐词加引号
 //   或转义符号（如 MATCH "C++"）——防 MATCH 'C++' 类符号查询炸 SQL 语法（ERR-004 同类事故）；
 //   snippet 义务：必须=已转义形态（escapeHtml 口径，见下方出口强制，违反即拒）。
-// 选择语义：plan.allFts 且已注册 fts → fts 后端；否则 scan（短词/纯符号盲区结构性走 LIKE 兜底）。
+// 选择语义（A4 路由修复）：plan.allFts 且已注册 fts → fts 后端；含盲区词面 → 仅当 fts 后端
+//   canHandle(plan)===true（显式声明盲区忠实能力）才走 fts，否则 scan 兜底（短词/纯符号盲区
+//   未声明能力的后端不被信任——既有语义保持）。
 function clampLimit(value) {
   const n = Math.floor(value)
   if (!Number.isFinite(n)) return DEFAULT_LIMIT
@@ -318,8 +334,12 @@ export function createSearchService({ backends = {}, concurrency, timeoutMs, lim
     async search(root, query, { limit: reqLimit } = {}) {
       const plan = compileQuery(query)
       if (!plan.ok) throw fail('bad_request', plan.reason === 'empty' ? 'q 参数缺失' : 'q 参数非法')
-      let backend = plan.allFts && registry.fts ? registry.fts : registry.scan
-      const req = { root, plan, limit: clampLimit(reqLimit ?? limit) }
+      const fts = registry.fts
+      // A4 路由：allFts 信任 fts；盲区词面仅当后端声明 canHandle（忠实处理盲区）才走 fts——
+      //   否则保持「不信任未声明能力的 fts 后端」结构性走 scan（后端切换零 API 变化）
+      const trusted = fts !== undefined && (plan.allFts || fts.canHandle?.(plan) === true)
+      let backend = trusted ? fts : registry.scan
+      const req = { root, plan, limit: clampLimit(reqLimit ?? limit), timeoutMs }
       let out
       try {
         out = await backend.search(req)

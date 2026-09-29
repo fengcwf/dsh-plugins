@@ -53,15 +53,50 @@ test('manifest：dsh.bundle.patch 指向真实文件且 patch 行 name == 包名
   assert.match(yml, new RegExp(`name:\\s*'${pkg.name}'`), 'patch 行 name 与包名一致（否则层不生效）')
 })
 
-test('发版纪律：version 0.2.0 + CHANGELOG ## 0.2.0 + README 三段（用途/安装钉版本/配置）+ 发版检查清单（发版级机械锁：src/dist 同批由 check-release 把关）', () => {
+// 版本四对齐联动锁（2026-09-28 发版后遗症根治：手钉版本常量=每次发版必红的病根）：
+// 与 scripts/check-release.sh 同源口径——package.json version ↔ CHANGELOG 首条 `## <ver>` ↔
+// 根 README 版本表该插件行版本 ↔ 合法 semver，四方共享同一 pkg.version 锚，发版 bump 后自动跟上。
+// check-release.sh 的 CHANGELOG 形（`^## <ver>` 存在）与 README 形（`<name>.*<ver>`）均由本锁蕴含。
+const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+test('发版纪律：版本四对齐联动锁（pkg version == CHANGELOG 首条 ## 版本 == 根 README 版本表行版本 == 合法 semver；与 check-release.sh 同源）+ README 三段（用途/安装钉版本/配置）+ 发版检查清单（发版级机械锁：src/dist 同批由 check-release 把关）', () => {
   const pkg = readJson('../package.json')
-  assert.equal(pkg.version, '0.2.0')
-  assert.match(readText('../CHANGELOG.md'), /^## 0\.2\.0/m, 'CHANGELOG 必须含 ## 0.2.0')
+  const version = pkg.version ?? ''
+  // 对齐①：合法 semver（check-release.sh 以 $ver 为对齐基准，非法版本=基准本身失真）
+  assert.match(version, SEMVER_RE, `package.json version 非合法 semver：${JSON.stringify(version)}`)
+  // 对齐②：CHANGELOG 首个 `## <ver>` == version（发版必记更新内容，最新条目即当前版本）
+  const changelog = readText('../CHANGELOG.md')
+  const firstEntry = changelog.match(/^##[ \t]+([^\s]+)/m)?.[1]
+  assert.ok(firstEntry, 'CHANGELOG.md 缺 `## <ver>` 更新记录条目（发版必须记录更新内容）')
+  assert.equal(firstEntry, version, `CHANGELOG 首条版本 ${firstEntry} ≠ package.json version ${version}`)
+  // 对齐③：根 README 版本表该插件行版本 == version（发版必同步 README 版本表）
+  const rootReadme = readText('../../README.md')
+  const rowRe = new RegExp(`^\\|\\s*\\[${escapeRe(pkg.name)}\\]\\([^)]*\\)\\s*\\|\\s*([^|\\s]+)\\s*\\|`, 'm')
+  const rowVer = rootReadme.match(rowRe)?.[1]
+  assert.ok(rowVer, `根 README.md 版本表缺 ${pkg.name} 行`)
+  assert.equal(rowVer, version, `根 README 版本表 ${pkg.name} 行版本 ${rowVer} ≠ package.json version ${version}`)
   const readme = readText('../README.md')
   for (const heading of ['用途', '安装', '配置']) {
     assert.match(readme, new RegExp(`^## .*${heading}`, `m`), `README 缺「${heading}」段`)
   }
-  assert.match(readme, /obsidian-web-v0\.2\.0/, '安装段必须钉版本 tag（安装钉版本）')
+  // —— 安装段钉版**形锁**（2026-09-29 形锁化：手钉 `obsidian-web-v0.2.0` 常量 → 锁钉版形，不钉具体版本）——
+  // 形 = 安装示例钉 `obsidian-web-v<合法 semver>` tag 快照；具体版本一致性由上方版本四对齐联动锁承担
+  //（pkg version ↔ CHANGELOG ↔ 根 README 版本表 ↔ semver），故发版 bump 不再触发本断言失同步。
+  // 强度不降：仍锁「必须钉 tag 快照、不得 link:/file:/裸 main/HEAD」，另锁示例钉版形合法 + 段内钉版唯一一致。
+  const installSection = readme.split(/^## /m).find((s) => s.startsWith('安装')) ?? ''
+  assert.ok(installSection, 'README 缺「安装」段（安装钉版本）')
+  const pinCands = [...installSection.matchAll(/obsidian-web-v([^\s'"`)&]+)/g)].map((m) => m[1])
+  assert.ok(pinCands.length > 0, '安装段必须钉版本 tag（安装钉版本）：缺 `obsidian-web-v<semver>` 钉版')
+  for (const cand of pinCands) {
+    assert.match(cand, SEMVER_RE, `安装钉版形非法：obsidian-web-v${cand}（须为 obsidian-web-v<合法 semver> tag）`)
+  }
+  assert.equal(new Set(pinCands).size, 1, `安装段钉版 tag 不唯一一致：${[...new Set(pinCands)].join(' / ')}（示例钉版须一致）`)
+  const addLine = installSection.split('\n').find((l) => l.includes('dsh plugin') && l.includes(' add ')) ?? ''
+  assert.ok(addLine, '安装段缺 `dsh plugin add` 安装命令（安装钉版本）')
+  assert.match(addLine, /github:fengcwf\/dsh-plugins#obsidian-web-v[^'"\s&]+&path:obsidian-web/, '安装示例必须钉 tag 快照（github:fengcwf/dsh-plugins#obsidian-web-v<semver>&path:obsidian-web）')
+  assert.doesNotMatch(addLine, /link:|file:/, '安装示例禁用 link:/file:（已废弃：symlink 不代装依赖）')
+  assert.doesNotMatch(addLine, /#(?:main|master|HEAD|latest)\b/, '安装示例禁钉裸 main/分支/HEAD（必须钉 tag 快照）')
   // T2 交接检查项增补（T14 收口）+ fix r1 口径降格：清单文案=「发版级机械锁：src/dist 同批由 check-release 把关」
   // —— 本断言只锁文案（如实标注）；真实新鲜度锁=check-release.sh commit 级校验，行为面由
   //    check-release-dist-freshness.test.mjs 真 git 仓真验（src 变更无 dist 变更必红）。

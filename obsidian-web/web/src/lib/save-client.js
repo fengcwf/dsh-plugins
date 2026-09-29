@@ -126,7 +126,7 @@ export function createDebouncer(fn, ms) {
  *     reload 丢弃我方稿，pending 随下次保存自然清零。
  */
 export function createSaveCoordinator({
-  getSession, setSession, saveFile, fetchFile, onFileSaved, debounceMs = SAVE_DEBOUNCE_MS,
+  getSession, setSession, saveFile, fetchFile, onFileSaved, onSaveError, debounceMs = SAVE_DEBOUNCE_MS,
 }) {
   const debouncer = createDebouncer(() => { void triggerSave() }, debounceMs)
   let inFlight = false
@@ -159,6 +159,9 @@ export function createSaveCoordinator({
       onFileSaved?.(current.path, f.data)
     } catch (e) {
       setSession(reduceSession(getSession(), { type: 'save_error', message: e.message }))
+      // F-3（ui-review）：写失败/超时后自动 reloadTree() 兜底（App 接线 onSaveError→reloadTree），
+      // 对齐服务端事实（慢写可能已落盘）；兜底刷新失败不掩盖原写错误
+      try { await onSaveError?.(e) } catch { /* 兜底刷新失败不掩盖原写错误 */ }
     }
   }
 

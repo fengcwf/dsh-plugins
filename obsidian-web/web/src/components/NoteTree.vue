@@ -54,10 +54,18 @@ function onDownloadClick(data) {
 function onRenameClick(data) {
   emit('rename', { key: data.key, type: data.type })
 }
+
+// 空状态「浏览目录」入口（S1）：窄屏展开抽屉 + 聚焦（宽屏树恒在场，聚焦即可）
+function openDrawer() {
+  drawerOpen.value = true
+  wrapRef.value?.focus?.()
+}
+
+defineExpose({ openDrawer })
 </script>
 
 <template>
-  <aside ref="wrapRef" class="ob-tree" :data-open="String(drawerOpen)" aria-label="笔记目录">
+  <aside ref="wrapRef" class="ob-tree" :data-open="String(drawerOpen)" aria-label="笔记目录" tabindex="-1">
     <button
       type="button"
       class="ob-drawer-toggle"

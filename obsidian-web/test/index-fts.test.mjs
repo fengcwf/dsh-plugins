@@ -1,8 +1,9 @@
-// T11 索引三保险——⑤ fts 后端零 API 变化接管 T3 检索缝（T3 回归网）⑥ 2 字盲区仍走兜底。
+// T11 索引三保险——⑤ fts 后端零 API 变化接管 T3 检索缝（T3 回归网）⑥ 2 字盲区路由（A4 后走索引）。
 // 契约（lib/search.js T3 锁形）：createSearchService({backends:{fts}})；后端 {name,search({root,plan,limit})
 // → {hits,degraded}}；结果项键 {path,line,snippet,score,title}；data 键 {backend,degraded,query,results}；
 // 查询串转义义务（MATCH 逐词引号）；snippet=已转义形态（出口 assertEscapedSnippet 强制）；
-// score=排序权重（越大越优）；plan.allFts 且已注册 fts → fts，否则 scan（2 字盲区结构性兜底）。
+// score=排序权重（越大越优）；路由（A4）：plan.allFts → fts；盲区词面 → 后端 canHandle(plan) 声明
+// 忠实能力才走 fts，否则 scan 兜底（test/search.test.mjs ⑥ 锁「不信任未声明能力的后端」）。
 // 真验零 mock：真 tmp vault、真 sqlite FTS5 trigram（node:sqlite）、真 MATCH 查询；唯一注入点=后端注册缝。
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -105,25 +106,29 @@ test('⑤ 查询串转义义务：符号/关键字/引号词面进 MATCH 前逐�
   }
 })
 
-// ── ⑥ 2 字盲区结构性兜底（不信任 fts 后端）──────────────────────────────────────
-test('⑥ 2 字盲区仍走兜底：短词/纯符号查询结构性走 scan（LIKE 兜底），结果仍正确', async () => {
+// ── ⑥ 2 字盲区路由（A4 修复：真索引后端声明 canHandle → 盲区走索引 LIKE 窄化）──────────
+// A4（runtime-fix-wave.md 卡 A4）前=盲区查询结构性走 scan（1.5 万篇 CIFS 上 2s 恒超时零命中，
+// p8-r3c-repro §6 backend=scan/degraded timeout/scanned=0）；后=真索引后端 canHandle(plan)===true
+// 承载盲区（SQL 下推安全门 + matchDocs 终审）→ backend 如实报 fts。**结果断言逐字未动。**
+test('⑥ 2 字盲区路由：声明 canHandle 的索引后端承载盲区查询（A4），结果仍正确', async () => {
   const vault = makeVault(FIX)
   const { service, svc } = await startService(vault)
   try {
     assert.equal(compileQuery('中国').allFts, false)
+    assert.equal(service.ftsBackend.canHandle(compileQuery('中国')), true, '真索引后端声明盲区忠实能力（SQL≡/i 下推安全门）')
     const two = await svc.search(vault, '中国')
-    assert.equal(two.backend, 'scan', '2 字盲区结构性走 scan 兜底')
+    assert.equal(two.backend, 'fts', 'A4 路由修复：盲区查询走索引 LIKE 预过滤（backend 如实报 fts）')
     assert.deepEqual(two.results.map((h) => h.path), ['notes/short.md'])
 
     const one = await svc.search(vault, '链')
-    assert.equal(one.backend, 'scan', '1 字盲区同走兜底')
+    assert.equal(one.backend, 'fts', '1 字盲区同走索引（LIKE 预过滤）')
 
     const symbol = await svc.search(vault, '!!!')
-    assert.equal(symbol.backend, 'scan', '纯符号词同走兜底')
+    assert.equal(symbol.backend, 'fts', '纯符号词同走索引（LIKE 预过滤）')
 
-    // 混排（含短词）→ needsFallback → scan（文件级 AND 全词命中）
+    // 混排（含短词）→ 同走索引（文件级 AND 全词命中）
     const mixed = await svc.search(vault, 'needle 世界')
-    assert.equal(mixed.backend, 'scan', '含盲区词的混排查询走 scan')
+    assert.equal(mixed.backend, 'fts', '含盲区词的混排查询走索引')
     assert.deepEqual(mixed.results.map((h) => h.path).sort(), ['notes/alpha.md'], '文件级 AND：两词都命中才出')
   } finally {
     service.stop()

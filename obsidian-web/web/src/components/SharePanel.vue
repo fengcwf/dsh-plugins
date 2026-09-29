@@ -8,6 +8,7 @@ import { ElButton, ElPopconfirm, ElTable, ElTableColumn, ElTag } from '../elemen
 import { onMounted, ref, watch } from 'vue'
 import { fetchShares, postShareCreate, postShareRevoke, postShareRole } from '../api.js'
 import { describeRole, formatTime, statusLabel } from '../lib/share-view.js'
+import PanelHeader from './PanelHeader.vue'
 import ShareLinksCell from './ShareLinksCell.vue'
 import ShareCreateDialog from './ShareCreateDialog.vue'
 import ShareCreateResultDialog from './ShareCreateResultDialog.vue'
@@ -18,7 +19,9 @@ const props = defineProps({
   rendered: { type: Object, default: null },
   backlinks: { type: Array, default: () => [] },
   busy: { type: Boolean, default: false },
+  recents: { type: Array, default: () => [] },
   activePanel: { type: String, default: '' },
+  readView: { type: Object, default: null }, // 未用 props 仅吸收防落 DOM 属性（同页面板接口统一）
 })
 
 const shares = ref([])
@@ -110,14 +113,15 @@ async function onAccess(payload) {
 
 <template>
   <section class="ob-prose ob-share" aria-label="分享管理">
-    <h2>分享管理</h2>
+    <PanelHeader title="分享管理">
+      <template #actions>
+        <el-button type="primary" @click="createVisible = true">新建分享</el-button>
+        <el-button class="ob-btn-ghost" :loading="loading" @click="refresh">刷新</el-button>
+      </template>
+    </PanelHeader>
     <p class="ob-hint">
       查看计数=每条分享的访客访问成功次数；撤销即时失效。分享链接由服务端统一生成——内网/外网地址并列显示（外网域名在「设置」页配置）。
     </p>
-    <div class="ob-share-toolbar">
-      <el-button type="primary" @click="createVisible = true">新建分享</el-button>
-      <el-button :loading="loading" @click="refresh">刷新</el-button>
-    </div>
     <p v-if="error" class="ob-empty" role="alert">{{ error }}</p>
     <el-table :data="shares" empty-text="暂无分享（默认不对外，逐条显式生成）">
       <el-table-column label="目标" min-width="150">

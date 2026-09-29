@@ -3,9 +3,13 @@
 // 容器/展示分离：保存状态机/防抖全在 web/src/lib/save-client.js（App 编排），本组件只展示+搬运事件。
 // ARC-1：预览 HTML 全出自服务端 /ob/api/render（唯一渲染源），本组件零 markdown 解析。
 // ARC-6：单文件 ≤300 行；重交互面（textarea/预览/分隔条）一律 v-show 不 v-if（禁 v-if 重交互）。
+// S1（candidate-c 4/5）：面板统一头 PanelHeader + 保存状态徽标 SaveStatusBadge（四态语义在 lib/ui-base.js）。
 import { ElButton } from '../element-plus.js'
 import { onMounted, ref, watch } from 'vue'
 import { loadEditState, saveEditState } from '../lib/view-state.js'
+import { noteTitle } from '../lib/ui-base.js'
+import PanelHeader from './PanelHeader.vue'
+import SaveStatusBadge from './SaveStatusBadge.vue'
 
 const props = defineProps({
   path: { type: String, default: '' },
@@ -17,7 +21,6 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:draft', 'save', 'undo'])
 
-const STATUS_TEXT = { clean: '已保存', dirty: '未保存', saving: '保存中…', conflict: '保存冲突' }
 // 分屏状态独立持久化（delta-spec §3：与阅读视图互不覆盖，key=ob:edit-state）
 const view = ref({ previewVisible: true, splitRatio: 0.5 })
 
@@ -54,15 +57,16 @@ function startDrag(event) {
 
 <template>
   <section class="ob-editor" aria-label="笔记编辑">
-    <div class="ob-editor-toolbar" role="toolbar" aria-label="编辑工具栏">
-      <span class="ob-editor-path">{{ props.path }}</span>
-      <span class="ob-editor-status" role="status">{{ STATUS_TEXT[props.status] ?? props.status }}</span>
-      <el-button size="small" type="primary" :disabled="props.status === 'saving'" @click="emit('save')">保存</el-button>
-      <el-button size="small" :disabled="!props.canUndo" @click="emit('undo')">撤销</el-button>
-      <el-button size="small" :aria-pressed="String(view.previewVisible)" @click="togglePreview">
-        {{ view.previewVisible ? '隐藏预览' : '显示预览' }}
-      </el-button>
-    </div>
+    <PanelHeader class="ob-editor-toolbar" :title="noteTitle(props.path) || '编辑'" :sub="props.path">
+      <template #status><SaveStatusBadge :status="props.status" /></template>
+      <template #actions>
+        <el-button size="small" type="primary" :disabled="props.status === 'saving'" @click="emit('save')">保存</el-button>
+        <el-button size="small" :disabled="!props.canUndo" @click="emit('undo')">撤销</el-button>
+        <el-button size="small" class="ob-btn-ghost" :aria-pressed="String(view.previewVisible)" @click="togglePreview">
+          {{ view.previewVisible ? '隐藏预览' : '显示预览' }}
+        </el-button>
+      </template>
+    </PanelHeader>
     <p v-if="props.error" class="ob-empty" role="alert">{{ props.error }}</p>
     <div class="ob-editor-split">
       <textarea

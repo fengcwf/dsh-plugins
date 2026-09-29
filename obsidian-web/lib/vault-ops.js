@@ -13,14 +13,17 @@
 //          路径/盘符/NUL/纯点空格别名段 + realpath 全链逐段解引用拒 symlink 逃逸/遍历/循环——
 //          词法围栏雏形（T2-T11）已升级为 realpath 围栏终态（详见 resolveInRoot 段）。
 // T2 读侧契约（形状锁定=前端 wire 契约，test/vault-ops.test.mjs 锁形）：
-//   listTree(root)            → {root, nodes}    node: {name, path, type, children?}（目录优先字典序）
+//   listTree(root)            → {root, nodes}    node: {name, path, type, children?}（目录优先字典序；
+//                                                A2 缓存化：lib/tree-cache.js 事件增量+TTL 兜底，形不变）
 //   readNote(root, relPath)   → {path, content, mtime, etag, size}   etag=size-mtime（乐观锁前置）
-//   scanBacklinks(root, path) → {path, backlinks:[{path, line, text}]}（占位级扫描，T11 索引化后替换）
+//   scanBacklinks(root, path) → {path, backlinks:[{path, line, text}]}（A1 索引化：lib/backlink-index.js 反链缓存——索引面快照优先/文件降级限流限量，查询无每请求全库 readFileSync）
 import fs from 'node:fs'
 import path from 'node:path'
 import { writeFileAtomic, withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import { planRewrite, scanMdLinkTargets } from './wikilink-rewrite.js'
 import { isTraversalSeg, isAliasOnlySeg } from './path-alias.js'
+import { queryBacklinks, peekBacklinkCache, upsertSource, removeSource, removeTreeSource } from './backlink-index.js'
+import { getTreeSync, getTreeAsync, applyTreeEvent } from './tree-cache.js'
 
 function fail(code, message) {
   const err = new Error(message)
@@ -43,13 +46,50 @@ export function onVaultChange(listener) {
   return () => changeListeners.delete(listener)
 }
 
-function emitVaultChange(event) {
+function emitVaultChange(event, rootAbs) {
+  // A1 反链缓存增量（毫秒级新鲜，独立于监听器注册面）：先于监听器更新，异常隔离不回传写路径
+  if (rootAbs !== undefined) {
+    try {
+      updateBacklinkCache(rootAbs, event)
+    } catch (err) {
+      console.warn(`[obsidian-web] 反链缓存增量更新失败（已隔离，写路径不受影响；查询侧留痕重建）：${err?.message ?? err}`)
+    }
+    // A2 tree 缓存增量（同一钩子面：save/create/rename/delete → 树形毫秒级新鲜，零全量重建）；
+    // 异常隔离同上——写路径不受影响，陈旧由 TTL 兜底重建校正（tree-cache.js）
+    try {
+      applyTreeEvent(rootAbs, event)
+    } catch (err) {
+      console.warn(`[obsidian-web] tree 缓存增量更新失败（已隔离，写路径不受影响；TTL 兜底重建校正）：${err?.message ?? err}`)
+    }
+  }
   for (const listener of changeListeners) {
     try {
       listener(event)
     } catch (err) {
       console.warn(`[obsidian-web] vault-change 监听器抛错（已隔离，写路径不受影响）：${err?.message ?? err}`)
     }
+  }
+}
+
+// A1 反链缓存增量维护（合同 runtime-fix-wave.md 硬要求③：保存/改名/删除时增量更新）。
+// 只更新已建缓存（peek 不建——未查询过的根首查才构建，构建天然含最新盘面/索引面）；
+// save/create 事件自带 content 零盘读，rename 改写件按 changed 现读（件数=改写面，量级极小）。
+function updateBacklinkCache(rootAbs, event) {
+  const cache = peekBacklinkCache(rootAbs)
+  if (cache === null) return
+  if (event.type === 'save' || event.type === 'create') {
+    if (!event.path.toLowerCase().endsWith('.md')) return // 扫描面=.md only（同旧 collectMarkdownFiles 口径）
+    upsertSource(cache, event.path, event.content)
+  } else if (event.type === 'rename') {
+    removeSource(cache, event.from)
+    for (const rel of event.changed) {
+      if (rel === event.from || !rel.toLowerCase().endsWith('.md')) continue
+      const content = fs.readFileSync(path.join(path.resolve(rootAbs), rel), 'utf8')
+      upsertSource(cache, rel, content)
+    }
+  } else if (event.type === 'delete') {
+    if (event.isDir === true) removeTreeSource(cache, event.path)
+    else removeSource(cache, event.path)
   }
 }
 
@@ -258,32 +298,17 @@ function statOrThrow(abs, relPath) {
 }
 
 // ── listTree：树列表（目录优先、组内字典序；dot 条目与 symlink 不出树，T12 归位 symlink 围栏）────
-function scanDir(abs, rel) {
-  let dirents
-  try {
-    dirents = fs.readdirSync(abs, { withFileTypes: true })
-  } catch (err) {
-    if (err.code === 'ENOENT') throw fail('not_found', `目录不存在：${rel || '.'}`)
-    throw err
-  }
-  const dirs = []
-  const files = []
-  for (const d of dirents) {
-    if (d.name.startsWith('.')) continue
-    const childRel = rel ? `${rel}/${d.name}` : d.name
-    if (d.isDirectory()) {
-      dirs.push({ name: d.name, path: childRel, type: 'dir', children: scanDir(path.join(abs, d.name), childRel) })
-    } else if (d.isFile()) {
-      files.push({ name: d.name, path: childRel, type: 'file' })
-    }
-  }
-  const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
-  return [...dirs.sort(byName), ...files.sort(byName)]
+// A2 缓存化（合同 runtime-fix-wave.md 卡 A2）：扫描语义（scanDir：dot 跳过/symlink 不入/目录优先
+//   byName 码元序）原样迁入 lib/tree-cache.js 单一来源；此处保留契约面（形不变 {root, nodes}）：
+//   缓存命中=零盘读；写路径事件毫秒级增量（emitVaultChange 钩子）；外部编辑 TTL 兜底后台重建
+//   （失效即刷、请求不等待——tree <1s 硬验收）；冷构建=首查一次（大 tmp vault <1s 断言见测试）。
+export function listTree(root) {
+  return getTreeSync(root)
 }
 
-export function listTree(root) {
-  const absRoot = path.resolve(root)
-  return { root: absRoot, nodes: scanDir(absRoot, '') }
+/** 异步入口（web-routes treeHandler）：冷构建分批让出事件循环（并发请求不挂死），热路径同缓存 */
+export async function listTreeAsync(root) {
+  return getTreeAsync(root)
 }
 
 // ── readNote：读文件（下载/预览/反链共用读面）─────────────────────────────────────────────
@@ -392,7 +417,7 @@ export async function saveNote(root, relPath, content, options = {}) {
       throw fail('io_error', `保存后路径复核失败（路径漂移，内容已写入当次真实节点）：${err.message}`)
     }
     const after = snapshot(content, statOrThrow(abs, relPath))
-    emitVaultChange({ type: 'save', path: relPath, content }) // T11 保险①：保存即增量（落盘后发事件）
+    emitVaultChange({ type: 'save', path: relPath, content }, root) // T11 保险①：保存即增量（落盘后发事件）
     return {
       ok: true,
       path: relPath,
@@ -440,7 +465,7 @@ export async function createNote(root, relPath, content = '') {
         throw fail('io_error', `创建后路径复核失败（路径漂移，内容已写入当次真实节点）：${err.message}`)
       }
       const stat = statOrThrow(abs, relPath)
-      emitVaultChange({ type: 'create', path: relPath, content }) // T11 保险①：新建即增量
+      emitVaultChange({ type: 'create', path: relPath, content }, root) // T11 保险①：新建即增量
       return {
         ok: true,
         path: relPath,
@@ -457,32 +482,12 @@ export async function createNote(root, relPath, content = '') {
   }
 }
 
-// ── scanBacklinks：反链扫描（占位级全量扫，T11 索引三保险归位后换索引读）──────────────────────
-// 解析语义：wikilink [[t|alias]]/[[t#head]] 剥别名锚点 + basename 匹配；md 相对链接按源文件目录解析；
-//          同行多链只记一条（text=源行原文）；外链/纯锚点不计；目标不自指。
-const WIKI_LINK_RE = /\[\[([^\[\]]+)\]\]/g
-const MD_LINK_RE = /\[[^\]]*\]\(((?:[^()]|\([^()]*\))*)\)/g
-
-function linkTarget(raw) {
-  const t = raw.split('#')[0].split('|')[0].trim()
-  if (!t || t.startsWith('#')) return null
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(t)) return null // 外链不计
-  return t
-}
-
-function matchesTarget(targetNote, srcPath, rawTarget) {
-  const t = linkTarget(rawTarget)
-  if (!t) return false
-  const noteBase = targetNote.replace(/\.md$/i, '')
-  const tBase = t.replace(/\.md$/i, '')
-  const srcDir = path.posix.dirname(srcPath)
-  const viaRel = path.posix.normalize(srcDir === '.' ? tBase : `${srcDir}/${tBase}`)
-  if (viaRel === noteBase) return true
-  if (tBase === noteBase) return true
-  const tName = tBase.split('/').pop()
-  const nName = noteBase.split('/').pop()
-  return tName !== '' && tName === nName // Obsidian basename 语义（大小写敏感，T11 归位折叠）
-}
+// ── scanBacklinks：反链查询（A1 索引化——构建/查询归 lib/backlink-index.js，此处只留围栏 + 薄封装）──
+// 解析/匹配语义（WIKI_LINK_RE/MD_LINK_RE/linkTarget/matchesTarget）已逐字迁入 backlink-index.js
+//   （语义同源单一来源；既有 test/vault-ops.test.mjs + web-routes.test.mjs 断言零弱化零改动）。
+// 构建源：①索引面快照（index-service 推送 docs 表内容，生产路径零 CIFS 读）②文件降级构建
+//   （懒构建 + 增量维护 + 预算/上限保护 + cooldown 限流；partial/degraded 留痕）。
+// 增量维护：写路径事件 → emitVaultChange 内 updateBacklinkCache（save/create/rename/delete 毫秒级）。
 
 /** 全 vault 文件清单（dot 条目与 symlink 不入清单；mdOnly=.md 改写扫描面） */
 function collectFiles(root, { mdOnly = false } = {}) {
@@ -509,25 +514,16 @@ function collectMarkdownFiles(root) {
   return collectFiles(root, { mdOnly: true })
 }
 
-export function scanBacklinks(root, relPath) {
+/**
+ * 反链查询（形不变：{path, backlinks:[{path,line,text}]}；降级态额外带 degraded 留痕键，
+ * 仅降级分支出现——健康形逐字段兼容，test/vault-ops.test.mjs deepEqual 锁形不受影响）。
+ * @param {{buildBudgetMs?, buildMaxFiles?, rebuildCooldownMs?, filesStaleMs?, forceRebuild?, warn?}} [opts]
+ *   降级构建参数/测试缝（缺省=生产口径；见 backlink-index.js DEFAULT_*）
+ */
+export function scanBacklinks(root, relPath, opts = {}) {
   resolveInRoot(root, relPath) // 围栏同 readNote（不强制目标存在：反链索引语义）
-  const backlinks = []
-  for (const srcPath of collectMarkdownFiles(root)) {
-    if (srcPath === relPath) continue // 目标不自指
-    const content = fs.readFileSync(path.resolve(root, srcPath), 'utf8')
-    const lines = content.split('\n')
-    for (let line = 0; line < lines.length; line += 1) {
-      const text = lines[line].replace(/\r$/, '')
-      WIKI_LINK_RE.lastIndex = 0
-      MD_LINK_RE.lastIndex = 0
-      const hit =
-        [...text.matchAll(WIKI_LINK_RE)].some((m) => matchesTarget(relPath, srcPath, m[1])) ||
-        [...text.matchAll(MD_LINK_RE)].some((m) => matchesTarget(relPath, srcPath, m[1]))
-      if (hit) backlinks.push({ path: srcPath, line: line + 1, text })
-    }
-  }
-  backlinks.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.line - b.line))
-  return { path: relPath, backlinks }
+  const { backlinks, degraded } = queryBacklinks(path.resolve(root), relPath, opts)
+  return degraded === null ? { path: relPath, backlinks } : { path: relPath, backlinks, degraded }
 }
 
 // ── renameNote：改名/移动 = 多文件事务（T5 / OW-US-5 / OW-INV-4；iamzcr 六坑 + 修复轮教训）────
@@ -910,7 +906,7 @@ export async function renameNote(root, from, to, options = {}) {
   }
 
   const changed = [...new Set([to, ...rewrites.map((x) => x.rel), from])].sort()
-  emitVaultChange({ type: 'rename', from, to, changed }) // T11 保险①：改名即增量（事务提交后发事件）
+  emitVaultChange({ type: 'rename', from, to, changed }, root) // T11 保险①：改名即增量（事务提交后发事件）
   return {
     ok: true,
     from,
@@ -1061,13 +1057,13 @@ export async function deletePath(root, relPath, options = {}) {
     } catch (err) {
       warnings.push(`收尾故障（删除已落盘、可逆回收不受影响）：${err?.message ?? err}`)
     }
-    emitVaultChange({ type: 'delete', path: relPath, trashPath: claimed.trashRel, isDir }) // T11 保险①：删除即增量
+    emitVaultChange({ type: 'delete', path: relPath, trashPath: claimed.trashRel, isDir }, root) // T11 保险①：删除即增量
     return { ok: true, path: relPath, trashPath: claimed.trashRel, warnings }
   } catch (err) {
     if (renamed) {
       // rename 已落盘=删除已发生：绝不谎报失败、绝不误清已回收内容（占位已被 rename 顶替，非本调用占位）
       warnings.push(`收尾故障（删除已落盘、可逆回收不受影响）：${err?.message ?? err}`)
-      emitVaultChange({ type: 'delete', path: relPath, trashPath: claimed.trashRel, isDir }) // T11 保险①（已落盘事实）
+      emitVaultChange({ type: 'delete', path: relPath, trashPath: claimed.trashRel, isDir }, root) // T11 保险①（已落盘事实）
       return { ok: true, path: relPath, trashPath: claimed.trashRel, warnings }
     }
     // 失败清残只清本调用占位（外来/既有内容零误伤）；rename 未发生=源未动

@@ -11,6 +11,8 @@
 //   exact /ob/api/render    POST → {data:{html,toc}}   live 渲染（T4 分屏预览；ARC-1 前端零 markdown 解析）
 //   exact /ob/api/index/refresh POST → {data:对账 run}  索引手动刷新（T11 保险③/OW-US-11：立即对账）
 //                                        未接索引服务 → 503 index_unavailable（可解释，不装死）
+//   exact /ob/api/index/status  GET  → {data:索引面状态} 只读可观测面（A4/NEEDS_HUMAN-2：开闭态/
+//                                        文档数/最后对账/degraded 原因/fts 可用性；零副作用恒 200）
 //   exact /ob/api/shares    GET  → {data:{shares,total,settings,effectiveLanHost,sharePort}, total}
 //                                        分享管理列表（T10/OW-US-10：计数/状态 + links 内外网双地址）
 //   exact /ob/api/shares/create|revoke|role   POST → 分享管理操作（T10/OW-US-10；
@@ -35,7 +37,8 @@
 //   score=排序权重（越大越优，仅用于结果排序，非匹配概率/百分比——detpecca 教训语义进描述/文案）；
 //   degraded=null | {reason:'timeout', message, scanned}（超时 fail-open 部分结果，INV-15 风格留痕）。
 // 检索后端可插拔（T11 索引三保险接管）：registerWebRoutes 第三参 search.backends.fts 注入即用，
-//   短查询（2 字盲区/纯符号）结构性走 scan/LIKE 兜底，后端切换零 API 变化。
+//   后端切换零 API 变化；短查询（2 字盲区/纯符号）在 fts 后端声明 canHandle 时走索引 LIKE 窄化，
+//   否则结构性走 scan 兜底（A4 路由语义，见 lib/search.js 选择语义注释）。
 // 索引手动刷新面（T11 保险③）：第三参 index={refresh} 注入即活；refresh() → 对账账本 run 形
 //   （键锁定 test/index-routes.test.mjs：runId/startedAt/finishedAt/status/resumedFrom/cursor/counts/degraded）。
 // 鉴权缝（OW-INV-8）：每条 handler 第一行过 ctx.connection.requestRejection({headers}) → 401/403。
@@ -43,7 +46,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
-import { deletePath, listTree, readNote, renameNote, scanBacklinks, saveNote } from './vault-ops.js'
+import { deletePath, listTreeAsync, readNote, renameNote, scanBacklinks, saveNote } from './vault-ops.js'
 import {
   createShare, listShares, revokeShare, updateShareRole,
 } from './share.js'
@@ -156,9 +159,11 @@ function countNodes(nodes) {
 }
 
 function treeHandler(getConfig) {
-  return (req, res) => {
+  return async (req, res) => {
     try {
-      const tree = listTree(getConfig().vaultRoot)
+      // A2 树缓存（合同 runtime-fix-wave.md 卡 A2）：热路径=缓存快照零盘读；冷构建=异步分批让出
+      //（事件循环不占死、并发请求不挂死）；TTL 兜底后台重建不阻塞请求（tree <1s 硬验收）。
+      const tree = await listTreeAsync(getConfig().vaultRoot)
       sendJson(res, 200, { data: tree, total: countNodes(tree.nodes) })
     } catch (err) {
       failRequest(res, err)
@@ -643,6 +648,40 @@ function indexRefreshHandler(getIndex) {
   }
 }
 
+// ── /ob/api/index/status（A4 只读可观测面：NEEDS_HUMAN-2 可观测性闭环）────────────────
+// 语义：GET **只读零副作用**（不开库/不自愈重试/不写账本——可观测性优先，index.status() 同保证）；
+//   恒 200 {data:状态形}——未接索引服务也 200 + wired:false 可解释形（观测面不装死不 5xx）。
+//   形（键锁定 test/index-status.test.mjs）：
+//   data = {wired, vaultRoot, dir, ready, docs:{count}, fts:{available, reason},
+//           lastReconcile: null | {runId, status, startedAt, finishedAt, counts},
+//           degraded: null | {reason, message, at}}
+//   ——ready=索引库开闭态、docs.count=文档数、lastReconcile=最后对账时间/状态/计数、
+//     degraded=降级原因留痕（INV-15）、fts=fts 可用性。鉴权=authGate（T1 惯例/OW-INV-8）。
+function indexStatusHandler(getIndex) {
+  return (req, res) => {
+    try {
+      const index = getIndex()
+      if (!index || typeof index.status !== 'function') {
+        sendJson(res, 200, {
+          data: {
+            wired: false,
+            vaultRoot: null,
+            dir: null,
+            ready: false,
+            docs: { count: 0 },
+            fts: { available: false, reason: 'index-service-not-wired' },
+            lastReconcile: null,
+            degraded: null,
+          },
+        })
+        return
+      }
+      sendJson(res, 200, { data: { wired: true, ...index.status() } })
+    } catch (err) {
+      failRequest(res, err)
+    }
+  }
+}
 /**
  * 注册 /ob/ 全部路由，返回 dispose 全量注销。
  * @param ctx 宿主上下文（webServer.register + connection.requestRejection 缝）
@@ -650,7 +689,8 @@ function indexRefreshHandler(getIndex) {
  * @param distDir web/dist 构建物目录
  * @param search 可选检索面调参/后端缝：{backends:{fts}, concurrency, timeoutMs, limit}
  *               （T11 索引三保险：注入 backends.fts 即接管 FTS5 检索，HTTP API 形零变化）
- * @param index 可选索引服务缝：{refresh}（T11 手动刷新；缺省 → 刷新面 503 可解释）
+ * @param index 可选索引服务缝：{refresh, status}（T11 手动刷新；A4 只读状态面 status；
+ *               缺省 → 刷新面 503 可解释、状态面 200 wired:false 可解释形）
  */
 export function registerWebRoutes(ctx, getConfig, { distDir, search, index }) {
   const disposers = []
@@ -671,6 +711,7 @@ export function registerWebRoutes(ctx, getConfig, { distDir, search, index }) {
   add('exact', '/ob/api/download', wrap(downloadHandler(ctx, getConfig)))
   add('exact', '/ob/api/render', wrap(renderHandler(), ['POST']))
   add('exact', '/ob/api/index/refresh', wrap(indexRefreshHandler(() => index), ['POST']))
+  add('exact', '/ob/api/index/status', wrap(indexStatusHandler(() => index)))
   // T10 分享管理面（OW-US-10）+ 设置面（OW-US-9）：鉴权=authGate（T1 惯例）
   add('exact', '/ob/api/shares', wrap(sharesListHandler(getConfig)))
   add('exact', '/ob/api/shares/create', wrap(sharesCreateHandler(getConfig), ['POST']))
@@ -685,6 +726,18 @@ export function registerWebRoutes(ctx, getConfig, { distDir, search, index }) {
   add('exact', '/ob/api/vault-profiles/activate', wrap(vaultProfilesActivateHandler(getConfig), ['POST']))
   add('exact', '/ob', wrap(redirectHandler))
   add('prefix', '/ob', wrap(staticHandler(distDir)))
+  // A2 树缓存预热（best-effort）：注册即后台建树 → 首查即热（生产 CIFS 冷扫 ~4.3s 不进请求路径）；
+  // 失败仅留痕（INV-15 禁静默），绝不影响注册/装载（首查仍会自建）。
+  try {
+    const warmRoot = getConfig().vaultRoot
+    if (typeof warmRoot === 'string' && warmRoot !== '') {
+      void listTreeAsync(warmRoot).catch((err) => {
+        console.warn(`[obsidian-web] tree 缓存预热失败（首查自建，不影响服务）：${err?.message ?? err}`)
+      })
+    }
+  } catch (err) {
+    console.warn(`[obsidian-web] tree 缓存预热跳过（配置读取失败，首查自建）：${err?.message ?? err}`)
+  }
   return () => {
     while (disposers.length) {
       const dispose = disposers.pop()

@@ -4,10 +4,13 @@
 // score 语义句常驻描述位（detpecca 教训）：score=排序权重（越大越优）非匹配概率/百分比；
 // 降级（超时 fail-open 部分结果）提示进界面（INV-15 风格留痕）。
 // 同页面板接口统一：App 容器统一传参，未用 props 仅吸收防落 DOM 属性。
+// S1（candidate-c 5/8）：面板统一头 + 内联可解释错误（StateError）。
 import { ElButton, ElInput } from '../element-plus.js'
 import { ref } from 'vue'
 import { fetchSearch } from '../api.js'
 import { SCORE_HINT, describeDegraded } from '../lib/search-view.js'
+import PanelHeader from './PanelHeader.vue'
+import StateError from './StateError.vue'
 import SearchResults from './SearchResults.vue'
 
 defineProps({
@@ -15,6 +18,8 @@ defineProps({
   rendered: { type: Object, default: null },
   backlinks: { type: Array, default: () => [] },
   busy: { type: Boolean, default: false },
+  recents: { type: Array, default: () => [] },
+  readView: { type: Object, default: null }, // 未用 props 仅吸收防落 DOM 属性（同页面板接口统一）
 })
 const emit = defineEmits(['navigate'])
 
@@ -53,13 +58,13 @@ async function runSearch() {
 
 <template>
   <section class="ob-prose ob-search" aria-label="搜索">
-    <h2>搜索</h2>
+    <PanelHeader title="搜索" />
     <form class="ob-search-bar" @submit.prevent="runSearch">
       <el-input v-model="query" aria-label="搜索词" placeholder="全 vault 全文 + 标题搜索" clearable />
       <el-button type="primary" native-type="submit" :loading="searching">搜索</el-button>
     </form>
     <p class="ob-hint">{{ SCORE_HINT }}</p>
-    <p v-if="error" class="ob-empty" role="alert">{{ error }}</p>
+    <StateError v-if="error" kind="notice" :message="error" />
     <p v-else-if="degraded" class="ob-hint" role="status">{{ describeDegraded(degraded) }}</p>
     <p v-if="searched && !results.length" class="ob-empty">无匹配结果</p>
     <SearchResults :results="results" @navigate="emit('navigate', $event)" />

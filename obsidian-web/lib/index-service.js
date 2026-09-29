@@ -4,17 +4,21 @@
 //     （时间戳/计数/degraded 留痕——INV-15 风格）+ 分批可中断 + 账本续跑（start/refresh 先查补跑账本）
 //     ——定时器语义保证陈旧窗口 ≤30min（OW-INV-11）
 //   ③手动刷新：refresh()（/ob/api/index/refresh 接线，立即对账）
-// fts 后端（T3 检索缝接管，零 API 变化）：{name:'fts', search({root,plan,limit})} ——
-//   compileQuery plan → FTS MATCH/LIKE（index-store 逐词转义）候选选择 → search.matchDocs 同口径
-//   命中行/score/snippet（与 scan 后端逐字节同，test/index-fts 双后端等价锁）。
+// fts 后端（T3 检索缝接管，零 API 变化）：{name:'fts', search({root,plan,limit,timeoutMs})} ——
+//   compileQuery plan → FTS MATCH/LIKE（index-store 逐词转义 + 下推安全门 SQL≡regex /i）候选选择
+//   → search.matchDocs 同口径命中行/score/snippet（与 scan 后端逐字节同，test/index-fts 双后端等价锁）。
+//   A4（runtime-fix-wave.md 卡 A4）：①canHandle(plan)=盲区词面忠实能力声明（路由依据）
+//   ②候选 keyset 分批 + 批间 setImmediate 让出 + 超时预算——超时 fail-open 部分结果 +
+//   degraded={reason:'timeout',message,scanned} 同形（退化面语义保持、不再是常态）。
 // 测试缝（沿 vault-ops _onStage 惯例）：reconcile({_onBatch})——每批账本落盘后回调，抛错=中断注入；
 //   err.code==='simulate-crash' = 崩溃模拟（跳过一切收尾，账本保持 running 态=进程死亡真实形态）。
 // 假时钟/假定时器注入：now / timers({setInterval, clearInterval})——定时语义被测面本身（非 mock 行为）。
 import fs from 'node:fs'
 import path from 'node:path'
 import { onVaultChange, writeAtomicFsync } from './vault-ops.js'
-import { matchDocs } from './search.js'
-import { createIndexStore, resolveIndexDir, LEGACY_INDEX_DIR_NAME } from './index-store.js'
+import { matchDocs, sortHits } from './search.js'
+import { createIndexStore, resolveIndexDir, LEGACY_INDEX_DIR_NAME, canPrefilterPlan } from './index-store.js'
+import { getBacklinkCache, replaceFromDocs } from './backlink-index.js'
 
 export const RECONCILE_INTERVAL_MS = 30 * 60 * 1000 // 陈旧窗口 ≤30min（OW-INV-11）
 export const INDEX_DIR_NAME = LEGACY_INDEX_DIR_NAME // 旧落点目录名（0.1.1 前 <vaultRoot>/.ob-index/）——现仅用于旧落点检测留痕
@@ -23,12 +27,18 @@ const LEDGER_VERSION = 1
 const LEDGER_KEEP_RUNS = 50 // 账本行数上限（防无界增长；计数如实、仅旧 run 滚出）
 const DEGRADED_KEEP = 50
 const DEFAULT_BATCH_SIZE = 200 // 对账分批（千页秒级 + 可中断 + 续跑）
+const YIELD_BATCH = 200 // A3 分批让出粒度（walk/读盘每 200 个 fs 操作 setImmediate 让出事件循环）
 const LEDGER_MODE = 0o600 // 账本含 vault 路径清单——同 T10 settings.json 口径
 
 function fail(code, message) {
   const err = new Error(message)
   err.code = code
   return err
+}
+
+/** A3 事件循环让出缝（分批 setImmediate/await——对账窗绝不整段占死主线程，watchdog 探测不被拖死） */
+function yieldTick() {
+  return new Promise((resolve) => setImmediate(resolve))
 }
 
 const emptyCounts = () => ({ seen: 0, added: 0, updated: 0, removed: 0, degraded: 0 })
@@ -135,6 +145,25 @@ export function createIndexService({
     void recordDegraded() // 构造期同步面 fire-and-forget（落账失败已在内部留痕）
   }
 
+  // ── A1 反链索引面接线（runtime-fix-wave.md 卡 A1）：docs 快照推送 backlink-index ───────────
+  // 推送时机：①start（启动即从既有 docs 建反链缓存——零 vault 盘读，生产 CIFS 零网络扫描）
+  //          ②每次对账完成（外部编辑校正后重推；陈旧窗口与检索索引同口径 ≤30min，OW-INV-11）
+  // 插件内写路径增量（save/create/rename/delete）由 vault-ops.emitVaultChange → updateBacklinkCache
+  //   毫秒级维护（不经本面，见 p8-r3c-repro.md §7 A1 输入：消掉每请求全库 readFileSync）。
+  // 本面失败绝不炸对账/装载（warn 留痕 INV-15；查询侧按降级路径限流限量构建 + degraded 留痕）。
+  function pushBacklinkSnapshot() {
+    if (store === null) return Promise.resolve()
+    try {
+      const docs = store.listDocContents()
+      return replaceFromDocs(getBacklinkCache(rootAbs), docs).catch((err) => {
+        warn(`[obsidian-web] 反链索引快照同步失败（查询侧降级路径限流限量构建）：${err?.message ?? err}`)
+      })
+    } catch (err) {
+      warn(`[obsidian-web] 反链索引快照读取失败（查询侧降级路径限流限量构建）：${err?.message ?? err}`)
+      return Promise.resolve()
+    }
+  }
+
   // ── 对账账本（INV-15 风格留痕：时间戳/计数/degraded；崩溃后重启可续）──────────────
   function readLedger() {
     try {
@@ -161,27 +190,33 @@ export function createIndexService({
   }
 
   // ── 全 vault .md 清单（与 scan 后端同口径：dot 条目跳过、symlink 不入、.md only）────────
-  function listVault() {
+  // A3 异步化（合同 runtime-fix-wave.md 卡 A3）：readdirSync/statSync → fs.promises 异步 + 分批
+  //   setImmediate 让出（YIELD_BATCH/批）——15k 文件 walk 不再整段占死主线程（12.6s 对账窗的
+  //   一半阻塞源），watchdog 探测/其他请求在 walk 期间照常响应。清单语义零变化（同口径同排序）。
+  async function listVault() {
     const out = []
-    const walk = (abs, rel) => {
+    let ops = 0
+    const walk = async (abs, rel) => {
       let dirents
       try {
-        dirents = fs.readdirSync(abs, { withFileTypes: true })
+        dirents = await fs.promises.readdir(abs, { withFileTypes: true })
       } catch (err) {
         if (rel === '' && err?.code === 'ENOENT') throw fail('not_found', `vaultRoot 不存在：${rootAbs}`)
         return // 子目录读失败 fail-open 跳过（并发变更竞争不阻塞对账，degraded 不计入）
       }
       for (const d of dirents) {
         if (d.name.startsWith('.')) continue
+        ops += 1
+        if (ops % YIELD_BATCH === 0) await yieldTick() // 分批让出（A3：批间事件循环可调度）
         const childRel = rel ? `${rel}/${d.name}` : d.name
-        if (d.isDirectory()) walk(path.join(abs, d.name), childRel)
+        if (d.isDirectory()) await walk(path.join(abs, d.name), childRel)
         else if (d.isFile() && d.name.toLowerCase().endsWith('.md')) {
-          const st = fs.statSync(path.join(abs, d.name), { throwIfNoEntry: false })
+          const st = await fs.promises.stat(path.join(abs, d.name), { throwIfNoEntry: false })
           if (st !== null) out.push({ rel: childRel, size: st.size, mtimeMs: st.mtimeMs })
         }
       }
     }
-    walk(rootAbs, '')
+    await walk(rootAbs, '')
     return out.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0))
   }
 
@@ -223,7 +258,7 @@ export function createIndexService({
     }
 
     try {
-      const files = listVault()
+      const files = await listVault() // A3：walk 异步分批让出（见 listVault 注释）
       const known = store.listDocs()
       const pending = run.cursor === null ? files : files.filter((f) => f.rel > run.cursor)
       let batchesDone = 0
@@ -239,7 +274,8 @@ export function createIndexService({
             continue
           }
           try {
-            const content = fs.readFileSync(path.join(rootAbs, f.rel), 'utf8')
+            // A3：readFileSync → 异步读（批内不阻塞主线程；批间 setImmediate 让出见批尾）
+            const content = await fs.promises.readFile(path.join(rootAbs, f.rel), 'utf8')
             writes.push({ rel: f.rel, content, stat: f })
             if (prev === undefined) addedN += 1
             else updatedN += 1
@@ -257,6 +293,7 @@ export function createIndexService({
         run.cursor = batch[batch.length - 1].rel
         await persist() // 每批账本落盘=续跑凭据（分批可中断）
         await _onBatch?.({ batchesDone, counts: run.counts, cursor: run.cursor })
+        await yieldTick() // A3：批间 setImmediate 让出（批间可中断语义不变——_onBatch 缝原样）
       }
       // 移除面：known（T0 索引快照）键集 ∉ T0 盘上快照 → 出索引（外部删除/绕过钩子的变更在此校正）
       // I-2：只以 T0 索引快照做差——run 期间经钩子入库（save/create/rename）的路径不在 known=天然保护，
@@ -272,6 +309,7 @@ export function createIndexService({
       run.finishedAt = now()
       run.cursor = null
       await persist({ supersedeSource: run.resumedFrom }) // C-1②：续跑完成改写 source=superseded
+      await pushBacklinkSnapshot() // A1：对账完成即重推反链快照（外部编辑校正；失败仅留痕不炸 run）
       return run
     } catch (err) {
       if (err?.code !== 'simulate-crash') {
@@ -359,6 +397,8 @@ export function createIndexService({
       return refresh().catch((err) => warn(`[obsidian-web] 30min 定时对账失败（下一轮重试）：${err?.message ?? err}`))
     }, intervalMs)
     timerHandle?.unref?.() // 不吊住宿主进程生命周期
+    // A1：启动即推反链快照（既有 docs 建缓存——零 vault 盘读；对账若开跑，完成后还会重推校正）
+    await pushBacklinkSnapshot()
     // 先查补跑账本（TECH §3.5）：未完 run → 续跑；无账本或距上次完成 >30min → 立即对账（陈旧窗口兜底）
     try {
       const ledger = readLedger()
@@ -390,31 +430,89 @@ export function createIndexService({
     store = null
   }
 
-  // ── fts 后端（T3 检索缝接管：{name, search({root,plan,limit})}，零 API 变化）────────────
+  // ── fts 后端（T3 检索缝接管：{name, search({root,plan,limit,timeoutMs})}，零 API 变化）──────
+  const FTS_MATCH_BATCH = 200 // 候选 keyset 分批（批间 setImmediate 让出——A3 惯例，海量候选不占死事件循环）
+  const DEFAULT_FTS_TIMEOUT_MS = 2000 // 与 scan 后端 timeoutMs 缺省同口径（退化面语义保持）
   const ftsBackend = {
     name: 'fts',
-    async search({ root, plan, limit }) {
+    /** A4 路由能力声明：盲区词面（2 字/纯符号）忠实处理能力——plan 全词面 SQL 语义可证明 ≡ regex /i 才敢接；
+     *  否则 service 据此走 scan 兜底（不信任未声明能力的 fts 后端=既有语义保持）。纯函数零副作用。 */
+    canHandle(plan) {
+      return canPrefilterPlan(plan)
+    },
+    async search({ root, plan, limit, timeoutMs }) {
       if (path.resolve(root) !== rootAbs) {
         // 绑定根不一致：绝不拿旧根索引冒充（可解释拒；热改可解释拒不冒充=T11 交接，多根档案=T12 数据面）
         throw fail('bad_request', `索引库绑定 ${rootAbs}，与查询根 ${root} 不一致——请以 /ob/api/index/refresh 重建`)
       }
       const s = await ensureStore() // 自愈重试；失败抛 index_unavailable（search 层自动降级 scan）
-      const candidates = s.matchCandidates(plan) // compileQuery plan → FTS MATCH/LIKE（逐词转义）
-      const hits = matchDocs(plan, candidates) // 命中行/score/snippet=scan 同口径（score=排序权重）
+      const budget = Number.isFinite(timeoutMs) ? Math.max(0, timeoutMs) : DEFAULT_FTS_TIMEOUT_MS
+      const deadline = Date.now() + budget
+      const hits = []
+      let scanned = 0
+      let timedOut = false
+      let after = null
+      for (;;) {
+        if (Date.now() >= deadline) {
+          timedOut = true // 退化面语义保持（与 scan 后端同形）：超时 fail-open 部分结果 + 留痕
+          break
+        }
+        const batch = s.matchCandidates(plan, { after, limit: FTS_MATCH_BATCH }) // compileQuery plan → FTS MATCH/LIKE（逐词转义 + 下推安全门）
+        if (batch.length === 0) break
+        after = batch[batch.length - 1].path
+        scanned += batch.length
+        hits.push(...matchDocs(plan, batch)) // 命中行/score/snippet=scan 同口径（score=排序权重）
+        if (batch.length < FTS_MATCH_BATCH) break
+        await yieldTick() // 批间让出（A3）：候选海量时不占死事件循环
+      }
       return {
-        hits: hits.slice(0, Math.max(1, Math.floor(limit) || 50)),
-        degraded: null, // 零磁盘 IO、AND 窄化候选集——超时降级语义由 scan 兜底路径承载
+        hits: sortHits(hits).slice(0, Math.max(1, Math.floor(limit) || 50)),
+        degraded: timedOut
+          ? {
+              reason: 'timeout',
+              message: `索引检索超时，已返回部分结果（已检 ${scanned} 篇候选）`,
+              scanned,
+            }
+          : null,
       }
     },
   }
 
-  /** 索引面状态（degraded 留痕可观测面，INV-15）：ready=库可用；degraded=开库失败留痕 */
+  /** 索引面状态（degraded 留痕可观测面，INV-15）：ready=库可用；degraded=开库失败留痕。
+   *  A4 只读可观测增量（/ob/api/index/status 同形）：docs.count=文档数、lastReconcile=最后对账
+   *  run 摘要（时间/状态/计数）、fts=fts 可用性——**只读零副作用**（不开库不自愈重试不写账本）。 */
   function status() {
+    let count = 0
+    if (store !== null) {
+      try {
+        count = store.count()
+      } catch {
+        count = 0 // 只读面 fail-open：计数读不到如实报 0，绝不抛（可观测性优先）
+      }
+    }
+    let lastReconcile = null
+    try {
+      const last = readLedger().runs.at(-1)
+      if (last !== undefined) {
+        lastReconcile = {
+          runId: last.runId,
+          status: last.status,
+          startedAt: last.startedAt,
+          finishedAt: last.finishedAt,
+          counts: { ...emptyCounts(), ...(last.counts ?? {}) },
+        }
+      }
+    } catch {
+      lastReconcile = null
+    }
     return {
       vaultRoot: rootAbs,
       dir: dirAbs,
       ready: store !== null,
       degraded: degraded === null ? null : { ...degraded },
+      docs: { count },
+      fts: { available: store !== null, reason: store === null ? (degraded?.reason ?? 'index-store-unavailable') : null },
+      lastReconcile,
     }
   }
 
@@ -431,5 +529,6 @@ export function createIndexService({
     stop,
     refresh,
     reconcile: runReconcile,
+    syncBacklinks: pushBacklinkSnapshot, // A1：手动推反链快照（测试/对账后显式刷新；幂等串行）
   }
 }

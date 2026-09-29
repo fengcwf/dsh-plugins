@@ -34,6 +34,19 @@ export function selectNode(state, node) {
   return { selected: key, expanded: [...expanded, ...add] }
 }
 
+/** 全量文件路径（wikilink 目标解析数据面；深度递归、纯函数——App 只 computed 取用） */
+export function collectFilePaths(nodes) {
+  const out = []
+  const walk = (list) => {
+    for (const n of list ?? []) {
+      if (n.type === 'file') out.push(n.path)
+      else walk(n.children)
+    }
+  }
+  walk(Array.isArray(nodes) ? nodes : [])
+  return out
+}
+
 /**
  * wikilink 目标解析（[[Note]] / [[Note#Head]] / [[dir/Note]]）→ 实际文件路径或 null。
  * 口径：显式路径（含 .md 可选）优先，其次 basename 匹配（Obsidian 语义；大小写敏感，T11 归位折叠）。
