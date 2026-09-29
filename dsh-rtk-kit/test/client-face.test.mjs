@@ -454,3 +454,45 @@ test('状态面：版本 RTK_ERROR（错误信封）→ 红叉 + 原因小字（
   const block = find(runtime.tree, (n) => n.props && n.props['data-rtk-block'] === 'version')
   assert.ok(textOf(block).includes('rtk gain 输出不是合法 JSON'), '失败原因原文进版本区')
 })
+
+// ── Ruling I / F-01：失败态显式「重试」按钮（不只超时态） ──────────────────────
+
+test('F-01：gain 失败态（自动拉取失败）带「重试」按钮，点击=重发回 loading 再成功', async () => {
+  let calls = 0
+  const routes = {
+    'api/rtk-kit/gain': () => { calls += 1; return calls === 1 ? ERR_GENERIC : GAIN_OK },
+  }
+  const { runtime, fake } = mountSection(routes)
+  await settle()
+  assert.ok(textOf(runtime.tree).includes('rtk gain 输出不是合法 JSON'), '失败态红叉+原因小字')
+  const retry = button(runtime.tree, 'retry-gain')
+  assert.ok(retry, '失败态带重试按钮（F-01，非仅超时态）')
+  assert.equal(retry.props.children, '重试')
+  retry.props.onClick()
+  assert.equal(metricText(runtime.tree, 'commands'), '-', '点击后回 loading 态（指标「-」占位）')
+  await settle()
+  assert.equal(metricText(runtime.tree, 'commands'), '2,070', '重试成功后渲染指标')
+  assert.equal(fake.calls.filter((c) => c.url === 'api/rtk-kit/gain').length, 2, '重试=重发请求')
+})
+
+test('F-01：版本块失败态带「重试」按钮（原操作按钮保留），点击=重发 version 请求', async () => {
+  let calls = 0
+  const routes = {
+    'api/rtk-kit/gain': GAIN_OK,
+    'api/rtk-kit/version': () => { calls += 1; return calls === 1 ? ERR_GENERIC : VERSION_OK },
+  }
+  const { runtime, fake } = mountSection(routes)
+  await settle()
+  button(runtime.tree, 'check-version').props.onClick()
+  await settle()
+  let block = find(runtime.tree, (n) => n.props && n.props['data-rtk-block'] === 'version')
+  assert.ok(textOf(block).includes('rtk gain 输出不是合法 JSON'), '失败原因原文')
+  const retry = button(block, 'retry-version')
+  assert.ok(retry, '版本失败态带重试按钮（F-01）')
+  assert.ok(button(block, 'check-version'), '原操作按钮保留不动（Ruling I）')
+  retry.props.onClick()
+  await settle()
+  block = find(runtime.tree, (n) => n.props && n.props['data-rtk-block'] === 'version')
+  assert.ok(textOf(block).includes('rtk 0.49.0'), '重试成功后渲染版本行')
+  assert.equal(fake.calls.filter((c) => c.url === 'api/rtk-kit/version').length, 2, '重试=重发请求')
+})

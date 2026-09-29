@@ -121,13 +121,13 @@ window.__ModuleLoader__.load({
       return { kind: 'error', text: String((err && err.message) || code || '请求失败') }
     }
 
-    /** 失败/超时态行（US-4/INV-5）：超时=--warning「rtk 响应超时」+ 重试按钮；失败=红叉 + 原因小字 --danger */
+    /** 失败/超时态行（US-4/INV-5 + Ruling I/F-01）：红叉/警告 + 原因小字 + 统一「重试」按钮（超时/失败/缺失态同一 affordance） */
     function stateLine(st, retryAction, onRetry) {
       var e = st.error
       if (!e) return null
       var isFail = e.kind === 'error'
       var kids = [h('span', { className: isFail ? 'rtk-fail' : 'rtk-warn' }, (isFail ? '✗ ' : '⚠ ') + e.text)]
-      if (e.kind === 'timeout') kids.push(h('button', { type: 'button', className: 'rtk-btn', 'data-rtk-action': retryAction, onClick: onRetry }, '重试'))
+      kids.push(h('button', { type: 'button', className: 'rtk-btn', 'data-rtk-action': retryAction, onClick: onRetry }, '重试'))
       return h('div', { className: 'rtk-row rtk-state' }, kids)
     }
 
