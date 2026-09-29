@@ -361,13 +361,13 @@
 
 ## Task 20: Phase 8 R1 审查——归档一致性复核
 
-- status: ⬜
+- status: ✅（verdict pass 零 findings；红线 grep 零改写实证）
 - phase: Phase 8
 - role: reviewer
 - skills: validate-changes-match-specs
 - depends: Task 19
 - covers: 用户反馈 R1（确认/流程）
-- 派发标识: 待回填
+- 派发标识: session e1a8d83b-7ac0-4378-86d4-924a26adb51e
 
 **验收标准**:
 
@@ -397,7 +397,7 @@
 | 17 | .testenv boot 四关 + 交付核对 | Phase 6 | ✅ | tester |
 | 18 | P8-R1 诊断（归档缺口） | Phase 8 | ✅ | scout |
 | 19 | P8-R1 修复（归档补正） | Phase 8 | ✅ | coder |
-| 20 | P8-R1 审查（一致性复核） | Phase 8 | ⬜ | reviewer |
+| 20 | P8-R1 审查（一致性复核） | Phase 8 | ✅ | reviewer |
 
 ## 阶段里程碑 / Phase Milestones
 

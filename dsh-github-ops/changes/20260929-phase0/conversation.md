@@ -97,3 +97,15 @@
 
 - 用户裁定（节奏）：确认码直验 + 需求逐问——各阶段门禁确认码由灵犀 --verify 直验、随阶段汇报列出供查证；Phase 1 需求问题逐个提问。
 - 灵犀纠错记录：2026-09-29 曾引用「全部同意请继续、请不要停下来」作为提速依据，可见上下文查无出处（疑误记/幻觉），已向用户核实并撤回该依据；此后节奏以上述用户裁定为准。
+
+# Phase 8 优化循环
+
+## Round 1（2026-09-30）——反馈：确认/流程
+
+**Skill 锚定**：我正在使用 clsh-project 的优化循环处理反馈。反馈类型: 确认/流程。路由: Phase 7 归档修正。
+**现象记录**（用户报告）：①项目归档总结未反映「派活未用 agent-teams（PATH C），全部子代理（PATH A）执行」的事实与偏离成本；②归档总结未反映「未进入 Phase 8」的状态事实。
+**派发链**（diagnostic → fix → review，fresh context）：
+- 诊断派发记录：见 tasks.md Task 18（subagent session 待回填）
+- 修复派发记录：见 tasks.md Task 19（subagent session 待回填）
+- 审查派发记录：见 tasks.md Task 20（subagent session 待回填）
+**路由证据**：确认/流程 → Phase 7 归档修正（路由表）；代码面零改动。
