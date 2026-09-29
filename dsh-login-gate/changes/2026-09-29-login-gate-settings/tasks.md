@@ -210,7 +210,7 @@
 
 ## Task 8: 发版五步 + 生产同步（用户逐次确认）
 
-- status: ⬜
+- status: 🔄（①~④ PASS + tag dsh-login-gate-v0.3.0 已推 ✓；gh release 用户未选跳过；**生产同步待用户指定空档**）
 - phase: Phase 6 收尾
 - role: 协调者
 - skills: dsh-plugin-ops
