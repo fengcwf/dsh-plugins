@@ -1,0 +1,741 @@
+===== task-17 raw output =====
+date: 2026-09-29T22:03:33+08:00
+host repo: /opt/workdata/dsh-plugins
+HEAD: 8f9847e58cc87ed8bdcf1f42987928f6a1612d37
+code-tree: clean（工作树运行时代码 == HEAD）
+===== [PART 1] smoke.sh 四关（SMOKE_PLUGIN=dsh-github-ops SMOKE_KEEP=1） =====
+== B: dsh plugin add git+file:///opt/workdata/dsh-plugins#89fd160ede193abc572aa882340a6c49a15fccf1&path:dsh-github-ops ==
+✓ Lockfile passes supply-chain policies (verified 3h ago)
+Progress: resolved 0, reused 1, downloaded 0, added 0
+Packages: +1
++
+Progress: resolved 101, reused 100, downloaded 0, added 1, done
+[WARN] Issues with peer dependencies found. Run "pnpm peers check" to list them.
+
+dependencies:
+- dsh-github-ops 0.2.1
++ dsh-github-ops 0.3.0
+
+Done in 2.5s using pnpm v12.6.0
+[B] PASS 落地 version=0.3.0
+[B] 依赖代装（zod）: 1 个命中
+== 1: token URL + HTTP on 3180 ==
+[keep] boot 进程保留（PID 911768 @ 3180）——结束务必 bash .testenv/t17-teardown.sh
+[1] PASS http://127.0.0.1:3180/?token=UuhdXQot0BEnIvuNaAOfsZfpArBgba0_1NrHy2R2s4o -> exchange HTTP 303, follow-with-cookie HTTP 200
+== 2: --dump-config 合成含插件层 ==
+    server:
+      sharePort: 3580
+# == dsh-github-ops
+- id: github-ops
+  name: dsh-github-ops
+  config:
+    enabled: true
+    ghBin: gh
+    enforceCommands: true
+    webFetchPolicy: deny
+    registerRepoTools: true
+    allowDelete: false
+[2] PASS 合成含插件层
+== 3: node --test（checkout）==
+✔ 超时分级结果→UI 不挂死：busy→终态 error +「执行超时」归因标题 + 重新检查入口（INV-5/R-1 同法） (17.672668ms)
+✔ 探针 403 归因标题口径（INV-10）：GHO-AUTH-CONNECT-04 →「403 · 权限不足」（不得误显「来源受限」） (1.384215ms)
+✔ repo-context 失败降级不炸栏目：传输失败/硬失败各一形 → 栏目六卡照常 + 卡内降级 (2.425543ms)
+✔ UI 投影零明文：一次性假 token 保存链 + 原始串面（stderr/argv 形）绝不进树 (1.821495ms)
+✔ 假 ctx 无 slots 注入：client 壳 apply() 不炸零注册；index apply() 不炸且层①包壳照常 (10.732958ms)
+✔ 模块注册形（INV-9/R-4）：__ModuleLoader__ 注册 id=包名 + factory(require) 只登记模块体 (4.801603ms)
+✔ 兄弟 chunk 引用形 + client.ui.js 注册形（CLIENT_CHUNK 约定）与 render* 接口面 (21.913072ms)
+✔ fetch 帮手文档相对（login-gate 基址铁律）：api/github-ops/… 无前导斜杠 (2.704592ms)
+✔ 多座自探测 + 防双挂载（US-8）：四座逆序触发单挂收敛，迟到高优先座切换 (14.061969ms)
+✔ 多座防双挂载（US-8）：主座先到时兼容座零注册 (6.655368ms)
+✔ P-7 红线：root 槽禁注册；sidebar/rightbar 零占位 (5.759405ms)
+✔ fail-open（INV-6）：ctx 无 slots → apply 不炸 + logger.warn + 零注册 (5.573863ms)
+✔ fail-open（INV-6）：slots.register 抛错（槽位方缺席形）→ catch + warn + 不炸 (3.908118ms)
+✔ fail-open（INV-6）：兄弟 chunk 不可取（404 形）→ 不炸 + warn + 零注册 (2.975368ms)
+✔ fail-open（INV-6）：logger 缺位也不炸 + 挂载生命周期拆除器收敛 (5.414079ms)
+✔ T14 Loading（骨架）：双栏容器 + 六卡骨架（贴合最终布局形状） (4.525795ms)
+✔ T14 Loading（按钮态）：检验进行中=按钮禁用 + 内联 spinner + 骨架行 (9.338647ms)
+✔ T14 Error（分级错误卡）：401 分级 + 修复指引 + stderr 零透传（INV-10） (2.692155ms)
+✔ T14 Error（传输失败）：fetch 拒绝 → 网络分级卡，不挂死 (1.153776ms)
+✔ T14 Empty（多账号库空态）：「尚无其他账号」+ 添加账号入口 (2.003289ms)
+✔ T14 限额可视化 + 三段检验行（US-3/US-6）：remaining/reset + 分类 hint 贯穿 (1.28231ms)
+✔ T14 零明文（INV-1/P-5）：密码框 + 保存即清空 + 留空=不修改 + 保存后立即验证 (2.234962ms)
+✔ T14 多账号交互：逐账号验证 + 切换 active（busy 态 + POST 语义） (3.112268ms)
+✔ T14 P-8 + 禁令清单（可见文案）：无删除/登出入口；零 em-dash/emoji；状态点配文字 (4.229318ms)
+✔ T14 布局与 token（DESIGN.md C-5）：双栏/<960 单列/1200px/16px + 零 hex + 色值全 var(--dsw-*) (2.862866ms)
+✔ T14 DESIGN token 表逐字在场（C-5：DESIGN 名为首选引用） (0.632365ms)
+✔ L1 同座二次触发（槽位重声明）：跳过分支可重挂，旧拆除后绝不静默缺席 (24.717768ms)
+✔ L1 挂载期异常 fail-open（INV-6）：重挂失败只 warn 不炸、状态不悬挂 (6.462172ms)
+✔ T14 Error（非 JSON 5xx）：HTTP 502 HTML 形=硬失败分级卡，绝不当成功（S2） (1.596731ms)
+✔ M1/S1 扫描面回归：源码锁真读到壳（SEATS name: 靶子），坏形必命中、真实源码零命中 (2.048007ms)
+✔ web_fetch 门禁：API/原始文件主机拒绝，普通网页放行 (2.672934ms)
+✔ curl 打 GitHub API → 注入 $(gh auth token) 头 (1.334653ms)
+✔ wget 同样注入；已认证命令不重复注入 (0.872639ms)
+✔ 非 API 的 curl 不动；复杂首 token 保守放行 (0.508036ms)
+✔ git clone https → gh repo clone (2.617051ms)
+✔ gh 命令原样放行（自带认证） (0.444579ms)
+✔ targetsGithubApi 观察函数 (0.329912ms)
+✔ 超时形@探针阶段①③：慢响应 >probeTimeoutMs → 分级结果 GHO-…-01 + 超时 hint + 不挂死 (1943.781703ms)
+✔ 超时形@写 token（R-1 同法钉死失败形）：慢响应 → GHO-TOKEN-01 分级 + 不挂死 + 零明文 (805.542429ms)
+✔ 失败形 403@auth-connect（F-7）→ GHO-AUTH-CONNECT-04 权限归因 + stderr 含密也不透传 (210.09871ms)
+✔ 失败形 429@auth-connect → GHO-AUTH-CONNECT-05 限额归因；非零退出（无 HTTP 线索）→ GHO-…-99 未知归因 (457.08476ms)
+✔ 失败形写入（F-7）：writeToken 网络错形 → GHO-TOKEN-06 结构化归因 + 零明文 (96.334954ms)
+✔ switchActive 空 login（F-7）：拒绝执行零调用 + GHO-SWITCH-06 可见指引 (1.387221ms)
+✔ probeAccess JSON 不可解析（F-7）→ GHO-LOCAL-CONFIG-99 结构化归因 (99.677711ms)
+✔ 畸形 hosts.yml（垃圾行）：垃圾行不入投影、纯垃圾=空投影、零明文 (2.837777ms)
+✔ 畸形 hosts.yml（Tab 缩进）：不炸 + 零明文 + 不伪造凭据（hasToken/configured 不得误报 true） (0.815154ms)
+✔ 全链零明文：一次性假 token 经 stdin 写入，argv/返回值零明文（最坏回显也被擦除） (401.449637ms)
+✔ makeRunGh：stdin 传 token、argv/env 恒定、返回值零明文 (253.904204ms)
+✔ makeRunGh：超时出 timedOut、gh 缺失出 ENOENT、输出有界（4MiB maxBuffer） (354.040494ms)
+✔ writeToken 成功形：argv 不落 token、stdin 传 token、结果零明文 (104.377273ms)
+✔ writeToken 失败形钉死（R-1 实测 stderr 形）：GHO-TOKEN-03 + 401 hint (121.394882ms)
+✔ writeToken 空 token：拒绝执行且零调用（钉死空 stdin 掉设备码流程的陷阱，INV-4） (0.7636ms)
+✔ parseHostsMeta：行级元数据投影（active_account/user/users/git_protocol，token 只判在位） (1.102812ms)
+✔ parseHostsMeta：空文本/无 hosts → 空投影 (0.375455ms)
+✔ listAccounts：{login,active,configured,verified} 投影（不读 token 值） (0.531779ms)
+✔ F-1 生产真实形 + legacy 形：users 序列项/active_account 非 login 回退 user/无 users 合成 (0.505069ms)
+✔ probeAccess 三段全通：stage=latency-quota + login/quota/elapsedMs + 探针 argv 顺序 (355.391552ms)
+✔ probeAccess 失败分级：401@auth-connect → GHO-AUTH-CONNECT-03 (363.352438ms)
+✔ probeAccess 失败分级：429@latency-quota → GHO-LATENCY-QUOTA-05（限额 hint） (414.734829ms)
+✔ probeAccess：probeTimeoutMs 贯通 + 超时分级（不挂死） (1127.711285ms)
+✔ probeAccess：未配置（hosts 空）→ GHO-LOCAL-CONFIG-07；gh 缺失 → GHO-LOCAL-CONFIG-02 (97.415196ms)
+✔ probeTimeoutMs 缺省 3000（INV-5） (0.26849ms)
+✔ switchActive 成功形：gh auth switch --user <login>（R-3 本机支持） (96.897609ms)
+✔ switchActive 降级：gh<2.20 无 auth switch → 手工切换 hint (95.932693ms)
+✔ redact：git remote URL 凭据擦除 + token 形态扫描，普通文本不动 (0.296261ms)
+✔ 零明文总扫描：探针/写入/账号投影全链路无 token 形态串（P-10、INV-1） (517.766574ms)
+✔ 导出契约与声明面（INV-9/R-4）：name/inject 不动 + 新增挂载面 + client 声明 + config 全键重述 (5.355541ms)
+✔ Config probeTimeoutMs（INV-5 钳制落点）：min 1000 / max 600000 / default 3000 (5.991121ms)
+✔ 层① 命令强制层（INV-7）：resolve 包壳 apply 后存活 + stdin 守卫 + 卸载还原（工厂形 effect） (13.087488ms)
+✔ 层① 配置开关（INV-7 零回归）：enabled:false/enforceCommands:false 请求期透传 (6.735309ms)
+✔ 层② web_fetch 门禁（INV-7）：deny/ask 决策 + 非目标放行 + off 不注册 (10.125566ms)
+✔ 层③ 工具集（INV-7）：11 个工具注册 + runGh 收编 gh-auth.makeRunGh 真执行 + 开关 (17.40837ms)
+✔ 层④ awareness 注入（INV-7）：session-start 注入约定文案 + 开关 (7.483203ms)
+✔ 层⑤ 设置面挂载（kb-context 形）：双层子插件 + 真 handler 鉴权 + 撤路由（C-1 收敛释放） (7.09072ms)
+✔ 层⑤ deps 缝：runGh（gh-auth 收编）真执行 + workspaceDir=宿主 registry 工作区 (39.519302ms)
+✔ 非 web 部署面（Ruling-3 核心证据）：无 webServer/connection provider → 数据面延迟激活缺席，四层（含层①包壳）照常存活 (3.209828ms)
+✔ fail-open（INV-6）：ctx.plugin 缺位不炸装载；enabled:false 不挂设置面 (2.138582ms)
+✔ 插件入口可加载：依赖解析 + 导出契约完整 (171.321402ms)
+✔ 工具集共 11 个，命名遵循 github-mcp-server 约定 (4.921014ms)
+✔ github_repo_list 参数投影与限流裁剪 (5.982575ms)
+✔ github_repo_clone 支持 dest 与 depth (2.057626ms)
+✔ 危险操作双重门禁：archive/delete 需要 confirm 精确匹配 (1.119091ms)
+✔ github_repo_edit 改可见性需 confirm；空编辑拒绝 (3.250864ms)
+✔ renderSteps：exit code 显式标注、截断有界 (0.7393ms)
+✔ github_api：万能后端 + 写操作需 confirm + jq/paginate 裁剪 (0.55974ms)
+✔ 工具描述含选型指导（吸收 MCP 描述风格） (0.315783ms)
+✔ 慢响应超时形全链（真 spawn）：>probeTimeoutMs → 200+ok:false GHO-AUTH-CONNECT-01，分级出结果不挂死（INV-5） (1046.199541ms)
+✔ R-1 写入失败形全链（真 spawn）：失败 stderr 含密最坏形 → GHO-TOKEN-03 + stderr 敏感串不透传（INV-10/R-1） (217.996248ms)
+✔ sendJson 整树 redact 咬合（INV-1 双保险）：白名单违例键名反射 token 形态串 → 出边界必须擦除 (6.682036ms)
+✔ 失败形分级矩阵@POST /check：401/403/429/非零退出 → GHO-AUTH-CONNECT-03/04/05/99 结构化归因 + stderr 不透传 (14.925597ms)
+✔ 失败形写入矩阵@POST /token：网络错形/非零退出 → GHO-TOKEN-06 + 留空=不修改不受影响（INV-4） (9.194625ms)
+✔ 缺缝 fail-open（INV-6）：register/connection 缺位=数据面缺席不炸；畸形 hosts.yml 不炸栏目 (4.475752ms)
+✔ 日志/返回值零明文（P-5/P-10/R-6）：内部异常 message 含密 → warn 日志与响应双双擦除 (2.700572ms)
+✔ 注册面 + 缺缝 fail-open（INV-6）：prefix 注册 / disposer 可撤销 / 缺 connection 不注册不炸 (5.730969ms)
+✔ 鉴权矩阵：8 端点首行 requestRejection，未授权 401/403 且零副作用（INV-3） (10.097084ms)
+✔ 路由契约守卫：方法 405+allow、路径 404、畸形 JSON 400、白名单整单拒 400（INV-1） (13.976239ms)
+✔ 1MiB 请求体有界：超限 400 GHO-ROUTE-02 且零业务副作用（INV-1） (2.49278ms)
+✔ POST /token 留空=不修改（INV-4）：空/缺失/空白 token 全 200 no-op，绝不触碰既有凭据 (7.940986ms)
+✔ POST /token 写入：只经 stdin 进 gh（argv 零明文，P-5），响应零明文 (7.061959ms)
+✔ 路由输出零明文对抗（INV-1/INV-10）：URL userinfo 形 + token 形态 + hosts.yml 假值全擦 (10.194398ms)
+✔ GET /status：本地认证状态投影（零网络 + 零明文） (1.41082ms)
+✔ POST /check：三段探针 + probeTimeoutMs 透传 + quota 投影（ADR-004） (1.828002ms)
+✔ POST /check 失败归因：结构化 GHO-<STAGE>-<NN> + 分级 hint + stderr 敏感串不透传（INV-10） (2.205881ms)
+✔ GET /accounts + /accounts/verify：逐账号验证 + verified 回填 + L-1 幻影 login 过滤 (3.169639ms)
+✔ POST /accounts/switch：成功投影 + gh<2.20 降级 hint（ADR-005/R-3） (2.633957ms)
+✔ GET /repo-context：gh 摘要 + TTL≤30s 缓存 + 失败 fail-open（ADR-006/INV-6） (204.173933ms)
+✔ M-1 用户可见 message（INV-10）：畸形 JSON / 超 1MiB 回落 CONTRACT 中文文案，不裸奔 kind 字面 (3.884524ms)
+✔ M-2 差分枚举回归（INV-3）：未授权 已知/未知路径同形回拒（鉴权先行于 404 查表），过缝才如实 404 (0.899698ms)
+✔ GET /health：三段自检（配置合成复检 / gh 可用 / 凭据在位）+ 降级归因（ADR-007） (1.657383ms)
+ℹ tests 109
+ℹ suites 0
+ℹ pass 109
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4265.127532
+[3] PASS
+== 4: load.test.mjs 真 import 冒烟 ==
+✔ 插件入口可加载：依赖解析 + 导出契约完整 (163.120693ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 341.025612
+[4] PASS
+
+===== [PART 2] t17-chunkprobe.sh 多 chunk 嵌套链 + 栏目在场 + 防双挂载（模块层） =====
+== A: 会话就绪（优先复用 smoke.sh gate1 cookie；失效则从 boot log 换票） ==
+PASS  A 会话就绪（GUI HTML 含 __DSH_BOOT__，36807B）
+== B: __DSH_BOOT__ 取 dsh-github-ops combo 行（combo 路由带 rev 形） ==
+[B] combo=plugins/??dsh-github-ops/client.js&rev=f382b32b1e32 rev=f382b32b1e32
+PASS  B combo 路由带 rev 形（plugins/??dsh-github-ops/client.js&rev=f382b32b1e32）
+PASS  B rev 取得 f382b32b1e32
+== C: 入口经 combo 路由实取（/plugins/dsh-github-ops/client.js 交付面 = HTTP 200） ==
+PASS  C client.js via combo HTTP 200 10474B | 注册形✓ 模块id✓ chunk引用✓
+[C] 参照：/plugins/dsh-github-ops/client.js 直取 → HTTP 404（INV-9 交付面断言以 combo 实取 + 本行记录为证据）
+== D: 5 个兄弟 chunk 经 chunk 路由 ?rev= 逐个实取（多层嵌套链资产面） ==
+PASS  D client.ui.js HTTP 200 6742B | 注册形✓ chunk名✓
+PASS  D client.ui.styles.js HTTP 200 12373B | 注册形✓ chunk名✓
+PASS  D client.ui.model.js HTTP 200 12627B | 注册形✓ chunk名✓
+PASS  D client.ui.cards.js HTTP 200 14272B | 注册形✓ chunk名✓
+PASS  D client.ui.project.js HTTP 200 6834B | 注册形✓ chunk名✓
+== D2: 负例（无 rev 直取 → chunk 路由钉 rev，预期非 200） ==
+PASS  D2 无 rev → HTTP 404（钉 rev 成立）
+== E: 嵌套链真机逐级执行 + 栏目在场 + 多座不双挂载（HTTP 实取字节） ==
+CHAIN OK 嵌套链执行完成：client.js(200,8619B)
+{
+  "fetchLog": [
+    {
+      "chunk": "client.js",
+      "url": "http://127.0.0.1:3180/plugins/??dsh-github-ops/client.js&rev=f382b32b1e32",
+      "status": 200,
+      "bytes": 8619
+    },
+    {
+      "chunk": "client.ui.js",
+      "url": "http://127.0.0.1:3180/plugins/dsh-github-ops/client.ui.js?rev=f382b32b1e32",
+      "status": 200,
+      "bytes": 5986
+    }
+  ],
+  "chainEdges": [],
+  "missingEdges": [
+    "client.js→client.ui.js",
+    "client.ui.js→client.ui.styles.js",
+    "client.ui.js→client.ui.model.js",
+    "client.ui.js→client.ui.cards.js",
+    "client.ui.model.js→client.ui.project.js"
+  ],
+  "injectSeats": [
+    "settings.section",
+    "settings.plugins.tab",
+    "plugins.bundle.config",
+    "settings.plugin.item"
+  ],
+  "steps": [
+    {
+      "fire": "settings.plugin.item",
+      "activeCount": 1,
+      "activeSeat": [
+        "settings.plugin.item"
+      ],
+      "labels": [
+        "undefined"
+      ]
+    },
+    {
+      "fire": "plugins.bundle.config",
+      "activeCount": 1,
+      "activeSeat": [
+        "plugins.bundle.config"
+      ],
+      "labels": [
+        "undefined"
+      ]
+    },
+    {
+      "fire": "settings.plugins.tab",
+      "activeCount": 1,
+      "activeSeat": [
+        "settings.plugins.tab"
+      ],
+      "labels": [
+        "GitHub 集成"
+      ]
+    },
+    {
+      "fire": "settings.section",
+      "activeCount": 1,
+      "activeSeat": [
+        "settings.section"
+      ],
+      "labels": [
+        "GitHub 集成"
+      ]
+    }
+  ],
+  "final": {
+    "name": "settings.section",
+    "id": "github-ops",
+    "order": 30,
+    "label": "GitHub 集成"
+  },
+  "oldSeatsDisposed": 4,
+  "renderRoot": {
+    "type": "div",
+    "dataDshPlugin": "dsh-github-ops",
+    "className": "gho-root"
+  },
+  "summaryRoot": {
+    "dataDshPlugin": "dsh-github-ops"
+  },
+  "warns": [],
+  "disposeType": "function"
+}
+FAIL  嵌套链五边齐（entry→ui→styles/model/cards，model→project）
+FAIL  链上每级 HTTP 200 真机可取（含 combo 路由带 rev 形）
+PASS  四座自探测注入齐
+PASS  逆序触发每步活动注册 ≤1（不双挂载，症状缺席）
+PASS  终态单挂收敛在主座 settings.section
+PASS  主座 id=github-ops + label「GitHub 集成」（功能在场）
+FAIL  旧座全部拆除（3 拆）
+PASS  render* 面真渲染根 data-dsh-plugin=dsh-github-ops
+PASS  summary 座 view=summary 走 renderSummary
+PROBE FAIL 缺：嵌套链五边齐（entry→ui→styles/model/cards，model→project） / 链上每级 HTTP 200 真机可取（含 combo 路由带 rev 形） / 旧座全部拆除（3 拆）
+FAIL  E 链/挂载断言不成立
+
+RESULT T17-CHUNK: HAS FAILURES
+
+===== [PART 2b] t17-chunkprobe.sh 重跑（chainprobe v2：链边后取 + 拆座前快照 + 真渲染驱动深层链） =====
+== A: 会话就绪（优先复用 smoke.sh gate1 cookie；失效则从 boot log 换票） ==
+PASS  A 会话就绪（GUI HTML 含 __DSH_BOOT__，36807B）
+== B: __DSH_BOOT__ 取 dsh-github-ops combo 行（combo 路由带 rev 形） ==
+[B] combo=plugins/??dsh-github-ops/client.js&rev=f382b32b1e32 rev=f382b32b1e32
+PASS  B combo 路由带 rev 形（plugins/??dsh-github-ops/client.js&rev=f382b32b1e32）
+PASS  B rev 取得 f382b32b1e32
+== C: 入口经 combo 路由实取（/plugins/dsh-github-ops/client.js 交付面 = HTTP 200） ==
+PASS  C client.js via combo HTTP 200 10474B | 注册形✓ 模块id✓ chunk引用✓
+[C] 参照：/plugins/dsh-github-ops/client.js 直取 → HTTP 404（INV-9 交付面断言以 combo 实取 + 本行记录为证据）
+== D: 5 个兄弟 chunk 经 chunk 路由 ?rev= 逐个实取（多层嵌套链资产面） ==
+PASS  D client.ui.js HTTP 200 6742B | 注册形✓ chunk名✓
+PASS  D client.ui.styles.js HTTP 200 12373B | 注册形✓ chunk名✓
+PASS  D client.ui.model.js HTTP 200 12627B | 注册形✓ chunk名✓
+PASS  D client.ui.cards.js HTTP 200 14272B | 注册形✓ chunk名✓
+PASS  D client.ui.project.js HTTP 200 6834B | 注册形✓ chunk名✓
+== D2: 负例（无 rev 直取 → chunk 路由钉 rev，预期非 200） ==
+PASS  D2 无 rev → HTTP 404（钉 rev 成立）
+== E: 嵌套链真机逐级执行 + 栏目在场 + 多座不双挂载（HTTP 实取字节） ==
+{
+  "fetchLog": [
+    {
+      "chunk": "client.js",
+      "status": 200,
+      "bytes": 8619
+    },
+    {
+      "chunk": "client.ui.js",
+      "status": 200,
+      "bytes": 5986
+    },
+    {
+      "chunk": "client.ui.styles.js",
+      "status": 200,
+      "bytes": 11927
+    },
+    {
+      "chunk": "client.ui.model.js",
+      "status": 200,
+      "bytes": 11479
+    },
+    {
+      "chunk": "client.ui.cards.js",
+      "status": 200,
+      "bytes": 12889
+    },
+    {
+      "chunk": "client.ui.project.js",
+      "status": 200,
+      "bytes": 5606
+    }
+  ],
+  "chainEdges": [
+    "client.js→client.ui.js",
+    "client.ui.js→client.ui.styles.js",
+    "client.ui.js→client.ui.model.js",
+    "client.ui.js→client.ui.cards.js",
+    "client.ui.model.js→client.ui.project.js",
+    "client.ui.model.js→client.ui.project.js",
+    "client.ui.model.js→client.ui.project.js",
+    "client.ui.model.js→client.ui.project.js"
+  ],
+  "missingEdges": [],
+  "injectSeats": [
+    "settings.section",
+    "settings.plugins.tab",
+    "plugins.bundle.config",
+    "settings.plugin.item"
+  ],
+  "steps": [
+    {
+      "fire": "settings.plugin.item",
+      "activeCount": 1,
+      "activeSeat": [
+        "settings.plugin.item"
+      ],
+      "labels": [
+        "undefined"
+      ]
+    },
+    {
+      "fire": "plugins.bundle.config",
+      "activeCount": 1,
+      "activeSeat": [
+        "plugins.bundle.config"
+      ],
+      "labels": [
+        "undefined"
+      ]
+    },
+    {
+      "fire": "settings.plugins.tab",
+      "activeCount": 1,
+      "activeSeat": [
+        "settings.plugins.tab"
+      ],
+      "labels": [
+        "GitHub 集成"
+      ]
+    },
+    {
+      "fire": "settings.section",
+      "activeCount": 1,
+      "activeSeat": [
+        "settings.section"
+      ],
+      "labels": [
+        "GitHub 集成"
+      ]
+    }
+  ],
+  "final": {
+    "name": "settings.section",
+    "id": "github-ops",
+    "order": 30,
+    "label": "GitHub 集成"
+  },
+  "oldSeatsDisposedBeforeTeardown": 3,
+  "renderPasses": 3,
+  "renderRoot": {
+    "type": "div",
+    "dataDshPlugin": "dsh-github-ops",
+    "className": "gho-root"
+  },
+  "renderTextSample": [
+    "GitHub 集成",
+    "dsh-github-ops · 认证、访问检验与仓库上下文",
+    "认证状态",
+    "401 · 未登录",
+    "未通过请求鉴权",
+    "未登录或登录已过期：请先登录 dsh web",
+    "访问检验",
+    "检查 GitHub 访问",
+    "尚未检验：点按上方按钮做三段判定",
+    "插件自检",
+    "401 · 未登录",
+    "未通过请求鉴权",
+    "未登录或登录已过期：请先登录 dsh web",
+    "Token 维护",
+    "零明文存储",
+    "Personal Access Token",
+    "保存并验证",
+    "保存后立即验证；留空=不修改，不触碰既有凭据",
+    "多账号库",
+    "添加账号",
+    "尚无其他账号",
+    "添加账号",
+    "仓库上下文",
+    "401 · 未登录"
+  ],
+  "summaryRoot": {
+    "dataDshPlugin": "dsh-github-ops"
+  },
+  "tokenShapedInRender": false,
+  "warns": [],
+  "disposeType": "function"
+}
+PASS  嵌套链五边齐（entry→ui→styles/model/cards，model→project，真机逐级执行）
+PASS  链上 6 文件全部 HTTP 200 真机可取（entry 经 combo 路由带 rev 形 + 5 兄弟 chunk 钉 rev）
+PASS  四座自探测注入齐
+PASS  逆序触发每步活动注册 ≤1（不双挂载，症状缺席）
+PASS  终态单挂收敛在主座 settings.section
+PASS  主座 id=github-ops + label「GitHub 集成」（功能在场·注册面）
+PASS  旧座全部拆除（3 拆，清场前快照）
+PASS  render* 面真渲染根 data-dsh-plugin=dsh-github-ops
+PASS  渲染树「GitHub 集成」栏目标题在场（功能在场·渲染面）
+PASS  渲染树六卡文案在场（认证状态卡）
+PASS  渲染文本零 token 形态（INV-1/P-5）
+PASS  summary 座 view=summary 走 renderSummary
+PROBE PASS 嵌套链 + 栏目在场 + 防双挂载 全部断言成立
+PASS  E 嵌套链 + 栏目在场 + 防双挂载断言成立
+
+RESULT T17-CHUNK: ALL PASS
+
+===== [PART 2-FINAL] t17-chunkprobe.sh 终版（chainprobe v2 + cookie HttpOnly 修正：数据面真机回读） =====
+== A: 会话就绪（优先复用 smoke.sh gate1 cookie；失效则从 boot log 换票） ==
+PASS  A 会话就绪（GUI HTML 含 __DSH_BOOT__，36807B）
+== B: __DSH_BOOT__ 取 dsh-github-ops combo 行（combo 路由带 rev 形） ==
+[B] combo=plugins/??dsh-github-ops/client.js&rev=f382b32b1e32 rev=f382b32b1e32
+PASS  B combo 路由带 rev 形（plugins/??dsh-github-ops/client.js&rev=f382b32b1e32）
+PASS  B rev 取得 f382b32b1e32
+== C: 入口经 combo 路由实取（/plugins/dsh-github-ops/client.js 交付面 = HTTP 200） ==
+PASS  C client.js via combo HTTP 200 10474B | 注册形✓ 模块id✓ chunk引用✓
+[C] 参照：/plugins/dsh-github-ops/client.js 直取 → HTTP 404（INV-9 交付面断言以 combo 实取 + 本行记录为证据）
+== D: 5 个兄弟 chunk 经 chunk 路由 ?rev= 逐个实取（多层嵌套链资产面） ==
+PASS  D client.ui.js HTTP 200 6742B | 注册形✓ chunk名✓
+PASS  D client.ui.styles.js HTTP 200 12373B | 注册形✓ chunk名✓
+PASS  D client.ui.model.js HTTP 200 12627B | 注册形✓ chunk名✓
+PASS  D client.ui.cards.js HTTP 200 14272B | 注册形✓ chunk名✓
+PASS  D client.ui.project.js HTTP 200 6834B | 注册形✓ chunk名✓
+== D2: 负例（无 rev 直取 → chunk 路由钉 rev，预期非 200） ==
+PASS  D2 无 rev → HTTP 404（钉 rev 成立）
+== E: 嵌套链真机逐级执行 + 栏目在场 + 多座不双挂载（HTTP 实取字节） ==
+{
+  "fetchLog": [
+    {
+      "chunk": "client.js",
+      "status": 200,
+      "bytes": 8619
+    },
+    {
+      "chunk": "client.ui.js",
+      "status": 200,
+      "bytes": 5986
+    },
+    {
+      "chunk": "client.ui.styles.js",
+      "status": 200,
+      "bytes": 11927
+    },
+    {
+      "chunk": "client.ui.cards.js",
+      "status": 200,
+      "bytes": 12889
+    },
+    {
+      "chunk": "client.ui.model.js",
+      "status": 200,
+      "bytes": 11479
+    },
+    {
+      "chunk": "client.ui.project.js",
+      "status": 200,
+      "bytes": 5606
+    }
+  ],
+  "chainEdges": [
+    "client.js→client.ui.js",
+    "client.ui.js→client.ui.styles.js",
+    "client.ui.js→client.ui.model.js",
+    "client.ui.js→client.ui.cards.js",
+    "client.ui.model.js→client.ui.project.js",
+    "client.ui.model.js→client.ui.project.js",
+    "client.ui.model.js→client.ui.project.js",
+    "client.ui.model.js→client.ui.project.js"
+  ],
+  "missingEdges": [],
+  "injectSeats": [
+    "settings.section",
+    "settings.plugins.tab",
+    "plugins.bundle.config",
+    "settings.plugin.item"
+  ],
+  "steps": [
+    {
+      "fire": "settings.plugin.item",
+      "activeCount": 1,
+      "activeSeat": [
+        "settings.plugin.item"
+      ],
+      "labels": [
+        "undefined"
+      ]
+    },
+    {
+      "fire": "plugins.bundle.config",
+      "activeCount": 1,
+      "activeSeat": [
+        "plugins.bundle.config"
+      ],
+      "labels": [
+        "undefined"
+      ]
+    },
+    {
+      "fire": "settings.plugins.tab",
+      "activeCount": 1,
+      "activeSeat": [
+        "settings.plugins.tab"
+      ],
+      "labels": [
+        "GitHub 集成"
+      ]
+    },
+    {
+      "fire": "settings.section",
+      "activeCount": 1,
+      "activeSeat": [
+        "settings.section"
+      ],
+      "labels": [
+        "GitHub 集成"
+      ]
+    }
+  ],
+  "final": {
+    "name": "settings.section",
+    "id": "github-ops",
+    "order": 30,
+    "label": "GitHub 集成"
+  },
+  "oldSeatsDisposedBeforeTeardown": 3,
+  "renderPasses": 3,
+  "renderRoot": {
+    "type": "div",
+    "dataDshPlugin": "dsh-github-ops",
+    "className": "gho-root"
+  },
+  "renderTextSample": [
+    "GitHub 集成",
+    "dsh-github-ops · 认证、访问检验与仓库上下文",
+    "认证状态",
+    "主机",
+    "未检测到",
+    "登录名",
+    "未登录",
+    "Token",
+    "未配置",
+    "API 限额",
+    "未检验",
+    "限额重置",
+    "未检验",
+    "本地无已登录账号/上下文：请先在设置栏目录入 token",
+    "访问检验",
+    "检查 GitHub 访问",
+    "尚未检验：点按上方按钮做三段判定",
+    "插件自检",
+    "配置合成",
+    "配置合成复检通过",
+    "gh 可用",
+    "gh version 2.90.0 (2026-04-16) 在位",
+    "凭据在位",
+    "hosts.yml 不存在（本地无凭据）"
+  ],
+  "summaryRoot": {
+    "dataDshPlugin": "dsh-github-ops"
+  },
+  "tokenShapedInRender": false,
+  "warns": [],
+  "disposeType": "function"
+}
+PASS  嵌套链五边齐（entry→ui→styles/model/cards，model→project，真机逐级执行）
+PASS  链上 6 文件全部 HTTP 200 真机可取（entry 经 combo 路由带 rev 形 + 5 兄弟 chunk 钉 rev）
+PASS  四座自探测注入齐
+PASS  逆序触发每步活动注册 ≤1（不双挂载，症状缺席）
+PASS  终态单挂收敛在主座 settings.section
+PASS  主座 id=github-ops + label「GitHub 集成」（功能在场·注册面）
+PASS  旧座全部拆除（3 拆，清场前快照）
+PASS  render* 面真渲染根 data-dsh-plugin=dsh-github-ops
+PASS  渲染树「GitHub 集成」栏目标题在场（功能在场·渲染面）
+PASS  渲染树六卡文案在场（认证状态卡）
+PASS  渲染文本零 token 形态（INV-1/P-5）
+PASS  summary 座 view=summary 走 renderSummary
+PROBE PASS 嵌套链 + 栏目在场 + 防双挂载 全部断言成立
+PASS  E 嵌套链 + 栏目在场 + 防双挂载断言成立
+
+RESULT T17-CHUNK: ALL PASS
+
+===== [PART 3] 浏览器相：真实 GUI 设置菜单现场确认（ego 冷启动 3 连败→手驱 chromium CDP，t17-guiprobe.mjs） =====
+--- 登录后 GUI 就绪（token URL 换票 → __DSH_BOOT__ object） ---
+--- 设置菜单 dump（节选：设置/通用设置/模型/内置插件/Agent 预设/kb-context/wiki-steward/GitHub 集成/RTK Kit） ---
+--- [断言1] 「GitHub 集成」叶子元素分类（症状缺席：navLabel 菜单项=1，第二命中=栏目 H1 标题） ---
+{"navMenuEntries":1,"hits":[{"tag":"SPAN","cls":"VOzbGW_navLabel"},{"tag":"H1","cls":"gho-title"}]}
+--- [断言2] 栏目内容面（功能在场：六卡 + 标题 + 菜单计数） ---
+{"menuEntries":1,"cards":["认证状态","访问检验","Token 维护","多账号库","仓库上下文","插件自检"]}
+--- 截图 ---
+a3a2630c4177d9a87372e29958c96d8fa59fc45c59bb1df6b8036f52e96d9425  t17-shot-gui-settings.png
+-rw------- 1 root root 38689 Sep 29 22:18 t17-shot-gui-settings.png
+
+===== [PART 4] 回收（红线：测完回收测试进程） =====
+chromium（CDP 探针实例）已先行回收（自查：9322 无监听）
+kill boot pid=911768（plugintest@3180）
+pkill 兜底无命中
+OK 端口 3180 已释放
+== 回收完成（未触碰生产 3080/3500 与 /root/.dsh） ==
+
+===== [PART 5] 发版纪律体检（不 push 不 tag——发版待用户逐次确认） =====
+[PASS] package.json version = 0.3.0
+[PASS] CHANGELOG.md 含 '## 0.3.0' 更新记录
+[PASS] 根 README.md 版本表已同步
+[TODO] tag dsh-github-ops-v0.3.0 尚未创建 —— push 前执行: git tag dsh-github-ops-v0.3.0
+[PASS] dist 新鲜度锁：窗口内无 web 源变更，不触发（基线=上个 tag dsh-github-ops-v0.2.1）
+[NOTE] 工作树有未提交变更 —— push 前提交
+---
+[VERDICT] PASS
+
+===== [PART 6] 修复环 R1 补证（S2 guard 正负例 / S4 ref 等价链） =====
+--- S2: 三处 guard 行从真实脚本文件抽取执行（3080/3500 必拦、3180 必放） ---
+=== .testenv/t13-chunk-probe.sh 抽出行: { [ "$PORT" = "3080" ] || [ "$PORT" = "3500" ]; } && guard "端口撞生产，拒绝"
+  PORT=3080 -> [guard] BLOCKED: 端口撞生产，拒绝
+rc=2
+  PORT=3500 -> [guard] BLOCKED: 端口撞生产，拒绝
+rc=2
+  PORT=3180 -> bash: 行 4: PASS-THROUGH: 未找到命令
+rc=127
+=== .testenv/t8b2-probe-obsidian.sh 抽出行: { [ "$SHAREPORT" = "3080" ] || [ "$SHAREPORT" = "3500" ]; } && guard "分享端口撞生产，拒绝"
+  SHAREPORT=3080 -> [guard] BLOCKED: 分享端口撞生产，拒绝
+rc=2
+  SHAREPORT=3500 -> [guard] BLOCKED: 分享端口撞生产，拒绝
+rc=2
+  SHAREPORT=3180 -> bash: 行 4: PASS-THROUGH: 未找到命令
+rc=127
+=== .testenv/t17-chunkprobe.sh 抽出行: { [ "$PORT" = "3080" ] || [ "$PORT" = "3500" ]; } && guard "端口撞生产，拒绝"
+  PORT=3080 -> [guard] BLOCKED: 端口撞生产，拒绝
+rc=2
+  PORT=3500 -> [guard] BLOCKED: 端口撞生产，拒绝
+rc=2
+  PORT=3180 -> bash: 行 4: PASS-THROUGH: 未找到命令
+rc=127
+
+--- S4: ref 等价链（装包 ref 89fd160 = 验证时工作树运行时代码态 = 当前 HEAD 代码态） ---
+装包 ref 89fd160 = 89fd160ede193abc572aa882340a6c49a15fccf1
+raw 头部记录的验证时 HEAD 8f9847e = 8f9847e58cc87ed8bdcf1f42987928f6a1612d37
+当前 HEAD f26e7d4 = f26e7d46a549ad678b3a3f9c4f6c91bc13428d2a
+$ git diff 89fd160..8f9847e -- dsh-github-ops/lib dsh-github-ops/test dsh-github-ops/package.json dsh-github-ops/cordis.patch.yml
+(以上为空 = 验证时工作树代码 == 89fd160 内容)
+$ git diff 89fd160..HEAD -- dsh-github-ops/lib dsh-github-ops/test dsh-github-ops/package.json dsh-github-ops/cordis.patch.yml
+(以上为空 = 当前 HEAD 代码态仍 == 89fd160，commit f26e7d4 纯文档)
+
+===== [PART 6b] S2 guard 正负例重跑修正（临时文件法，消除 6 中 3180 用例 rc=127 歧义） =====
+=== .testenv/t13-chunk-probe.sh
+    抽出行（真实文件字节）: { [ "$PORT" = "3080" ] || [ "$PORT" = "3500" ]; } && guard "端口撞生产，拒绝"
+    PORT=3080 -> rc=2 :: [guard] BLOCKED: 端口撞生产，拒绝
+    PORT=3500 -> rc=2 :: [guard] BLOCKED: 端口撞生产，拒绝
+    PORT=3180 -> rc=0 :: PASS-THROUGH guard 未触发
+=== .testenv/t8b2-probe-obsidian.sh
+    抽出行（真实文件字节）: { [ "$SHAREPORT" = "3080" ] || [ "$SHAREPORT" = "3500" ]; } && guard "分享端口撞生产，拒绝"
+    SHAREPORT=3080 -> rc=2 :: [guard] BLOCKED: 分享端口撞生产，拒绝
+    SHAREPORT=3500 -> rc=2 :: [guard] BLOCKED: 分享端口撞生产，拒绝
+    SHAREPORT=3180 -> rc=0 :: PASS-THROUGH guard 未触发
+=== .testenv/t17-chunkprobe.sh
+    抽出行（真实文件字节）: { [ "$PORT" = "3080" ] || [ "$PORT" = "3500" ]; } && guard "端口撞生产，拒绝"
+    PORT=3080 -> rc=2 :: [guard] BLOCKED: 端口撞生产，拒绝
+    PORT=3500 -> rc=2 :: [guard] BLOCKED: 端口撞生产，拒绝
+    PORT=3180 -> rc=0 :: PASS-THROUGH guard 未触发
+
+===== [PART 7] 修复环 R1 补证（S1）：真机错误码进响应投影现场（t17-evidence.sh，trap 回收） =====
+== boot plugintest@3180（trap 回收） ==
+[boot] OK 换票完成（会话 cookie 进 /opt/workdata/dsh-plugins/.testenv/t17-r1-cj.txt）
+
+== [E1] 无会话 GET /api/github-ops/status → 鉴权先行（期望 401 + GHO-AUTH-* 结构化形） ==
+{"ok":false,"stage":"auth","code":"GHO-AUTH-01","status":401,"login":null,"message":"未通过请求鉴权","elapsedMs":0,"hint":"未登录或登录已过期：请先登录 dsh web","quota":null}
+HTTP 401
+== [E2] 无会话 GET /api/github-ops/unknown → M-2 同形回拒（期望 401 同投影，非 404） ==
+{"ok":false,"stage":"auth","code":"GHO-AUTH-01","status":401,"login":null,"message":"未通过请求鉴权","elapsedMs":0,"hint":"未登录或登录已过期：请先登录 dsh web","quota":null}
+HTTP 401
+== [E3] 带会话 GET /api/github-ops/status → 本地状态投影（期望 GHO-STATUS-07：hosts.yml 不存在） ==
+{"ok":false,"stage":"status","code":"GHO-STATUS-07","status":null,"login":null,"message":"本地无凭据文件（hosts.yml 不存在）","elapsedMs":0,"hint":"本地无已登录账号/上下文：请先在设置栏目录入 token","quota":null}
+HTTP 200
+== [E4] 带会话 GET /api/github-ops/health → 三段自检降级归因（期望 GHO-* 结构化形） ==
+{"ok":false,"stage":"health","code":"GHO-HEALTH-07","status":null,"login":null,"message":"自检未全通过（credentials）","elapsedMs":61,"hint":null,"quota":null,"sections":{"config":{"ok":true,"message":"配置合成复检通过","switches":{"enabled":true,"enforceCommands":true,"webFetchPolicy":"deny","registerRepoTools":true,"allowDelete":false,"awareness":true}},"gh":{"ok":true,"message":"gh CLI 可用","version":"gh version 2.90.0 (2026-04-16)","elapsedMs":59},"credentials":{"ok":false,"code":"GHO-HEALTH-07","message":"hosts.yml 不存在（本地无凭据）","hint":"本地无已登录账号/上下文：请先在设置栏目录入 token","hostsPath":"/opt/workdata/dsh-plugins/.testenv/home/.config/gh/hosts.yml","active":null}}}
+HTTP 200
+
+== 完成（trap 回收） ==
+
+===== [PART 8] R1 收口复验：平行提交（71c07c7 dsh-rtk-kit 0.3.0）后 ref 等价链仍成立 =====
+当前 HEAD = d5e6713eac42561c3969045e406542600e20dcdf
+$ git diff 89fd160..HEAD -- dsh-github-ops/lib dsh-github-ops/test dsh-github-ops/package.json dsh-github-ops/cordis.patch.yml
+(以上为空 = 新 HEAD 代码态仍 == 装包 ref 89fd160)

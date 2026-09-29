@@ -1,0 +1,223 @@
+{
+  "scan_time": "2026-09-29T03:08:45.344203+00:00",
+  "scanner_version": "1.0.0",
+  "project": {
+    "project_dir": "/opt/workdata/dsh-plugins/dsh-github-ops",
+    "exists": true,
+    "is_new_project": false,
+    "file_count": 860,
+    "dir_count": 42,
+    "key_files": {
+      "package.json": {
+        "category": "node",
+        "size": 1371,
+        "modified": "2026-09-28T18:12:37.832133+00:00"
+      },
+      "overview.md": {
+        "category": "clsh-project",
+        "size": 1633,
+        "modified": "2026-09-29T03:06:01.607075+00:00"
+      },
+      "tasks.md": {
+        "category": "clsh-project",
+        "size": 2122,
+        "modified": "2026-09-29T03:06:01.605241+00:00"
+      }
+    },
+    "tech_stack": [],
+    "languages": [
+      "typescript",
+      "javascript",
+      "json",
+      "yaml"
+    ],
+    "existing_artifacts": [
+      "overview.md",
+      "tasks.md"
+    ],
+    "changes_dirs": [
+      "20260929-phase0"
+    ]
+  },
+  "obsidian": {
+    "obsidian_path": "/mnt/unraid_data/Obsidian",
+    "available": true,
+    "grep_results": [
+      {
+        "source": "wiki/INDEX.md",
+        "keyword": "github",
+        "matched": true
+      },
+      {
+        "source": "wiki/INDEX.md",
+        "keyword": "json",
+        "matched": true
+      },
+      {
+        "source": "wiki/INDEX.md",
+        "keyword": "dsh",
+        "matched": true
+      },
+      {
+        "source": "wiki/INDEX.md",
+        "keyword": "clsh-project",
+        "matched": true
+      }
+    ],
+    "solutions_matches": [
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/git-gnutls-proxy-workaround.md",
+        "keyword": "github",
+        "name": "git-gnutls-proxy-workaround"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/loop-engineering-report.md",
+        "keyword": "github",
+        "name": "loop-engineering-report"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/external-api-check-openapi.md",
+        "keyword": "json",
+        "name": "external-api-check-openapi"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/fetch-credentials-missing.md",
+        "keyword": "json",
+        "name": "fetch-credentials-missing"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/phase8-enforcement-执行强制方案.md",
+        "keyword": "json",
+        "name": "phase8-enforcement-执行强制方案"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/fastify-no-execSync.md",
+        "keyword": "node",
+        "name": "fastify-no-execSync"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/codewhale-partial-edit-corruption.md",
+        "keyword": "node",
+        "name": "codewhale-partial-edit-corruption"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/vue3-cdn-destructuring.md",
+        "keyword": "node",
+        "name": "vue3-cdn-destructuring"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/env-hash-format.md",
+        "keyword": "node",
+        "name": "env-hash-format"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/codewhale-network-timeout.md",
+        "keyword": "ops",
+        "name": "codewhale-network-timeout"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/INDEX.md",
+        "keyword": "ops",
+        "name": "INDEX"
+      }
+    ],
+    "project_matches": [
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/clsh-content/changes/2026-05-28-content-optimization/conversation.md",
+        "keyword": "github"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/clsh-content/changes/2026-05-28-content-optimization/completion-summary.md",
+        "keyword": "github"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/clsh-content/changes/2026-05-18-initial/proposal.md",
+        "keyword": "github"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/clsh-content/changes/2026-05-18-initial/design.md",
+        "keyword": "github"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/clsh-content/source-of-truth/system-status.md",
+        "keyword": "github"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/clsh-content/overview.md",
+        "keyword": "github"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/cron-management/overview.md",
+        "keyword": "github"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/moviepilot/changes/archive/2026-05-17-mp-slash-command/conversation.md",
+        "keyword": "github"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/moviepilot/changes/archive/2026-05-17-mp-slash-command/proposal.md",
+        "keyword": "github"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/moviepilot/changes/archive/2026-05-17-mp-slash-command/completion-summary.md",
+        "keyword": "github"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/moviepilot/changes/archive/2026-05-18-mp-slash-command-v3/research-feishu-card.md",
+        "keyword": "github"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/obsidian-workbench/changes/archive/2026-05-19-initial/completion-summary.md",
+        "keyword": "github"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/obsidian-workbench/changes/archive/2026-05-19-initial/retrospective.md",
+        "keyword": "github"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/obsidian-workbench/overview.md",
+        "keyword": "github"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/upstream-monitor/overview.md",
+        "keyword": "github"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/workspace/changes/2026-05-25-phase8-feedback/feedback-log.md",
+        "keyword": "github"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/musicdl-workspace/overview.md",
+        "keyword": "github"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/hugo-blog/changes/2026-06-hugo-blog-setup/conversation.md",
+        "keyword": "github"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/hugo-blog/changes/2026-06-hugo-blog-setup/proposal.md",
+        "keyword": "github"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/hugo-blog/changes/2026-06-hugo-blog-setup/tasks.md",
+        "keyword": "github"
+      }
+    ],
+    "keywords_used": [
+      "clsh-project",
+      "dsh",
+      "github",
+      "javascript",
+      "json",
+      "node",
+      "ops",
+      "typescript",
+      "yaml"
+    ]
+  },
+  "learnings": {
+    "learnings_files": [],
+    "pitfalls_count": 37,
+    "matched_pitfalls": []
+  }
+}

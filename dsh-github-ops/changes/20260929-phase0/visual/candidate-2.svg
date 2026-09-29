@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1055">
+<rect x="0" y="0" width="1120" height="1093" fill="#ffffff"/>
+<text x="140.0" y="52.0" font-family="Noto Sans CJK SC, sans-serif" font-size="18" font-weight="600" fill="#0f1115">GitHub 集成</text>
+<text x="252.8" y="52.0" font-family="DejaVu Sans Mono, monospace" font-size="12" fill="#81858c">dsh-github-ops</text>
+<text x="140.0" y="74.0" font-family="Noto Sans CJK SC, sans-serif" font-size="12.5" fill="#61666b">认证、访问检验与多账号管理</text>
+<text x="140.0" y="110.0" font-family="Noto Sans CJK SC, sans-serif" font-size="14" font-weight="600" fill="#0f1115">认证状态</text>
+<text x="206.0" y="110.0" font-family="Noto Sans CJK SC, sans-serif" font-size="11.5" fill="#81858c">github.com</text>
+<text x="140.0" y="135.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" fill="#61666b">主机</text>
+<text x="236.0" y="135.0" font-family="DejaVu Sans Mono, monospace" font-size="13" fill="#0f1115">github.com</text>
+<text x="140.0" y="159.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" fill="#61666b">登录名</text>
+<text x="236.0" y="159.0" font-family="DejaVu Sans Mono, monospace" font-size="13" fill="#0f1115">fengcwf</text>
+<text x="140.0" y="183.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" fill="#61666b">Token</text>
+<rect x="236.0" y="171.0" width="47.0" height="20.0" rx="4" fill="#e6faed"/>
+<text x="243.0" y="185.0" font-family="Noto Sans CJK SC, sans-serif" font-size="11" font-weight="600" fill="#233c2c">已配置</text>
+<text x="293.0" y="183.0" font-family="DejaVu Sans Mono, monospace" font-size="12" fill="#81858c">ghp_****</text>
+<text x="140.0" y="207.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" fill="#61666b">API 限额</text>
+<text x="236.0" y="207.0" font-family="DejaVu Sans Mono, monospace" font-size="13" fill="#0f1115">4995 / 5000</text>
+<text x="140.0" y="231.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" fill="#61666b">限额重置</text>
+<text x="236.0" y="231.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" fill="#0f1115">14:32（今天）</text>
+<line x1="140.0" y1="252.0" x2="980.0" y2="252.0" stroke="#0000001a" stroke-width="1"/>
+<text x="140.0" y="288.0" font-family="Noto Sans CJK SC, sans-serif" font-size="14" font-weight="600" fill="#0f1115">Token 维护</text>
+<text x="220.7" y="288.0" font-family="Noto Sans CJK SC, sans-serif" font-size="11.5" fill="#81858c">零明文存储</text>
+<text x="140.0" y="312.0" font-family="Noto Sans CJK SC, sans-serif" font-size="12" fill="#61666b">Personal Access Token</text>
+<rect x="140.0" y="322.0" width="735.0" height="34.0" rx="8" fill="#ffffff" stroke="#0000001f" stroke-width="1"/>
+<text x="152.0" y="343.5" font-family="Noto Sans CJK SC, sans-serif" font-size="13" fill="#adb2b8">留空=不修改</text>
+<rect x="887.0" y="323.0" width="93.0" height="32.0" rx="8" fill="#4176e6"/>
+<text x="933.5" y="343.7" font-family="Noto Sans CJK SC, sans-serif" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">保存并验证</text>
+<rect x="140.0" y="368.0" width="840.0" height="58.0" rx="8" fill="#fef2f2" stroke="#fee2e2" stroke-width="1"/>
+<circle cx="156.0" cy="386.0" r="4" fill="#ec1313"/>
+<text x="168.0" y="391.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" font-weight="600" fill="#570c0c">401 · token 无效</text>
+<text x="168.0" y="411.0" font-family="Noto Sans CJK SC, sans-serif" font-size="12" fill="#61666b">请重新生成 PAT（classic 或 fine-grained）后重试</text>
+<line x1="140.0" y1="436.0" x2="980.0" y2="436.0" stroke="#0000001a" stroke-width="1"/>
+<text x="140.0" y="472.0" font-family="Noto Sans CJK SC, sans-serif" font-size="14" font-weight="600" fill="#0f1115">访问检验</text>
+<rect x="140.0" y="486.0" width="130.7" height="32.0" rx="8" fill="#4176e6"/>
+<text x="205.3" y="506.7" font-family="Noto Sans CJK SC, sans-serif" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">检查 GitHub 访问</text>
+<text x="140.0" y="542.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" font-weight="600" fill="#22c55e">✓</text>
+<text x="157.0" y="542.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" fill="#0f1115">本地配置</text>
+<text x="270.0" y="542.0" font-family="DejaVu Sans Mono, monospace" font-size="12" fill="#81858c">配置文件解析正常</text>
+<text x="140.0" y="566.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" font-weight="600" fill="#22c55e">✓</text>
+<text x="157.0" y="566.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" fill="#0f1115">认证连通</text>
+<text x="270.0" y="566.0" font-family="DejaVu Sans Mono, monospace" font-size="12" fill="#81858c">gh api /user → 200</text>
+<text x="140.0" y="590.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" font-weight="600" fill="#22c55e">✓</text>
+<text x="157.0" y="590.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" fill="#0f1115">延迟 · 限额</text>
+<text x="270.0" y="590.0" font-family="DejaVu Sans Mono, monospace" font-size="12" fill="#81858c">650ms · 4995/5000</text>
+<rect x="140.0" y="610.0" width="80.0" height="32.0" rx="8" fill="#ffffff" stroke="#0000001f" stroke-width="1"/>
+<text x="180.0" y="630.7" font-family="Noto Sans CJK SC, sans-serif" font-size="13" fill="#0f1115" text-anchor="middle">重新检查</text>
+<line x1="140.0" y1="652.0" x2="980.0" y2="652.0" stroke="#0000001a" stroke-width="1"/>
+<text x="140.0" y="688.0" font-family="Noto Sans CJK SC, sans-serif" font-size="14" font-weight="600" fill="#0f1115">多账号库</text>
+<rect x="910.0" y="670.0" width="76.0" height="28.0" rx="8" fill="#ffffff" stroke="#0000001f" stroke-width="1"/>
+<text x="948.0" y="688.3" font-family="Noto Sans CJK SC, sans-serif" font-size="12" fill="#0f1115" text-anchor="middle">添加账号</text>
+<circle cx="146.0" cy="713.0" r="4" fill="#22c55e"/>
+<text x="160.0" y="717.0" font-family="DejaVu Sans Mono, monospace" font-size="13" fill="#0f1115">fengcwf</text>
+<text x="300.0" y="717.0" font-family="Noto Sans CJK SC, sans-serif" font-size="12" fill="#81858c">已验证</text>
+<rect x="380.0" y="703.0" width="50.3" height="20.0" rx="4" fill="#e4edfd"/>
+<text x="387.0" y="717.0" font-family="Noto Sans CJK SC, sans-serif" font-size="11" font-weight="600" fill="#34415b">active</text>
+<text x="934.0" y="717.0" font-family="Noto Sans CJK SC, sans-serif" font-size="12" fill="#81858c">当前</text>
+<line x1="140.0" y1="732.0" x2="980.0" y2="732.0" stroke="#0000000a" stroke-width="1"/>
+<circle cx="146.0" cy="747.0" r="4" fill="#22c55e"/>
+<text x="160.0" y="751.0" font-family="DejaVu Sans Mono, monospace" font-size="13" fill="#0f1115">ci-bot</text>
+<text x="300.0" y="751.0" font-family="Noto Sans CJK SC, sans-serif" font-size="12" fill="#81858c">已验证</text>
+<text x="936.0" y="751.3" font-family="Noto Sans CJK SC, sans-serif" font-size="12" fill="#4176e6">切换</text>
+<line x1="140.0" y1="766.0" x2="980.0" y2="766.0" stroke="#0000000a" stroke-width="1"/>
+<circle cx="146.0" cy="781.0" r="4" fill="#f59e0b"/>
+<text x="160.0" y="785.0" font-family="DejaVu Sans Mono, monospace" font-size="13" fill="#0f1115">backup-bot</text>
+<text x="300.0" y="785.0" font-family="Noto Sans CJK SC, sans-serif" font-size="12" fill="#81858c">待验证</text>
+<text x="936.0" y="785.3" font-family="Noto Sans CJK SC, sans-serif" font-size="12" fill="#4176e6">切换</text>
+<line x1="140.0" y1="810.0" x2="980.0" y2="810.0" stroke="#0000001a" stroke-width="1"/>
+<text x="140.0" y="846.0" font-family="Noto Sans CJK SC, sans-serif" font-size="14" font-weight="600" fill="#0f1115">仓库上下文</text>
+<text x="140.0" y="871.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" fill="#61666b">remote</text>
+<text x="228.0" y="871.0" font-family="DejaVu Sans Mono, monospace" font-size="12" fill="#0f1115">origin · github.com/fengcwf/dsh-plugins.git</text>
+<text x="140.0" y="895.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" fill="#61666b">分支</text>
+<text x="228.0" y="895.0" font-family="DejaVu Sans Mono, monospace" font-size="13" fill="#0f1115">main</text>
+<text x="140.0" y="919.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" fill="#61666b">仓库</text>
+<text x="228.0" y="919.0" font-family="DejaVu Sans Mono, monospace" font-size="13" fill="#0f1115">fengcwf/dsh-plugins</text>
+<text x="388.6" y="919.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" fill="#81858c">·</text>
+<polygon points="406.6,909.5 407.9,913.1 411.8,913.3 408.8,915.7 409.8,919.4 406.6,917.3 403.3,919.4 404.4,915.7 401.3,913.3 405.2,913.1" fill="#f59e0b"/>
+<text x="418.6" y="919.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" fill="#61666b">12</text>
+<line x1="140.0" y1="940.0" x2="980.0" y2="940.0" stroke="#0000001a" stroke-width="1"/>
+<text x="140.0" y="976.0" font-family="Noto Sans CJK SC, sans-serif" font-size="14" font-weight="600" fill="#0f1115">插件自检</text>
+<text x="140.0" y="1002.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" font-weight="600" fill="#22c55e">✓</text>
+<text x="157.0" y="1002.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" fill="#0f1115">配置合成</text>
+<text x="260.0" y="1002.0" font-family="Noto Sans CJK SC, sans-serif" font-size="11.5" fill="#81858c">cordis.patch.yml 合并正常</text>
+<text x="140.0" y="1025.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" font-weight="600" fill="#22c55e">✓</text>
+<text x="157.0" y="1025.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" fill="#0f1115">gh 可用</text>
+<text x="260.0" y="1025.0" font-family="Noto Sans CJK SC, sans-serif" font-size="11.5" fill="#81858c">gh 2.62.0 在位</text>
+<text x="140.0" y="1048.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" font-weight="600" fill="#22c55e">✓</text>
+<text x="157.0" y="1048.0" font-family="Noto Sans CJK SC, sans-serif" font-size="13" fill="#0f1115">凭据在位</text>
+<text x="260.0" y="1048.0" font-family="Noto Sans CJK SC, sans-serif" font-size="11.5" fill="#81858c">token 已加载</text>
+</svg>
