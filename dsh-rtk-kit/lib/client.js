@@ -10,7 +10,8 @@
 //   （available:false=软数据态，Ruling A）；失败→红叉+原因小字（--danger，不吞错）。
 // 触发方式（INV-11）：进页自动拉统计恰一次（加载中指标「-」占位）；版本检查与健康七项仅按钮点击；
 //   周期切换 日|周|月|全部（缺省「全部」）纯客户端切片、零新请求（INV-3；「全部」=summary 聚合）。
-// 视觉（DESIGN.md token 逐字）：9 色彩 CSS 变量 + 字阶 15/14/13/20/12 + 间距 4/8/12/16/24 + 圆角 6px；
+// 视觉（DESIGN.md token 逐字，Ruling C：指标值 13px/600 对齐定稿图）：9 色彩 CSS 变量 + 字阶 15/14/13/12
+//   + 间距 4/8/12/16/24 + 圆角 6px；
 //   细横线分隔禁卡片阴影；纯 React（require 白名单仅 react），零第三方 UI 库、零构建链。
 window.__ModuleLoader__.load({
   id: 'dsh-rtk-kit',
@@ -39,7 +40,7 @@ window.__ModuleLoader__.load({
       '.rtk-kit .rtk-ok-mark{color:var(--success);font-weight:600;font-size:14px;line-height:1}.rtk-kit .rtk-warn-mark{color:var(--warning);font-weight:600;font-size:14px;line-height:1}.rtk-kit .rtk-fail-mark{color:var(--danger);font-weight:600;font-size:14px;line-height:1}',
       '.rtk-kit .rtk-mono{font-family:ui-monospace,"SF Mono",Consolas,monospace;font-size:13px}.rtk-kit .rtk-dot-sep{color:var(--text-secondary)}.rtk-kit .rtk-metrics{border-top:1px solid var(--border)}',
       '.rtk-kit .rtk-metric-row{display:flex;align-items:center;justify-content:space-between;min-height:26px;padding:0 8px;line-height:2.2;border-bottom:1px solid var(--border)}.rtk-kit .rtk-metric-row:last-child{border-bottom:0}',
-      '.rtk-kit .rtk-m-label{font-size:13px;color:var(--text-secondary)}.rtk-kit .rtk-m-value{font-size:20px;font-weight:600;line-height:1.3;color:var(--text-primary);font-variant-numeric:tabular-nums}.rtk-kit .rtk-m-value.rtk-ok{color:var(--success)}',
+      '.rtk-kit .rtk-m-label{font-size:13px;color:var(--text-secondary)}.rtk-kit .rtk-m-value{font-size:13px;font-weight:600;line-height:1.3;color:var(--text-primary);font-variant-numeric:tabular-nums}.rtk-kit .rtk-m-value.rtk-ok{color:var(--success)}',
       '.rtk-kit .rtk-checks{border-top:1px solid var(--border)}.rtk-kit .rtk-check-row{min-height:26px;padding:1px 8px;line-height:2.2;border-bottom:1px solid var(--border)}.rtk-kit .rtk-check-row:last-child{border-bottom:0}',
       '.rtk-kit .rtk-check-line{display:flex;align-items:center;gap:12px}.rtk-kit .rtk-name{font-size:13px;color:var(--text-primary)}.rtk-kit .rtk-reason{display:block;font-size:12px;line-height:1.5;color:var(--danger)}.rtk-kit .rtk-reason.rtk-note{color:var(--text-secondary)}',
       '.rtk-kit .rtk-status{margin-left:auto;font-size:12px;white-space:nowrap}.rtk-kit .rtk-status.rtk-ok{color:var(--success)}.rtk-kit .rtk-status.rtk-fail{color:var(--danger)}',

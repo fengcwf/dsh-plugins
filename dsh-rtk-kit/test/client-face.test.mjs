@@ -255,7 +255,7 @@ test('面貌：零第三方 UI 库 import、零 settings.plugins.tab、零站内
   assert.ok(!/^\s*import\s/m.test(code), '零 ESM import（工厂形 CJS，零构建链）')
 })
 
-test('DESIGN.md token 逐字落地（色彩 9 + 字阶 15/14/13/20/12 + 间距 4/8/12/16/24 + 圆角 6px）', () => {
+test('DESIGN.md token 逐字落地（色彩 9 + 字阶 15/14/13/12 + 间距 4/8/12/16/24 + 圆角 6px）', () => {
   for (const pair of [
     '--bg-page:#ffffff', '--bg-subtle:#f7f8fa', '--border:#e5e6eb',
     '--text-primary:#1f2329', '--text-secondary:#646a73', '--accent:#3370ff',
@@ -263,9 +263,12 @@ test('DESIGN.md token 逐字落地（色彩 9 + 字阶 15/14/13/20/12 + 间距 4
   ]) {
     assert.ok(source.includes(pair), `色彩 token 逐字落地缺 ${pair}`)
   }
-  for (const size of ['15px', '14px', '13px', '20px', '12px']) {
+  for (const size of ['15px', '14px', '13px', '12px']) {
     assert.ok(source.includes(size), `字阶缺 ${size}`)
   }
+  // Ruling C（2026-09-29）：指标值 13px/600（定稿图 final.png 优先，20px 系 DESIGN.md 转写误差）——正向锁 + 防漂移
+  assert.match(source, /\.rtk-m-value\{font-size:13px;font-weight:600/, '指标值=13px/600（Ruling C 对齐定稿图）')
+  assert.ok(!source.includes('20px'), 'Ruling C 后零 20px 残留')
   for (const space of ['4px', '8px', '12px', '16px', '24px']) {
     assert.ok(source.includes(space), `间距阶梯缺 ${space}`)
   }
