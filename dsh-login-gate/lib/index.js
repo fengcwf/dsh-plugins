@@ -17,6 +17,8 @@ import { loadUsers, createUserProvider } from './users.js'
 import { createDshSession } from './dsh-session.js'
 import { createForwarder } from './proxy.js'
 import { createGateServer } from './gate.js'
+import { createApplyPatch } from './settings-write.js'
+import { registerSettingsRoutes } from './settings-routes.js'
 
 export const name = 'login-gate'
 export const inject = [] // 不依赖宿主服务 API：任何 dsh 版本均可加载（会话注入走 A/B/C 兼容链）
@@ -122,6 +124,65 @@ export function apply(ctx, rawConfig) {
     log(`   1) usersFile（推荐）：node tools/hash-password.mjs --write <用户名>   生成并写入 ${usersFile}`)
     log(`   2) 或在 settings.yaml 的 login-gate 配置里填写 users（值为 scrypt$... 哈希）`)
   }
+
+  // ---- 设置面数据面（/api/login-gate/settings，官方路由形，照 kb-context B1/B2）----
+  // B1 双层子插件形：外层不动（门禁/反代照常）；设置面数据由内层子插件硬 inject
+  // ['webServer','connection'] 承载——provider 缺位=延迟激活不炸装载、到达自动补激活。
+  // configEditor 不进硬 inject（保持可缺位=只读部署如实）：per-request 惰性 ctx.get 求值，
+  // 缺位=POST 503 write_unavailable、GET writable:false 如实，后到可见。
+  const readCfg = () => normalize(rawConfig) // 热改现读（per-call 读语义）
+  // 服务 best-effort 探测（只读、不抛、不参与注册决策）：cordis 代理在服务缺位时可能抛 → 收敛 null
+  const probeService = (name) => {
+    try { if (typeof ctx?.get === 'function') return ctx.get(name) ?? ctx.get(name, false) ?? null } catch { /* 探针收敛不抛 */ }
+    return null
+  }
+  const lazyApplyPatch = () => {
+    const svc = probeService('configEditor')
+    if (svc === null || typeof svc.edit !== 'function' || typeof svc.entries !== 'function') return null
+    return createApplyPatch({ configEditor: svc, entryId: 'login-gate', Config })
+  }
+  // 半缺缝（webServer/connection 只到其一）=接线异常，留痕；双缺=非 web 部署面正常形态不告警
+  const wsProbe = probeService('webServer')
+  const connProbe = probeService('connection')
+  if ((wsProbe === null) !== (connProbe === null)) {
+    log('⚠️ webServer/connection 服务缝半缺，设置面数据（/api/login-gate/settings）未注册（fail-open：门禁/反代照常）')
+  }
+  // B2：注册动作在 effect 执行体内当场跑、返回值=拆除器；catch 收敛环覆盖已返回的 disposers
+  try {
+    if (typeof ctx?.plugin === 'function') {
+      ctx.plugin({
+        inject: ['webServer', 'connection'],
+        apply(c) {
+          if (typeof c?.effect !== 'function') return // 假 ctx 缺 effect 缝=跳过注册不告警
+          c.effect(() => {
+            const disposers = []
+            try {
+              disposers.push(...registerSettingsRoutes({
+                register: (spec) => c.webServer.register(spec),
+                connection: c.connection,
+                getConfig: readCfg,
+                getBootConfig: () => cfg,
+                getUsers,
+                usersFile,
+                getApplyPatch: lazyApplyPatch, // configEditor 惰性（后到可见）
+                getSession: (req) => sessions.verifyCookie(req.headers.cookie), // 防自锁身份源①（直连/回环）
+                warn: (line) => log(line),
+              }))
+            } catch (e) {
+              for (const d of disposers) { try { d() } catch { /* 收敛不抛 */ } }
+              throw e // 再上抛（宿主 fiber 兜底收集；绝不吞错）
+            }
+            let disposed = false
+            return () => {
+              if (disposed) return
+              disposed = true
+              for (const d of disposers) { try { d() } catch { /* 收敛不抛 */ } }
+            }
+          }, 'login-gate: settings-routes')
+        },
+      })
+    }
+  } catch { /* ctx.plugin 缺位/异常 fail-open：装载不炸 */ }
 
   ctx.effect(() => {
     const server = createGateServer({
