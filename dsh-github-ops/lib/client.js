@@ -100,11 +100,59 @@ window.__ModuleLoader__.load({
       return uiPromise
     }
 
-    // —— 单挂收敛（防双挂载）：同一时刻至多一座在场；迟到高优先座=先挂新座再拆旧座（注册变更微任务批处理，
-    //    同一同步块内换手对宿主渲染不可见）；旧座拆卸不牵连新座（dispose 按 record 身份守卫）。
-    var mountedSeat = null
-    function mountSeat(ctx, seat, ui) {
-      if (mountedSeat && mountedSeat.priority <= seat.priority) return function noop() {}
+    // —— 单挂收敛（防双挂载）+ 待挂重挂（L1）：同一时刻至多一座在场；迟到高优先座=先挂新座再拆旧座
+    //    （注册变更微任务批处理，同一同步块内换手对宿主渲染不可见）；同座二次触发/低优先触发=登记待挂（可重挂），
+    //    主座拆除后微任务自动补位——槽位重声明绝不静默缺席（L1）；旧座拆卸不牵连新座（dispose 按 record 身份守卫）。
+    var mountedSeat = null // { name, priority, dispose }
+    var waitingSeats = [] // 待挂座：{ ctx, seat, ui, alive, unmount }
+
+    function dropWaiting(slot) {
+      var i = waitingSeats.indexOf(slot)
+      if (i >= 0) waitingSeats.splice(i, 1)
+    }
+
+    var promoteScheduled = false
+    function schedulePromote() {
+      if (promoteScheduled) return
+      promoteScheduled = true
+      Promise.resolve().then(function () {
+        promoteScheduled = false
+        try { promoteWaiting() } catch { /* 补位失败不炸插件（INV-6）；挂载点自带 warn */ }
+      })
+    }
+
+    /** 待挂补位：取优先级最优（同优先取最新）且存活的待挂座上挂 */
+    function promoteWaiting() {
+      if (mountedSeat) return
+      var best = null
+      for (var i = 0; i < waitingSeats.length; i++) {
+        var s = waitingSeats[i]
+        if (!s.alive) continue
+        if (!best || s.seat.priority <= best.seat.priority) best = s
+      }
+      if (!best) return
+      dropWaiting(best)
+      activateSlot(best)
+    }
+
+    /** 激活一座：同座重声明=换手；低/同优先=登记待挂（可重挂）；否则上挂 */
+    function activateSlot(slot) {
+      if (!slot.alive) return
+      for (var i = waitingSeats.length - 1; i >= 0; i--) {
+        if (waitingSeats[i] !== slot && waitingSeats[i].seat.name === slot.seat.name) waitingSeats.splice(i, 1) // 旧待挂登记撤（重声明换手）
+      }
+      if (mountedSeat && mountedSeat.priority <= slot.seat.priority) {
+        dropWaiting(slot)
+        waitingSeats.push(slot) // 跳过=可重挂（L1）：主座拆除后自动补位
+        return
+      }
+      mountSlot(slot)
+    }
+
+    function mountSlot(slot) {
+      var ctx = slot.ctx
+      var seat = slot.seat
+      var ui = slot.ui
       var record = { name: seat.name, priority: seat.priority, dispose: null }
       var inner = null
       try {
@@ -121,38 +169,46 @@ window.__ModuleLoader__.load({
         })
       } catch (e) {
         warn(ctx, '座位注册失败（' + seat.name + '，缺槽位方？）：' + describe(e))
-        return function noop() {}
+        return
       }
       record.dispose = function dispose() {
         if (mountedSeat === record) mountedSeat = null
         if (typeof inner === 'function') {
           try { inner() } catch { /* 收敛不抛（INV-6） */ }
         }
+        schedulePromote() // 主座消失→待挂座补位（L1）
       }
+      slot.unmount = record.dispose
       var prev = mountedSeat
       mountedSeat = record
       if (prev) {
         try { prev.dispose() } catch (e) { warn(ctx, '旧座拆除失败（' + prev.name + '）：' + describe(e)) }
       }
-      return record.dispose
     }
 
-    /** 单座 inject 回调：UI chunk 就绪后才挂（挂载生命周期），拆除器处理异步竞态 */
+    /** 单座 inject 回调：UI chunk 就绪后才挂（挂载生命周期），拆除器处理异步竞态与待挂登记（可重挂，L1） */
     function makeSeatSetup(ctx, seat) {
       return function seatSetup() {
-        var disposed = false
-        var unmount = null
+        var slot = { ctx: ctx, seat: seat, ui: null, alive: true, unmount: null }
         loadUi().then(function (ui) {
-          if (disposed) return
-          unmount = mountSeat(ctx, seat, ui)
+          if (!slot.alive) return
+          try {
+            slot.ui = ui
+            activateSlot(slot)
+          } catch (e) {
+            // L1：成功回调包 try+warn（INV-6 精神）——挂载期异常只留痕，绝不炸宿主
+            warn(ctx, '座位挂载失败（' + seat.name + '，该面缺席）：' + describe(e))
+          }
         }, function (e) {
           warn(ctx, '兄弟 chunk 载入失败（' + seat.name + ' 该面缺席）：' + describe(e))
         })
         return function disposeSeat() {
-          disposed = true
-          if (unmount) {
+          slot.alive = false
+          dropWaiting(slot)
+          if (slot.unmount) {
+            var unmount = slot.unmount
+            slot.unmount = null
             try { unmount() } catch { /* 收敛不抛（INV-6） */ }
-            unmount = null
           }
         }
       }
