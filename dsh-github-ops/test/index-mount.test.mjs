@@ -38,19 +38,21 @@ function makeCtx({ services = {}, resolve } = {}) {
   return { ctx, calls, disposables, disposeAll: () => { for (const d of disposables.splice(0).reverse()) d() } }
 }
 
-// 子插件挂载采集（真 registerSettingsRoutes → 假 webServer/connection 缝）
-function mountRoutes(plugins, { reject, services } = {}) {
+// 子插件激活建模（cordis 硬 inject 语义，kb-context B1 修复注释同义）：p.inject 的 provider 全在场才激活；
+// 缺位=延迟激活（不 apply，数据面缺席不炸）——非 web 部署面形态（Ruling-3 核心证据用例走 provideWeb:false）。
+function activate(plugins, { reject, provideWeb = true } = {}) {
   assert.equal(plugins.length, 1, 'apply 应挂一个设置面双层子插件')
-  assert.deepEqual(plugins[0].inject, ['webServer', 'connection'])
+  assert.deepEqual(plugins[0].inject, ['webServer', 'connection'], '内层子插件硬 inject 承载数据面')
   const specs = []
   const disposables = []
+  if (!provideWeb) return { activated: false, specs, disposables, unmount: () => {} } // provider 缺位=延迟激活（不 apply）
   const child = {
     webServer: { register: (spec) => { specs.push(spec); return () => { spec.disposed = true } } },
     connection: { requestRejection: () => (typeof reject === 'function' ? reject() : reject) },
     effect: (execute) => { const d = execute(); if (typeof d === 'function') disposables.push(d); return d },
   }
   plugins[0].apply(child)
-  return { specs, disposables, unmount: () => { for (const d of disposables.splice(0).reverse()) d() } }
+  return { activated: true, specs, disposables, unmount: () => { for (const d of disposables.splice(0).reverse()) d() } }
 }
 
 // 假 req/res（沿 settings-routes.test.mjs 形）
@@ -70,7 +72,8 @@ async function call(handler, { method = 'GET', url = '/api/github-ops/status', b
 
 test('导出契约与声明面（INV-9/R-4）：name/inject 不动 + 新增挂载面 + client 声明 + config 全键重述', () => {
   assert.equal(mod.name, 'github-ops', "lib/index.js name='github-ops' 不动（INV-9）")
-  assert.deepEqual(mod.inject, ['shell', 'tools', 'webServer', 'connection'])
+  // Ruling-3：外层激活形维持 0.2.1（非 web 部署四层照常生效）；webServer/connection 由内层子插件承载
+  assert.deepEqual(mod.inject, ['shell', 'tools'])
   assert.equal(typeof mod.apply, 'function')
   assert.ok(mod.Config && typeof mod.Config === 'object')
   // 声明面（Task 12 验收：exports['./client'] + dsh.client；模块 id=包名；patch 行 id/name 不动）
@@ -184,7 +187,8 @@ test('层④ awareness 注入（INV-7）：session-start 注入约定文案 + �
 test('层⑤ 设置面挂载（kb-context 形）：双层子插件 + 真 handler 鉴权 + 撤路由（C-1 收敛释放）', async () => {
   const { ctx, calls, disposeAll } = makeCtx()
   mod.apply(ctx, { ghBin: 'echo' })
-  const { specs, unmount } = mountRoutes(calls.plugins, { reject: 401 })
+  const { activated, specs, unmount } = activate(calls.plugins, { reject: 401 })
+  assert.equal(activated, true, 'web 面 provider 在场=激活')
   assert.equal(specs.length, 1, '单 prefix 注册')
   assert.equal(specs[0].kind, 'prefix')
   assert.equal(specs[0].path, '/api/github-ops')
@@ -208,7 +212,8 @@ test('层⑤ deps 缝：runGh（gh-auth 收编）真执行 + workspaceDir=宿主
     services: { workspaceRegistry: { list: () => [{ id: 'w1', path: ws, title: 'ws', sessionIds: [] }] } },
   })
   mod.apply(ctx, { ghBin: 'echo' })
-  const { specs, unmount } = mountRoutes(calls.plugins, {})
+  const { activated, specs, unmount } = activate(calls.plugins, {})
+  assert.equal(activated, true, 'web 面 provider 在场=激活')
   // deps.workspaceDir 注入宿主工作区（勿留 process.cwd()）：remote 必须来自临时仓而非插件目录
   const rc = await call(specs[0].handler, { url: '/api/github-ops/repo-context' })
   assert.equal(rc.status, 200)
@@ -222,6 +227,23 @@ test('层⑤ deps 缝：runGh（gh-auth 收编）真执行 + workspaceDir=宿主
   assert.equal(ck.json.stage, 'local-config', '探针①真实执行过（echo 输出无法解析为 JSON 的归因）')
   unmount()
   disposeAll()
+})
+
+test('非 web 部署面（Ruling-3 核心证据）：无 webServer/connection provider → 数据面延迟激活缺席，四层（含层①包壳）照常存活', () => {
+  const { ctx, calls, disposeAll } = makeCtx()
+  const before = ctx.shell.resolve
+  mod.apply(ctx, { ghBin: 'echo' }) // 外层 inject=['shell','tools'] 恒可激活（0.2.1 语义，headless/acp/sdk 同）
+  const m = activate(calls.plugins, { provideWeb: false })
+  assert.equal(m.activated, false, 'provider 缺位=内层子插件延迟激活（不 apply）')
+  assert.equal(m.specs.length, 0, '数据面缺席不炸装载（INV-6 fail-open）')
+  // 四层照常存活（本裁决核心断言：数据面缺席≠四层死）
+  assert.notEqual(ctx.shell.resolve, before, '层①包壳在场')
+  assert.match(ctx.shell.resolve({ command: 'curl https://api.github.com/repos/x', stdin: null }).command, /Bearer \$\(gh auth token\)/)
+  assert.equal(calls.tools.length, 11, '层③工具集照常注册')
+  assert.ok(calls.ons.find((o) => o.ev === 'tools/pre-execute'), '层②门禁照常注册')
+  assert.ok(calls.ons.find((o) => o.ev === 'agent/session-start'), '层④awareness 照常注册')
+  disposeAll()
+  assert.equal(ctx.shell.resolve({ command: 'curl https://api.github.com/repos/x', stdin: null }).command, 'curl https://api.github.com/repos/x', '卸载还原照常（工厂形拆除器）')
 })
 
 test('fail-open（INV-6）：ctx.plugin 缺位不炸装载；enabled:false 不挂设置面', () => {

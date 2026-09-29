@@ -24,7 +24,10 @@ import * as ghAuth from './gh-auth.js'
 import { registerSettingsRoutes } from './settings-routes.js'
 
 export const name = 'github-ops'
-export const inject = ['shell', 'tools', 'webServer', 'connection']
+// Ruling-3（kb-context 形双层激活语义）：外层只硬 inject ['shell','tools']——维持 0.2.1 激活语义，
+// 非 web 部署面（headless/acp/sdk）四层照常生效；设置数据面由内层子插件硬 inject ['webServer','connection']
+// 承载（web 面才激活，provider 缺位=延迟激活不炸装载=INV-6 fail-open）。
+export const inject = ['shell', 'tools']
 
 export const Config = z.object({
   enabled: z.boolean().default(true),
@@ -135,8 +138,8 @@ export function apply(ctx, rawConfig) {
   }
 
   // ── ⑤ 设置栏目数据面（/api/github-ops/*，ADR-002）：双层子插件挂载（kb-context/lib/index.js:212-242 先例形）──
-  // 内层子插件硬 inject ['webServer','connection'] 承载；注册动作在 effect 执行体内当场跑、返回值=拆除器（撤路由）；
-  // 缺缝 fail-open 不炸装载（INV-6）；卸载=撤路由与挂载（C-1 收敛释放，审计 W 教训反着做）。
+  // 内层子插件硬 inject ['webServer','connection'] 承载（Ruling-3：web 面才激活，非 web 面延迟激活=数据面缺席不炸）；
+  // 注册动作在 effect 执行体内当场跑、返回值=拆除器（撤路由）；卸载=撤路由与挂载（C-1 收敛释放，审计 W 教训反着做）。
   if (config.enabled) {
     // 热改现读（per-call）：health 配置合成段经 deps.Config.safeParse 消费（{ok,switches,issues} 形，Task 11 契约）
     const cfgNow = () => {
