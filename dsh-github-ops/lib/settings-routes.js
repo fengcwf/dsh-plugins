@@ -43,7 +43,7 @@ const CONTRACT = {
   badjson: ['01', 400, '请求体不是合法 JSON'], toolarge: ['02', 400, '请求体超过 1MiB 上限'],
   whitelist: ['03', 400, '请求字段不在白名单（整单拒）'], internal: ['99', 500, '内部错误'],
 }
-class KError extends Error { constructor(kind, msg) { super(msg ?? kind); this.kind = kind } }
+class KError extends Error { constructor(kind, msg) { super(msg ?? kind); this.kind = kind } } // message 用户可见：抛点显式中文文案；e.message===kind 时 internal 回落 CONTRACT（M-1）
 
 // ── 结构化形 + 出边界零明文（INV-1/INV-10）──
 function shape(stage, fields = {}) {
@@ -125,7 +125,7 @@ export function registerSettingsRoutes(deps = {}) {
     const kind = e?.kind && CONTRACT[e.kind] ? e.kind : 'internal'
     const [nn, http, msg] = CONTRACT[kind]
     if (kind === 'internal') warn(`[github-ops] settings-routes ${stage} 处理失败：${gh.redact(String(e?.message ?? e))}`)
-    sendJson(res, http, shape(stage, { code: `GHO-ROUTE-${nn}`, status: http, message: e?.kind && e.message ? e.message : msg }))
+    sendJson(res, http, shape(stage, { code: `GHO-ROUTE-${nn}`, status: http, message: e?.kind && e.message && e.message !== e.kind ? e.message : msg }))
   }
   const ok500 = (stage, fn) => async (req, res) => { try { await fn(req, res) } catch (e) { internal(res, stage, e) } }
   async function readBody(req) {
@@ -133,12 +133,12 @@ export function registerSettingsRoutes(deps = {}) {
     let total = 0
     for await (const chunk of req) {
       total += Buffer.byteLength(chunk)
-      if (total > MAX_BODY_BYTES) throw new KError('toolarge') // 有界读取，绝不整包进内存
+      if (total > MAX_BODY_BYTES) throw new KError('toolarge', CONTRACT.toolarge[2]) // 有界读取，绝不整包进内存（M-1：显式中文文案）
       chunks.push(Buffer.from(chunk))
     }
     const text = Buffer.concat(chunks).toString('utf8')
     if (!text.trim()) return {}
-    try { return JSON.parse(text) } catch { throw new KError('badjson') }
+    try { return JSON.parse(text) } catch { throw new KError('badjson', CONTRACT.badjson[2]) } // M-1：显式中文文案
   }
   const parseBody = (schema, body) => {
     const r = schema.safeParse(body)
@@ -292,7 +292,8 @@ export function registerSettingsRoutes(deps = {}) {
     let p = ''
     try { p = new URL(req.url, 'http://dsh.invalid').pathname } catch { p = '' }
     const route = routes[p]
-    if (!route) return sendJson(res, 404, shape('route', { code: 'GHO-ROUTE-05', status: 404, message: '不提供该路径' }))
+    // M-2：鉴权先行于查表回拒——未过缝不给 404 差分（防路径枚举）；过缝才如实 404（handler 内首行鉴权=INV-3 不变）
+    if (!route) { if (!authGate(req, res)) return; return sendJson(res, 404, shape('route', { code: 'GHO-ROUTE-05', status: 404, message: '不提供该路径' })) }
     return route(req, res)
   }
   return [register({ kind: 'prefix', path: API_PREFIX, handler })] // disposer[] 交 ctx.effect 收敛（kb-context 先例形）

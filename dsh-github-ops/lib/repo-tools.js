@@ -5,9 +5,11 @@
 //   PivotStackIntelligence/dsh-github —— 仓库管理的操作面清单（branch/remotes/tags/stash 生命周期）、
 //                               危险写操作必须显式确认、操作后状态刷新
 //   rtk（token 负担哲学）    —— 一切输出先想"模型读它要花多少 token"
-// 我们的取舍：只做 gh 已覆盖的仓库生命周期操作（10 个工具 ≈ 2k token schema，
+// 我们的取舍：只做 gh 已覆盖的仓库生命周期操作（11 个工具 ≈ 2k token schema，
 // 对比 GitHub MCP 默认 45 工具 ≈ 12.8k token/请求）；输出全部经 --jq/裁剪；
 // delete/archive 双重门禁（confirm 参数 + 配置开关）；永不提供任意 shell 透传。
+// 执行器缝（runGh 收编标注 2026-09-29）：本模块纯 argv 构造零 spawn 耦合——执行器由 index.js
+// 注入（gh-auth.makeRunGh 统一执行器：stdin 凭据擦除 + 输出有界），commands(args, cfg) 语义不变。
 
 const LIST_JQ = '.[] | "\\(.nameWithOwner)\\t\\(.visibility)\\t⭐\\(.stargazerCount)\\t\\(.updatedAt[:10])\\t\\((.description // "") | .[0:70])"'
 const SEARCH_JQ = '.[] | "\\(.fullName)\\t⭐\\(.stargazersCount)\\t\\(.updatedAt[:10])\\t\\((.description // "") | .[0:70])"'

@@ -23,3 +23,5 @@
         awareness: true
         # 单条 gh 命令超时（毫秒）
         ghTimeoutMs: 60000
+        # 访问检验探针独立超时（毫秒，1000-600000；ADR-004/INV-5 钳制落点在 Config zod）
+        probeTimeoutMs: 3000

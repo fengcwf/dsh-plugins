@@ -264,6 +264,33 @@ test('GET /repo-context：gh 摘要 + TTL≤30s 缓存 + 失败 fail-open（ADR-
   assertNoLeak(b.text, 'repo-context 降级')
 })
 
+test('M-1 用户可见 message（INV-10）：畸形 JSON / 超 1MiB 回落 CONTRACT 中文文案，不裸奔 kind 字面', async () => {
+  const env = setup()
+  const j = await call(env.handler, { method: 'POST', url: `${API_PREFIX}/token`, rawBody: '{oops' })
+  assert.equal(j.status, 400); assert.equal(j.json.code, 'GHO-ROUTE-01')
+  assert.equal(j.json.message, '请求体不是合法 JSON', '畸形 JSON 的 message 必须是 CONTRACT 中文文案（不得是 "badjson"）')
+  const big = await call(env.handler, { method: 'POST', url: `${API_PREFIX}/token`, rawBody: 'a'.repeat((1 << 20) + 16) })
+  assert.equal(big.status, 400); assert.equal(big.json.code, 'GHO-ROUTE-02')
+  assert.equal(big.json.message, '请求体超过 1MiB 上限', '超限的 message 必须是 CONTRACT 中文文案（不得是 "toolarge"）')
+  assert.equal(env.calls.gh.length, 0)
+})
+
+test('M-2 差分枚举回归（INV-3）：未授权 已知/未知路径同形回拒（鉴权先行于 404 查表），过缝才如实 404', async () => {
+  for (const rejection of [401, 403]) {
+    const env = setup({ reject: rejection })
+    const known = await call(env.handler, { method: 'GET', url: `${API_PREFIX}/status` })
+    const unknown = await call(env.handler, { method: 'GET', url: `${API_PREFIX}/nope` })
+    assert.equal(unknown.status, known.status, `未授权(${rejection})：未知路径不得回 404（防路径枚举）`)
+    assert.equal(unknown.json.code, known.json.code, `未授权(${rejection})：错误码同形`)
+    assert.equal(unknown.status, rejection)
+    assert.equal(env.calls.gh.length, 0); assert.equal(env.calls.git.length, 0)
+  }
+  const env = setup()
+  const n = await call(env.handler, { url: `${API_PREFIX}/nope` })
+  assert.equal(n.status, 404, '已授权未知路径如实 404')
+  assert.equal(n.json.code, 'GHO-ROUTE-05')
+})
+
 test('GET /health：三段自检（配置合成复检 / gh 可用 / 凭据在位）+ 降级归因（ADR-007）', async () => {
   const env = setup({ gh: (argv) => (argv.join(' ') === '--version' ? ok('gh version 2.90.0\n') : probeGh(argv)) })
   const r = await call(env.handler, { url: `${API_PREFIX}/health` })
