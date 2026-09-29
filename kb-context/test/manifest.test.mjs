@@ -16,15 +16,17 @@ test('zod 归类锁 dependencies ^4.6.5（工作区裁定 2026-09-28：第三方
   assert.equal(pkg.peerDependencies?.zod, undefined, 'zod 不得留在 peerDependencies（peer 不代装 → 单装 ERR_MODULE_NOT_FOUND）')
 })
 
-test('zod 版本界按包各判（R-5 波次解耦：wiki-steward 侧待其波修正）', () => {
+test('zod 版本界按包各判（R-5 波次解耦：wiki-steward 侧随其波同步锁形）', () => {
   const mine = readJson('../package.json')
   const steward = readJson('../../wiki-steward/package.json')
   // kb-context 侧：本波已迁 dependencies（上方同形锁；此处按包各判留对齐面独立证据）
   assert.equal(mine.dependencies?.zod, '^4.6.5', 'kb-context 侧锁 dependencies.zod ^4.6.5')
   assert.equal(mine.peerDependencies?.zod, undefined, 'kb-context 侧 zod 已迁出 peerDependencies')
-  // wiki-steward 侧：断言保留其现状（zod 仍在 peer 即照旧断言）——**不删断言、不为绿绕过**。
-  // 待 wiki-steward 波修正：其 zod 迁入 dependencies 后，本断言随该波同步改为 dependencies.zod 锁形。
-  assert.equal(steward.peerDependencies?.zod, '^4.6.5', '待 wiki-steward 波修正：wiki-steward zod 仍在 peerDependencies，照旧断言现状')
+  // wiki-steward 侧：其波已修正（0.4.1 起 zod 迁入 dependencies）——按本测试预定协议
+  // 「其 zod 迁入 dependencies 后，本断言随该波同步改为 dependencies.zod 锁形」执行
+  // （2026-09-29 T9-F1 波同步；不删断言、不为绿绕过：照旧双断言=dependencies 有 zod + peer 不得残留）。
+  assert.equal(steward.dependencies?.zod, '^4.6.5', 'wiki-steward 侧锁 dependencies.zod ^4.6.5（其波已迁，随波同步）')
+  assert.equal(steward.peerDependencies?.zod, undefined, 'wiki-steward 侧 zod 不得留在 peerDependencies（peer 不代装）')
 })
 
 test('文档契约（遗留清障⑪-d）：R2 注释撞号改（vaultRoot=Controller 裁定②，R-教训序列号不再复用）', () => {

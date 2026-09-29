@@ -8,7 +8,7 @@
 | [dsh-rtk-kit](dsh-rtk-kit/) | 0.2.1 | RTK 集成：bash 命令自动改写走 rtk 压缩（resolve 缝、fail-open）+ 会话 awareness + rtk_doctor 诊断（0.2.1=peer/engines 上界放宽至 <0.3.0-0，放行 dsh 0.2.x） |
 | [dsh-github-ops](dsh-github-ops/) | 0.2.1 | GitHub 集成：GitHub 命令强制 token 模式 + web_fetch 匿名 API 门禁 + 11 个仓库管理工具（gh 后端）（0.2.1=peer/engines 上界放宽至 <0.3.0-0，放行 dsh 0.2.x） |
 | [dsh-login-gate](dsh-login-gate/) | 0.2.0 | 登录门禁：表单登录（scrypt + HMAC 会话）+ 认证反代 + 原生 DSH 会话 + WS tunnel 修复 |
-| [kb-context](kb-context/) | 0.3.1 | 知识库上下文：vault 增量索引（FTS5）+ 检索（BM25/LIKE 兜底+deadline 守卫）+ 会话注入（触发/脱敏/截断）+ wiki_read/wiki_search/kb_diagnose 工具 + 设置菜单配置面 |
+| [kb-context](kb-context/) | 0.3.2 | 知识库上下文：vault 增量索引（FTS5）+ 检索（BM25/LIKE 兜底+deadline 守卫）+ 会话注入（触发/脱敏/截断）+ wiki_read/wiki_search/kb_diagnose 工具 + 设置菜单配置面（0.3.2=设置面 UI 对齐 dsh token + 填写示例/功能说明文案） |
 | [wiki-steward](wiki-steward/) | 0.4.1 | wiki 管家：会话捕获入 raw/ + kb_validate 六规则校验 + kb_mark sha256 原子回写 + wiki CRUD（.trash 可逆/journal 事务/wikilink 重写）+ 入队告警 + tools/pre-execute 写入拦截 + 设置菜单配置面 + 侧栏 ingest 面板（日志拼接/手动触发） |
 | [obsidian-web](obsidian-web/) | 0.2.1 | Obsidian vault Web 管理：查看/编辑/下载/分享 + 目录维护（T1-T14 全业务面 + 0.1.1 boot fail-open/索引本地化 + 0.2.0 分享面双模式默认挂 webServer + 客户端面板 + 0.2.1 B2 effect 语义修复/测试契约同源/配置与依赖归位） |
 

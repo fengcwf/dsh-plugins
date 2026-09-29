@@ -24,20 +24,56 @@ window.__ModuleLoader__.load({
       return fetch(url, init)
     }
 
-    // 可改白名单（客户端副本，只控表单；服务端 lib/settings-write.js 为权威判据，双侧一致）
+    // 可改白名单（客户端副本，只控表单；服务端 lib/settings-write.js 为权威判据，双侧一致）。
+    // hint/placeholder（T9-F1 填写引导）：hint=控件下功能说明（语义源=trigger.js/search.js，不夸大），
+    // placeholder=textarea 参考填写示例行（多行灰显示，不替代 label）。
     var EDITABLE_FIELDS = [
-      { path: ['triggers', 'words'], kind: 'string[]', label: '触发词面（一行一词）' },
-      { path: ['triggers', 'entityPaths'], kind: 'string[]', label: '索引实体路径（一行一条）' },
-      { path: ['budget', 'maxSnippets'], kind: 'number', label: '注入预算：单次最多片段数' },
-      { path: ['budget', 'maxTokens'], kind: 'number', label: '注入预算：token 上限' },
-      { path: ['timeoutMs'], kind: 'number', label: '检索总超时（毫秒，超时 fail-open 降级）' },
-      { path: ['scope', 'indexAll'], kind: 'string[]', label: '作用域：FTS5 索引目录（相对 vault 根）' },
-      { path: ['scope', 'grepOnDemand'], kind: 'string[]', label: '作用域：按需 grep 目录（相对 vault 根）' },
+      {
+        path: ['triggers', 'words'], kind: 'string[]', group: '触发条件', label: '触发词面（一行一词）',
+        placeholder: 'wiki\nobsidian\n索引目录',
+        hint: '会话消息里出现这些词或短语时，触发 vault 检索并把命中片段注入上下文。只对用户消息生效；留空使用默认表。',
+      },
+      {
+        path: ['triggers', 'entityPaths'], kind: 'string[]', group: '触发条件', label: '索引实体路径（一行一条）',
+        placeholder: 'wiki/concepts\nraw/projects/kb-context\nINDEX.md',
+        hint: '填 vault 里的路径或文件名（相对 vault 根）。会话里提到这些实体——路径字面、[[wikilink]]、@ 引用——同样触发检索，与触发词面是并集，任一命中即触发。',
+      },
+      {
+        path: ['budget', 'maxSnippets'], kind: 'number', group: '注入预算', label: '注入预算：单次最多片段数',
+        hint: '一次最多注入几条命中片段（默认 3）。',
+      },
+      {
+        path: ['budget', 'maxTokens'], kind: 'number', group: '注入预算', label: '注入预算：token 上限',
+        hint: '注入片段像对话一样占用会话上下文 token（窗口有限、按量计成本），不设限会挤占正常对话预算、单次检索成本不可控。此项限制单次注入总量（默认 2000，按粗略估算计），超出即停止追加、首条必保。',
+      },
+      {
+        path: ['timeoutMs'], kind: 'number', group: '检索超时', label: '检索总超时（毫秒，超时 fail-open 降级）',
+        hint: '默认 1500。超时即放弃本次检索、对话照常继续；填 0 = 立即超时（等于停用自动检索）。',
+      },
+      {
+        path: ['scope', 'indexAll'], kind: 'string[]', group: '作用域', label: '作用域：FTS5 索引目录（相对 vault 根）',
+        placeholder: 'wiki\nraw',
+        hint: '这些目录的文档进全文索引，是触发检索的主命中面。一行一条，默认 wiki、raw。',
+      },
+      {
+        path: ['scope', 'grepOnDemand'], kind: 'string[]', group: '作用域', label: '作用域：按需 grep 目录（相对 vault 根）',
+        placeholder: '01-客户资料\n02-致远OA',
+        hint: '只登记路径、不建索引的目录。检索零命中且目标落在此范围时，会提示改用 wiki_read 直读。',
+      },
     ]
     var READONLY_FIELDS = [
-      { path: ['hotMap', 'enabled'], kind: 'boolean', label: '热图开关（只读展示）' },
-      { path: ['hotMap', 'maxChars'], kind: 'number', label: '热图摘要长度上限（只读展示）' },
-      { path: ['vaultRoot'], kind: 'string', label: 'vault 根路径（只读展示）' },
+      {
+        path: ['hotMap', 'enabled'], kind: 'boolean', group: '只读展示', label: '热图开关（只读展示）',
+        hint: '热图（vault 热点摘要）预留配置，当前版本仅展示。',
+      },
+      {
+        path: ['hotMap', 'maxChars'], kind: 'number', group: '只读展示', label: '热图摘要长度上限（只读展示）',
+        hint: '热图（vault 热点摘要）预留配置，当前版本仅展示。',
+      },
+      {
+        path: ['vaultRoot'], kind: 'string', group: '只读展示', label: 'vault 根路径（只读展示）',
+        hint: 'wiki_read 直读的根路径（在配置文件中设置）。',
+      },
     ]
 
     function getPath(obj, path) {
@@ -59,16 +95,20 @@ window.__ModuleLoader__.load({
       return obj
     }
 
-    /** 行组件：布尔=checkbox、数字=number input、字符串数组=textarea（一行一项）、其他=只读文本 */
+    /** 行组件（宿主 settings-form .field 形：label → 控件 → hint 纵向）：
+     *  布尔=checkbox、数字=number input、字符串数组=textarea（一行一项，placeholder 放示例行）、其他=只读文本。
+     *  无障碍：label htmlFor 与控件 id 关联；placeholder 不替代 label；disabled 真实禁用。 */
     function SettingsRow(props) {
       var field = props.field
       var value = props.value
       var readOnly = props.readOnly === true
       var onChange = props.onChange
+      var id = 'kb-context-' + field.path.join('-')
       var input
       if (field.kind === 'boolean') {
         input = react.createElement('input', {
           type: 'checkbox',
+          id: id,
           checked: value === true,
           disabled: readOnly,
           onChange: function (e) { onChange(e.target.checked) },
@@ -76,6 +116,8 @@ window.__ModuleLoader__.load({
       } else if (field.kind === 'number') {
         input = react.createElement('input', {
           type: 'number',
+          id: id,
+          className: 'kb-context-settings-input',
           value: value === undefined || value === null ? '' : String(value),
           disabled: readOnly,
           onChange: function (e) {
@@ -85,7 +127,10 @@ window.__ModuleLoader__.load({
         })
       } else if (field.kind === 'string[]') {
         input = react.createElement('textarea', {
+          id: id,
+          className: 'kb-context-settings-textarea',
           rows: 3,
+          placeholder: field.placeholder,
           value: Array.isArray(value) ? value.join('\n') : '',
           disabled: readOnly,
           onChange: function (e) {
@@ -94,11 +139,12 @@ window.__ModuleLoader__.load({
           },
         })
       } else {
-        input = react.createElement('span', { className: 'kb-context-settings-value' }, String(value === undefined ? '' : value))
+        input = react.createElement('span', { id: id, className: 'kb-context-settings-value' }, String(value === undefined ? '' : value))
       }
       return react.createElement('div', { className: 'kb-context-settings-row' },
-        react.createElement('label', { className: 'kb-context-settings-label' }, field.label),
+        react.createElement('label', { className: 'kb-context-settings-label', htmlFor: id }, field.label),
         input,
+        field.hint ? react.createElement('p', { className: 'kb-context-settings-hint' }, field.hint) : null,
       )
     }
 
@@ -181,36 +227,91 @@ window.__ModuleLoader__.load({
       var cfg = (state.data && state.data.config) || {}
       var writable = state.data && state.data.writable === true
       var rows = []
+      var lastGroup = null
+      function addRow(el, field) {
+        if (field.group && field.group !== lastGroup) {
+          rows.push(react.createElement('h4', { key: 'g-' + field.group, className: 'kb-context-settings-group' }, field.group))
+          lastGroup = field.group
+        }
+        rows.push(el)
+      }
       for (var i = 0; i < EDITABLE_FIELDS.length; i++) {
-        rows.push(react.createElement(SettingsRow, {
+        addRow(react.createElement(SettingsRow, {
           key: 'e' + i,
           field: EDITABLE_FIELDS[i],
           value: draftValue(EDITABLE_FIELDS[i]),
           readOnly: !writable,
           onChange: (function (f) { return function (v) { onChange(f, v) } })(EDITABLE_FIELDS[i]),
-        }))
+        }), EDITABLE_FIELDS[i])
       }
       for (var j = 0; j < READONLY_FIELDS.length; j++) {
-        rows.push(react.createElement(SettingsRow, {
+        addRow(react.createElement(SettingsRow, {
           key: 'r' + j,
           field: READONLY_FIELDS[j],
           value: getPath(cfg, READONLY_FIELDS[j].path),
           readOnly: true,
           onChange: function () {},
-        }))
+        }), READONLY_FIELDS[j])
       }
       return react.createElement('div', { className: 'kb-context-settings', 'data-dsh-plugin': 'kb-context' },
-        react.createElement('h3', null, 'kb-context · 设置'),
-        react.createElement('p', { className: 'kb-context-settings-note' }, '可改项即时热生效（写路径=官方路由面 api/kb-context/settings → configEditor 持久化缝；检索/注入 per-call 读）；只读项仅展示。'),
+        react.createElement('h3', { className: 'kb-context-settings-title' }, 'kb-context · 设置'),
+        react.createElement('p', { className: 'kb-context-settings-note' }, '可改项保存即热生效；只读项仅展示。'),
         rows,
-        writable
-          ? react.createElement('button', { type: 'button', className: 'kb-context-settings-save', disabled: state.saving, onClick: save }, state.saving ? '保存中…' : '保存')
-          : react.createElement('p', { className: 'kb-context-settings-note' }, '本部署配置写入缝缺失（configEditor 未挂载），暂只读展示。'),
-        state.notice
-          ? react.createElement('p', { className: state.notice.kind === 'ok' ? 'kb-context-settings-ok' : 'kb-context-settings-error' }, state.notice.text)
-          : null,
+        react.createElement('div', { className: 'kb-context-settings-footer' },
+          writable
+            ? react.createElement('button', { type: 'button', className: 'kb-context-settings-save', disabled: state.saving, onClick: save }, state.saving ? '保存中…' : '保存')
+            : react.createElement('p', { className: 'kb-context-settings-note' }, '本部署配置写入缝缺失（configEditor 未挂载），暂只读展示。'),
+          state.notice
+            ? react.createElement('p', { className: state.notice.kind === 'ok' ? 'kb-context-settings-ok' : 'kb-context-settings-error' }, state.notice.text)
+            : null,
+        ),
       )
     }
+
+    // —— 设置面样式（T9-F1：自绘 + dsh token，宿主 settings-form .field 形；零第三方 UI 库）——
+    // 色板唯一来源=--dsw-alias-* 语义别名：宿主暗色态重定义别名即自动暗色适配，
+    // 本文件零暗色 media query / 主题属性分支、零硬编码色值（var() 无值时按 CSS
+    // computed-value 语义落 inherit/currentcolor/transparent，可读性不塌）。焦点环引宿主 --dsw-focus-ring-*。
+    var STYLE_ID = 'kb-context-settings-css'
+    var SETTINGS_CSS = [
+      '.kb-context-settings{max-width:760px;font-family:var(--dsw-font-family);font-size:13px;line-height:1.5;color:var(--dsw-alias-label-primary)}',
+      '.kb-context-settings-title{margin:0 0 4px;font-size:16px;font-weight:500;line-height:1.5;color:var(--dsw-alias-label-primary)}',
+      '.kb-context-settings-note{margin:0;padding:0 2px;font-size:13px;line-height:20px;color:var(--dsw-alias-label-tertiary)}',
+      '.kb-context-settings-group{margin:16px 0 0;font-size:13px;font-weight:600;line-height:20px;color:var(--dsw-alias-label-primary)}',
+      '.kb-context-settings-row{display:flex;flex-direction:column;gap:6px;padding:12px 0;border-top:0.5px solid var(--dsw-alias-border-l2)}',
+      '.kb-context-settings-group + .kb-context-settings-row,.kb-context-settings-note + .kb-context-settings-row{border-top:none}',
+      '.kb-context-settings-label{font-size:13px;font-weight:500;line-height:1.5;color:var(--dsw-alias-label-primary)}',
+      '.kb-context-settings-hint{margin:0;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary)}',
+      '.kb-context-settings-input{width:96px;height:34px;padding:0 12px;border:0.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-3);font:inherit;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-primary)}',
+      '.kb-context-settings-input:focus-visible{outline:none;border-color:var(--dsw-alias-state-business-primary)}',
+      '.kb-context-settings-input:disabled{color:var(--dsw-alias-label-tertiary);cursor:default}',
+      '.kb-context-settings-textarea{min-height:96px;padding:8px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-3);font:inherit;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-primary);resize:vertical}',
+      '.kb-context-settings-textarea::placeholder{color:var(--dsw-alias-label-dimmed)}',
+      '.kb-context-settings-textarea:focus-visible{outline:none;border-color:var(--dsw-alias-state-business-primary)}',
+      '.kb-context-settings-textarea:disabled{color:var(--dsw-alias-label-tertiary);cursor:default}',
+      '.kb-context-settings-value{font-family:var(--ds-font-family-code);font-size:13px;line-height:1.5;color:var(--dsw-alias-label-secondary);word-break:break-all}',
+      '.kb-context-settings-footer{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding-top:16px}',
+      '.kb-context-settings-save{appearance:none;padding:5px 14px;border:1px solid transparent;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-layer-3);font:inherit;font-size:13px;line-height:1.5;cursor:pointer}',
+      '.kb-context-settings-save:disabled{opacity:.4;cursor:default}',
+      '.kb-context-settings-save:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));outline-offset:1px}',
+      '.kb-context-settings-ok{margin:0;font-size:12px;line-height:1.5;color:var(--dsw-alias-state-success-primary)}',
+      '.kb-context-settings-error{margin:0;font-size:12px;line-height:1.5;color:var(--dsw-alias-state-error-primary)}',
+    ].join('')
+
+    /** 样式注入（幂等 + document 守卫）：Node/测试环境无 document 直接跳过（R4），绝不炸模块加载。 */
+    function ensureStyles() {
+      if (typeof document !== 'undefined') {
+        try {
+          if (document.getElementById(STYLE_ID)) return
+          var el = document.createElement('style')
+          el.id = STYLE_ID
+          el.setAttribute('data-plugin-css', 'kb-context')
+          el.textContent = SETTINGS_CSS
+          ;(document.head || document.documentElement).appendChild(el)
+        } catch { /* 样式注入失败不炸插件（视觉降级=浏览器默认） */ }
+      }
+    }
+    ensureStyles()
 
     /**
      * 注册设置面：settings.section（设置菜单配置面）。

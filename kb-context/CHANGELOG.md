@@ -1,5 +1,15 @@
 # CHANGELOG — kb-context
 
+## 0.3.2 — 2026-09-29
+
+Phase 8 修复波（用户反馈 3 项：①设置页面 UI 优化参考 dsh 本地 UI 效果 ②触发词面/索引实体路径给参考填写示例+功能说明 ③注入预算 token 上限的作用说明入设置面；参照 `changes/2026-09-29-kb-context-settings-ux/reports/ui-ux-brief.md`（T9-D1）、`fix-ui-ux-report.md`（T9-F1））：
+
+- **设置面 UI 对齐 dsh 本地效果**（`lib/client.js`）：自绘 + dsh token——色板唯一来源 `--dsw-alias-*` 语义别名（暗色随宿主别名重定义自动适配，零暗色分支、零硬编码色值、零第三方 UI 库、零新增网络请求）；行排布改宿主 settings-form `.field` 形（label 13px/500 → 控件 → hint 12px/1.5 tertiary 纵向、gap 6px/padding 12px 0、字段间 `--dsw-alias-border-l2` 细分隔）；控件 `--dsw-radius-md`+`bg-layer-3`+`border-l4/l2`、focus `state-business-primary`、placeholder `label-dimmed`；保存按钮=host `.save` 形；错误色统一 `--dsw-alias-state-error-primary`、成功色 `state-success-primary`。样式经 `<style>` 幂等注入（`data-plugin-css` 标记 + `typeof document !== 'undefined'` 守卫，Node/测试环境零副作用）
+- **填写示例 + 功能说明**（字段元数据 hint/placeholder）：触发词面/索引实体路径 textarea placeholder 给参考填写示例（`wiki`/`obsidian`/`索引目录`；`wiki/concepts`/`raw/projects/kb-context`/`INDEX.md`）+ 控件下 hint 说明功能作用——触发=会话消息命中→检索→注入（仅用户消息）、实体路径=路径字面/`[[wikilink]]`/`@` 引用三形态提及即触发、与词面并集任一命中即触发
+- **注入预算 token 口径入设置面**：maxTokens hint 含"为什么需要注入 token 预算"（注入片段像对话一样占用会话上下文 token、窗口有限按量计成本、上限防挤占控成本、按粗略估算计、超出即停止追加首条必保）；maxSnippets/timeoutMs/作用域两项同步补简短说明（timeout=超时 fail-open 对话照常、indexAll=FTS 主命中面、grepOnDemand=零命中提示 wiki_read 直读）；hotMap 保持"预留配置仅展示"不夸大口径；顶部 note 精简一句
+- **测试 189→194**（+5：文案/示例/hint/样式 token/行排布契约断言，TDD 先红后绿留痕）；`manifest.test.mjs` wiki-steward 对齐面断言按其预定协议随波同步 `dependencies.zod` 锁形（wiki-steward 0.4.1 已迁 zod，修前基线红；不删断言、不为绿绕过，照旧双断言）；双 umask（022/0077）口径全绿、`npm run check` exit 0
+- **形制零变化**：单文件自包含 `window.__ModuleLoader__` 工厂形、`settings.section` 注册契约零变化、POST `{patch}` 只发变更叶子、错误面如实展示、检索/注入/工具面零触碰（行为兼容，patch 位）
+
 ## 0.3.1 — 2026-09-28
 
 Phase 8 修复波（B1/B2/S3，来源报告：`changes/2026-09-28-kb-context-b1b2-fix/reports/diagnostic-report.md`（T8-D1 诊断）、`fix-b1b2-report.md`（T8-F1）、`fix-deps-report.md`（T8-F2））：
