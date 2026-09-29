@@ -111,7 +111,7 @@
 ## 6. Concerns / NEEDS_CONTEXT
 
 1. **原生控件假缝的验证边界**：单测断言的是「我们传给原生控件的 props 接线」+ 假缝镜像的 .d.ts DOM 契约；`Switch/Button/Input/Modal` 的真实渲染形归宿主组件。建议 Task T 在 `.testenv` 设置页面探针里核对：开关真呈 switch 形、按钮 36px、输入 32px、历史弹层（Modal 走 body portal）开合/Escape/遮罩关闭。
-2. **Input padding 覆写依赖样式顺序**：`.wiki-steward-settings .wiki-steward-settings-input{padding:0 10px}` 覆写宿主 `.wrap` 的 8px（同优先级后者胜——本表在 primitives materialize 后 append）。若宿主改 `Input.module.css` 结构/优先级需回归该 2px 项。`:has(input:disabled)` 需 Chrome 105+（dsh web 目标浏览器均支持）。
+2. **Input padding 覆写机制定性（R2 修正）**：`.wiki-steward-settings .wiki-steward-settings-input{padding:0 10px}` 覆写宿主 `.wrap` 的 8px——**特异性胜出（0,2,0 > 0,1,0）非注入顺序依赖；真回归面=宿主改 `Input.module.css` 结构**。（原表述「同优先级后者胜——本表在 primitives materialize 后 append」系误判为注入顺序依赖，随本修正撤回。）`:has(input:disabled)` 需 Chrome 105+（dsh web 目标浏览器均支持）。
 3. **R1/R2 两条裁定是取舍不是全胜**：若用户/审查裁定「必须用 SettingsForm」或「设置节逻辑必须落 web/src/lib」，两者都触行为面/平台契约（§2 代价栏），需另行裁定与排期，不在 F2「只动视觉与结构」边界内可解。
 4. **清单 #8/#11 无适用面**（fieldLabel/列表形设置行）：如实申报未落（本插件无多字段卡、无设置行列表用户），未造冗余 DOM 凑清单。
 5. **本 commit 不含发版动作**：版本仍 0.4.1（F1/F3 同口径——发版五步属独立发版波）；`check-release.sh` 四对齐当前 PASS 于 0.4.1 基线，发版时再 bump。

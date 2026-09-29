@@ -881,3 +881,62 @@ test('F2 历史弹层=原生 Modal（title/closeLabel 契约）；开合/挂载�
   const after = findComp(Section(), 'WikiStewardHistoryEntry')
   assert.equal(after.props.open, false, '关闭=收起（Modal onClose→onToggle，行为面不变）')
 })
+
+// ===== R2 发版前收口：T-F2 stale-closure 草稿竞态回归锁（终审 triage 判真缺陷）============
+// 缺陷形（修前 lib/client.js onChange/toggleHistory）：基于渲染闭包 `state.draft`/`state.historyOpen`
+// 重建补丁并整体替换 draft——同一 React 批次（同一渲染树连发两变更、其间无重渲染）内后写覆盖前写：
+// 后一变更从陈旧闭包重建，前一叶子整体丢失（tester-report T-F2 实录：同同步块「开关点击 + 时间输入」
+// → time 生效、enabled 未入 draft）。
+// 判别力自证（上波教训：测试锁对旧缺陷形必须可见）：本锁在旧形下必红——
+//   ① 同批两叶子（开关 enabled + 时间 time）后写覆盖前写 → POST 补丁缺 enabled；
+//   ② 同批双击历史开关两次读陈旧 historyOpen 同向写 → 净开不归零。
+// 函数式 updater（setState(prev=>…)）后必绿；红→绿轨迹见
+// changes/2026-09-29-settings-ingest-controls/reports/task-r2-report.md。
+test('T-F2 回归锁：同批次连发两变更两叶子都保留（后写不再覆盖前写）+ 同批双击开关净零（函数式 updater）', async () => {
+  const { mod, effects } = loadClientFace()
+  const registered = []
+  mod.apply(mkCtx(registered, []))
+  const { component: Section } = registered.find((r) => r.decl.name === 'settings.section')
+  const calls = []
+  mod.__fetch = async (url, init) => {
+    calls.push({ url, init })
+    if (init && init.method === 'POST') {
+      return { json: async () => ({ data: { ok: true, config: { ingest: { schedule: { enabled: true, time: '04:30' } } } } }) }
+    }
+    return { json: async () => ({ data: { config: { ingest: { schedule: { enabled: false, time: '00:25' } } }, writable: true, editable: [] } }) }
+  }
+  Section()
+  effects[0]()
+  await tick()
+  await tick()
+
+  // 同批次连发两变更（同一渲染树取两行 onChange，其间不重渲染=React 批处理等价形）：开关 + 时间
+  const tree = Section()
+  const rows = rowsOf(tree)
+  const enableRow = rows.find((c) => c.props.field && c.props.field.path.join('.') === 'ingest.schedule.enabled')
+  const timeRow = rows.find((c) => c.props.field && c.props.field.path.join('.') === 'ingest.schedule.time')
+  assert.ok(enableRow && timeRow, '开关/时间两行必须在设置节')
+  enableRow.props.onChange(true)
+  timeRow.props.onChange('04:30')
+
+  // 同批双击历史开关（净零=仍收起；旧形两次读陈旧 historyOpen 同向写=净开不归零）
+  const entry = findComp(tree, 'WikiStewardHistoryEntry')
+  entry.props.onToggle()
+  entry.props.onToggle()
+
+  const saved = Section()
+  const openAfter = findComp(saved, 'WikiStewardHistoryEntry').props.open
+  saveButton(saved).props.onClick()
+  await tick()
+  await tick()
+  const post = calls.find((c) => c.init && c.init.method === 'POST')
+  assert.ok(post, '必须发保存请求')
+  const body = JSON.parse(post.init.body)
+  // 两症状合成一锁失败清单（判别力自证：旧缺陷形两症状同红可见，防首断言吞掉第二症状）
+  const defects = []
+  if (openAfter !== false) defects.push(`①同批双击开关未归零（open=${String(openAfter)}）`)
+  if (JSON.stringify(body) !== JSON.stringify({ patch: { ingest: { schedule: { enabled: true, time: '04:30' } } } })) {
+    defects.push(`②同批两叶子后写覆盖前写（补丁=${JSON.stringify(body)}）`)
+  }
+  assert.deepEqual(defects, [], '同批次连发两变更两叶子都保留 + 同批双击开关净零（函数式 updater 消陈旧闭包）')
+})

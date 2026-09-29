@@ -219,7 +219,7 @@ window.__ModuleLoader__.load({
         setState(function (prev) { return Object.assign({}, prev, delta) })
       }
       function toggleHistory() {
-        update({ historyOpen: state.historyOpen !== true })
+        setState(function (prev) { return Object.assign({}, prev, { historyOpen: prev.historyOpen !== true }) })
       }
       /** 手动动作状态局部更新（函数形 updater：双按钮并发无陈旧闭包互踩） */
       function updateAction(kind, delta) {
@@ -292,9 +292,11 @@ window.__ModuleLoader__.load({
         return v !== undefined ? v : getPath((state.data && state.data.config) || {}, field.path)
       }
 
+      /** 草稿叶子更新（函数形 updater：从 prev.draft 重建，同批次连发两变更互不覆盖——T-F2 stale-closure 竞态回归锁见 test/client-face.test.mjs） */
       function onChange(field, value) {
-        var next = setPath(JSON.parse(JSON.stringify(state.draft)), field.path, value)
-        update({ draft: next, notice: null })
+        setState(function (prev) {
+          return Object.assign({}, prev, { draft: setPath(JSON.parse(JSON.stringify(prev.draft)), field.path, value), notice: null })
+        })
       }
 
       function save() {
