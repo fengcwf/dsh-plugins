@@ -289,7 +289,7 @@
 
 ## Task 17: .testenv boot 冒烟四关 + 交付核对（constitution 验收逐项）
 
-- status: 🔄（session 7c4a6359，BASE 89fd160，携带 L2 护栏/多 chunk 真机/raw 输出件）
+- status: ✅（session 7c4a6359，BASE 89fd160，携带 L2 护栏/多 chunk 真机/raw 输出件；修复环 R1 后 review clean，commits f26e7d4..d5e6713）
 - phase: Phase 6
 - role: tester
 - skills: clsh-project、validate-changes-match-specs
@@ -329,6 +329,51 @@
 - INV-9 → Task 12、Task 13、Task 17
 - INV-10 → Task 10、Task 11、Task 14、Task 15
 
+## Task 18: Phase 8 R1 诊断（gap analysis，只读）——归档总结缺口确认
+
+- status: ✅（G1-G6 缺口清单+补正红线产出）
+- phase: Phase 8
+- role: scout
+- skills: clsh-project
+- depends: Task 17
+- covers: 用户反馈 R1（确认/流程）
+- 派发标识: session c558e343-e6cd-427a-94da-35da6e8589e7
+
+**验收标准**:
+
+- [ ] 只读核对 changes/archive/ 三件 + retrospective，列出缺口清单（缺什么事实、应落在哪节）
+- [ ] 不改任何文件
+
+## Task 19: Phase 8 R1 修复——归档总结补正
+
+- status: ✅（G1-G6 归档补正落盘，证据=.superpowers/sdd/tasks-dsh-github-ops/p8r1-fix-report.md；一致性复核=Task 20）
+- phase: Phase 8
+- role: coder
+- skills: clsh-project
+- depends: Task 18
+- covers: 用户反馈 R1（确认/流程）
+- 派发标识: session 88986d02-1976-4170-bb0d-bbf42f5158b2（诊断 G1-G6+裁决 N1 双句口径/N2 模板表注记/G6 批准）
+
+**验收标准**:
+
+- [ ] completion-summary/retrospective/handoff 补「PATH A 派发路径（未用 AgentTeams）+ 偏离理由与成本」「Phase 8 状态」事实
+- [ ] 与既有内容一致，不改写其他结论
+
+## Task 20: Phase 8 R1 审查——归档一致性复核
+
+- status: ⬜
+- phase: Phase 8
+- role: reviewer
+- skills: validate-changes-match-specs
+- depends: Task 19
+- covers: 用户反馈 R1（确认/流程）
+- 派发标识: 待回填
+
+**验收标准**:
+
+- [ ] 复核补正内容与事实一致（派发记录/ledger 可溯）
+- [ ] verdict: pass 或 findings
+
 ## 任务总览 / Task Summary
 
 | Task | 标题 | 阶段 | 状态 | 负责角色 |
@@ -349,7 +394,10 @@
 | 14 | UI 渲染（双栏六节卡片） | Phase 6 | ✅ | coder |
 | 15 | 测试波收口（退化形/零明文） | Phase 6 | ✅ | tester |
 | 16 | 发版面欠账 + 版本文档 | Phase 6 | ✅ | coder |
-| 17 | .testenv boot 四关 + 交付核对 | Phase 6 | 🔄 | tester |
+| 17 | .testenv boot 四关 + 交付核对 | Phase 6 | ✅ | tester |
+| 18 | P8-R1 诊断（归档缺口） | Phase 8 | ✅ | scout |
+| 19 | P8-R1 修复（归档补正） | Phase 8 | ✅ | coder |
+| 20 | P8-R1 审查（一致性复核） | Phase 8 | ⬜ | reviewer |
 
 ## 阶段里程碑 / Phase Milestones
 

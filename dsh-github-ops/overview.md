@@ -66,6 +66,8 @@
 
 ## 进度表
 
+> 注：下表为模板示意（未回填），真实进度见下方「进度表 / Progress」表。
+
 | Phase | 状态 | 完成日期 | 证据 |
 |-------|------|----------|------|
 | Phase 0 | ⬜ | | |
@@ -93,6 +95,6 @@
 | Phase 5 | 实现计划 tasks.md（Task 10-17 + 覆盖矩阵 US/INV） | ✅ | 2EC9D072 |
 | Phase 6 | Task 10-17 全部 clean（2 轮修复环 + 整分支终审 READY） | ✅ | — |
 | Phase 7 | 归档复盘（本文件 + archive 三件 + review-report + fix-notes） | ✅ | 见 gate-phase7 |
-| Phase 8 | 优化循环（backlog 池 + 用户反馈驱动） | ⏸ 待用户反馈 | — |
+| Phase 8 | 优化循环（backlog 池 + 用户反馈驱动） | 🔄 R1 进行中（用户反馈驱动） | — |
 
 测试基线：node --test 112/112（109 + 终审修复波 3 断言）；.testenv boot 四关全绿（真机 GUI 双断言 + 截图）。
