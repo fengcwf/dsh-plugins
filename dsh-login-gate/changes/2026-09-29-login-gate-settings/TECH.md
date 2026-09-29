@@ -24,13 +24,13 @@
 
 - **方案A（选定）**：服务端 `ctx.webServer.register({kind:'prefix',path:'/api/login-gate/settings'})` → GET 回读 / POST `{patch}` → 白名单预检（白名单外整单拒 not_editable）→ zod 校验生效面 → `configEditor.edit(entryId='login-gate', change)` → 写 profile patch + Loader reconcile。
 - **方案B（弃）**：插件自写配置文件/直写 YAML——绕开 reconcile、并发不安全、违反 Global Constraint 1。
-- **热生效语义**：sessionDays/maxFailures/secureCookie/wsAllow/gzipPass = handler per-call 读 config 热生效；port/listenHost/upstreamPort/rewriteHost = 写入后标记"需重启生效"（ADR-003）。
+- **生效语义（R-16，即时生效）**：sessionDays/maxFailures/secureCookie/wsAllow/gzipPass = handler per-call 读 config 热生效；port/listenHost/upstreamPort/rewriteHost = 写入后经宿主 re-apply 立即生效（端口保存前 UI 警示断连）（ADR-003 修订标注）。
 
-### ADR-003: 端口维护 = 可改 + 重启提示 + 联动清单（用户 Round 1 裁定）
+### ADR-003: 端口维护 = 可改 + 事前警示 + 联动清单（用户 Round 1 裁定 / R-16 修订）
 
-- 端口可编辑（默认 3500，整数 1-65535）；保存成功回显 + 固定文案「需重启生效」+ 联动清单四行（gate-watchdog 探活地址 / start-dsh.sh 检查 / obsidian-web 3500 分享契约 / Lucky 外网反代需人工同步）。
+- 端口可编辑（默认 3500，整数 1-65535）；保存前弹断连警示确认条（监听端口立即切换、当前连接会断开）+ 保存成功回显「已保存，已生效」+ 联动清单四行（gate-watchdog 探活地址 / start-dsh.sh 检查 / obsidian-web 3500 分享契约 / Lucky 外网反代需人工同步）。
 - **端口占用预检**：保存前服务端 `net` 探测目标端口可绑定性，占用即拒绝并给占用提示（防 EADDRINUSE 事故重演——obsidian-web 3500 冲突前科）。
-- **重启语义硬标**：configEditor reconcile 是否重跑 apply 无证据（scout-b NEEDS_CONTEXT②）→ 保守按"必须重启"实现与文案。
+- **生效语义（R-16）**：原「重启语义硬标」假设作废（2026-09-29 实测推翻，见下方修订标注）——语义=即时生效+事前警示；真·需重启（deferred rebind）为 P2 候选。
 - **修订（2026-09-29，R-16）**：实测推翻原重启假设（2026-09-29 tester F-1），语义=即时生效+事前警示（R-16）；真·需重启（deferred rebind）列 P2 候选。
 
 ### ADR-004: 账号管理 = usersFile 原子写 + scrypt 服务端生成（用户 Round 4/5 裁定）
@@ -76,7 +76,7 @@
 | 风险 | 缓解 |
 |------|------|
 | configEditor 缺位（独立测试环境/未来宿主变更） | 缺缝降级 writable:false + 只读注记（kb-context 形） |
-| reconcile 不重跑 apply → 端口不热生效 | ADR-003 硬标"需重启"，文案与测试断言一致 |
+| 端口切换即断连（宿主重 apply 重绑监听）误操作 | 保存前断连警示确认条 + 联动清单四行 + 端口占用预检（ADR-003 R-16） |
 | usersFile 并发写坏文件 | 原子 rename + 进程内串行化 + 测试并发用例 |
 | 改端口漏联动 | UI 联动清单四行 + README + INV-7 核对清单 |
 | 300 行约定冲突 | 形制豁免记录（R-3），评审按分区质量判 |

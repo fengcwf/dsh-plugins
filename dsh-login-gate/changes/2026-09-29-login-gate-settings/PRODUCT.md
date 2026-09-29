@@ -10,7 +10,7 @@ dsh-login-gate（登录门禁插件，生产拓扑：Lucky 外网反代 + 内网
 
 | ID | 角色 | 功能描述 | 业务价值 | 优先级 |
 |----|------|---------|---------|--------|
-| US-1 | 登录用户 | 在 dsh 设置菜单看到「dsh-login-gate」栏目，可维护门禁端口（默认 3500）；保存后明确提示「需重启生效」并列出联动清单（watchdog/start-dsh.sh/obsidian-web 3500 契约/Lucky 外网反代需人工同步） | 端口维护可视化，杜绝改端口漏联动 | P0 |
+| US-1 | 登录用户 | 在 dsh 设置菜单看到「dsh-login-gate」栏目，可维护门禁端口（默认 3500）；保存前弹断连警示确认条（监听端口立即切换、当前连接断开）并列出联动清单（watchdog/start-dsh.sh/obsidian-web 3500 契约/Lucky 外网反代需人工同步），保存后即时生效 | 端口维护可视化，杜绝改端口漏联动 | P0 |
 | US-2 | 登录用户 | 在设置面调整 sessionDays（1~3650）/maxFailures/secureCookie/wsAllow/gzipPass；listenHost/upstreamPort/rewriteHost 只读展示 | 日常参数维护免改文件 | P0 |
 | US-3 | 登录用户 | 登录页与设置页明示「登录后 N 天内免登录」（N=当前 sessionDays）；设置页附超时机制说明（固定过期、到期重新登录、与 dsh 会话关系） | 回答需求②：超时认证时长透明化 | P0 |
 | US-4 | 登录用户 | 设置面登录账号增删改密：scrypt 哈希服务端生成、usersFile 热加载即刻生效、任何登录用户可操作 | 账号维护免手工跑 hash 工具 | P0 |
@@ -31,7 +31,7 @@ dsh-login-gate（登录门禁插件，生产拓扑：Lucky 外网反代 + 内网
 
 ## 可验证性 / Verifiability
 
-- US-1：设置页端口输入框默认 3500、保存成功回显 + 重启提示 + 联动清单可见（integration 测试 + 测试环境真实渲染）
+- US-1：设置页端口输入框默认 3500、保存前断连警示确认条（确认/取消两路）+ 保存成功回显「已保存，已生效」+ 联动清单可见（integration 测试 + 测试环境真实渲染）
 - US-2：五参数保存后 GET 回读一致；三监听参数只读（writable 语义）
 - US-3：登录页文案含"登录后约 N 天内免登录"（N 随配置）；设置页含机制说明
 - US-4：增/删/改密后 usersFile 更新、scrypt$ 格式正确、新密码可登录、旧密码失效（测试环境 E2E）
