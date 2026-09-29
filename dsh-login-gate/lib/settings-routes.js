@@ -1,6 +1,6 @@
 // dsh-login-gate — 设置面数据面（官方路由形，沿 kb-context/lib/settings-routes.js 同款）：
 //   ctx.webServer.register({kind:'prefix', path:'/api/login-gate', ...}) 单 prefix 注册 + 内部分发：
-//   GET  /api/login-gate/settings        设置面展示（config 九键 + writable + restartRequired + users 仅名字）
+//   GET  /api/login-gate/settings        设置面展示（config 九键 + writable + applied 恒定 + users 仅名字）
 //   POST /api/login-gate/settings        设置面写入（白名单 → 端口预检 → configEditor 缝持久化）
 //   POST /api/login-gate/settings/users  账号 CRUD（复用 lib/users.js Task 10 模块，写 Config usersFile）
 // API 形：成功 {data}；失败 {error:{code,message}}。每条 handler 首行过鉴权缝
@@ -11,7 +11,7 @@
 // （经门禁场景，客户端取自 GET /__gate/status 的 user）；会话优先（防伪造 body 删自己），
 // 两者皆缺→拒删 current_user_unknown（fail-closed，与 Task 10 deleteUser 契约同向）。
 import { addUser, updatePassword, deleteUser, loadUsers } from './users.js'
-import { validatePatch, precheckPort, probePortBindable, restartRequiredFor } from './settings-write.js'
+import { validatePatch, precheckPort, probePortBindable } from './settings-write.js'
 
 export const API_PREFIX = '/api/login-gate'
 export const SETTINGS_PATH = '/api/login-gate/settings'
@@ -129,7 +129,6 @@ function missingFromFile(getUsers, usersFile, name) {
  * @param {(spec:object)=>Function} deps.register ctx.webServer.register 缝
  * @param {{requestRejection:Function}} deps.connection 鉴权缝（INV-4）
  * @param {()=>object} deps.getConfig 热改现读 config（per-call 读）
- * @param {()=>object} [deps.getBootConfig] 本次启动绑定面（GET restartRequired 判据；null=跳过比较，F6）
  * @param {()=>Record<string,string>} [deps.getUsers] 合并账号表（config.users ∪ usersFile，热加载）
  * @param {string} [deps.usersFile] Config usersFile（含 normalize 缺省解析后的路径，CRUD 必传）
  * @param {(patch:object)=>Promise<object>} [deps.applyPatch] 设置写缝（settings-write createApplyPatch 形）
@@ -144,7 +143,6 @@ export function registerSettingsRoutes({
   register,
   connection,
   getConfig,
-  getBootConfig = () => null,
   getUsers = () => ({}),
   usersFile,
   applyPatch = null,
@@ -164,18 +162,17 @@ export function registerSettingsRoutes({
       }
     : () => applyPatch
   const disposers = []
-  // 待重启状态（R-11/INV-1）：任一成功写入→置位（boot 期按值捕获，运行面不热生效）；重启/重装载后消失
-  let pendingRestart = false
+  // R-16（2026-09-29 实测推翻重启假设，tester F-1）：配置写入经宿主 re-apply **即时生效**——
+  // 无 pendingRestart latch、无 boot 面比较；响应面 applied:true 恒定（GET/POST 同形）。
 
   const settingsGet = async (req, res) => {
     if (!methodGuard(req, res, ['GET'])) return
     try {
       const cfg = getConfig()
-      const boot = getBootConfig()
       sendJson(res, 200, {
         data: {
           writable: typeof resolveApplyPatch() === 'function',
-          restartRequired: pendingRestart || (boot != null && restartRequiredFor(boot, cfg)),
+          applied: true,
           config: displayConfig(cfg),
           users: userList(getUsers),
         },
@@ -206,8 +203,7 @@ export function registerSettingsRoutes({
         return fail(res, WRITE_STATUS[code] ?? 500, code, r?.message ?? '配置写入失败')
       }
       const after = r.effective ?? { ...before, ...(typeof patch === 'object' && patch ? patch : {}) }
-      pendingRestart = true // R-11：任一成功写入即需重启（boot 期按值捕获，运行面不热生效）；INV-1 只标记
-      return sendJson(res, 200, { data: { config: displayConfig(after), restartRequired: true } })
+      return sendJson(res, 200, { data: { config: displayConfig(after), applied: true } })
     } catch (e) {
       const status = typeof e?.status === 'number' ? e.status : 500
       // F4：畸形 JSON/超限体归入契约码 invalid；警告文案不插值 e.message（审查验收项 4）

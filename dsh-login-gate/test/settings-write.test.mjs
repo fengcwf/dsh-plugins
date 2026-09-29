@@ -1,19 +1,18 @@
 // dsh-login-gate — lib/settings-write.js 用例（Task 11 设置面写路径）
 // 覆盖：可写白名单（只读键/白名单外键携带=整单拒 not_editable）、值域校验（整数/布尔/正则）、
 //      合并+真 zod 校验、端口预检（真 net 可绑定性探测 + mock 占用路径）、
-//      restartRequired 判定（INV-1 只标记不热重绑）、configEditor 缝封装（change 形按 kb-context 契约）。
+//      R-16 语义面（restartRequired 判定废除：配置写入经宿主 re-apply 即时生效）、
+//      configEditor 缝封装（change 形按 kb-context 契约）。
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import net from 'node:net'
 import { Config } from '../lib/index.js'
 import {
   EDITABLE_KEYS,
-  RESTART_KEYS,
   checkPatchEditable,
   checkPatchValues,
   validatePatch,
   applyEditablePatch,
-  restartRequiredFor,
   probePortBindable,
   precheckPort,
   createApplyPatch,
@@ -128,19 +127,12 @@ test('applyEditablePatch：zod 校验失败 = invalid（消息含字段路径）
   assert.equal(pre.code, 'not_editable')
 })
 
-test('restartRequiredFor（R-11）：九键任一差异=true（含热键）；等值数组不误报；全等=false', () => {
-  const base = {
-    port: 3500, listenHost: '127.0.0.1', upstreamPort: 3080, rewriteHost: true,
-    sessionDays: 30, maxFailures: 5, secureCookie: true, wsAllow: ['^/api/'], gzipPass: true,
-  }
-  assert.deepEqual(RESTART_KEYS, ['port', 'listenHost', 'upstreamPort', 'rewriteHost', 'sessionDays', 'maxFailures', 'secureCookie', 'wsAllow', 'gzipPass'])
-  assert.equal(restartRequiredFor(base, { ...base }), false)
-  assert.equal(restartRequiredFor(base, { ...base, wsAllow: ['^/api/'] }), false, '等值数组不应误报（sameValue 逐项）')
-  for (const k of RESTART_KEYS) {
-    const v = k === 'wsAllow' ? ['any'] : (typeof base[k] === 'boolean' ? !base[k] : base[k] + 1)
-    assert.equal(restartRequiredFor(base, { ...base, [k]: v }), true, `${k} 变更应标重启（R-11 无热生效键）`)
-  }
-  assert.equal(restartRequiredFor(base, { ...base, sessionDays: 7, maxFailures: 9, secureCookie: false, gzipPass: false }), true, '热键变更同样标重启（R-11）')
+test('R-16 语义面：restartRequired 判定废除（不再导出 restartRequiredFor/RESTART_KEYS）', async () => {
+  // 实测（tester F-1，2026-09-29）：真实宿主 configEditor.resolveConfig 触发插件重 apply——配置写入即被宿主
+  // 应用，「需重启生效」与现实相悖。响应面改 applied:true 恒定，boot 比较/pendingRestart latch 随之废除。
+  const mod = await import('../lib/settings-write.js')
+  assert.equal('restartRequiredFor' in mod, false, 'restartRequiredFor 应废除（R-16 即时生效）')
+  assert.equal('RESTART_KEYS' in mod, false, 'RESTART_KEYS 应废除（无重启敏感键面）')
 })
 
 test('probePortBindable：真 net 可绑定性探测——占用=false、空闲=true（探测后立即 close）', async () => {

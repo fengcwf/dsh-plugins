@@ -207,14 +207,15 @@ test('端到端 apply() 全链路：注册面真 handler → 设置写落 config
   assert.equal(raw.includes('scrypt$'), false, '响应体永不含哈希（INV-3 跨面）')
   const body = JSON.parse(raw)
   assert.equal(body.data.writable, true, 'configEditor 缝在=writable:true')
-  assert.equal(body.data.restartRequired, false)
+  assert.equal(body.data.applied, true, 'R-16：applied 恒定 true（配置写入经宿主 re-apply 即时生效）')
+  assert.equal('restartRequired' in body.data, false, 'restartRequired 面已废除')
   assert.deepEqual(body.data.config, BASE_CONFIG, '九键=apply 入参基线')
   assert.deepEqual(body.data.users, [{ name: 'boss' }], 'users 仅名字')
 
   // 设置写全链路：请求 → 路由 → createApplyPatch → configEditor entry（真写缝）
   const w = await stack.post('/api/login-gate/settings', { patch: { sessionDays: 7, maxFailures: 3 } })
   assert.equal(w.status, 200)
-  assert.equal((await w.json()).data.restartRequired, true)
+  assert.equal((await w.json()).data.applied, true, 'R-16：POST 成功 applied:true')
   assert.deepEqual(stack.editor.state.config, { sessionDays: 7, maxFailures: 3 }, '写入形真落 entry')
   const reread = await (await stack.get('/api/login-gate/settings')).json()
   assert.equal(reread.data.config.sessionDays, 7, 'R-12：写后 GET 回读已保存值')
@@ -291,12 +292,12 @@ test('跨面对账②：写路径往返——真 POST 契约形/真落盘/响应
   rowOf(tree, 'sessionDays').props.onChange(7)
   tree = render()
   find(tree, (n) => n.type === 'button' && n.props.className?.includes('save')).props.onClick()
-  await waitFor(render, (t) => allText(t).includes('已保存，需重启生效'), '保存回显')
+  await waitFor(render, (t) => allText(t).includes('已保存，已生效'), '保存回显')
   assert.deepEqual(posts.at(-1).body, { patch: { sessionDays: 7 } }, 'POST 契约形：只发变更叶子')
   assert.equal(stack.editor.state.config.sessionDays, 7, '真写缝已落')
   tree = render()
   assert.equal(rowOf(tree, 'sessionDays').props.value, 7, '合并回显=服务端返回 config')
-  assert.ok(allText(tree).includes('已保存，需重启生效'), 'G1 字面跨面成立')
+  assert.ok(allText(tree).includes('已保存，已生效'), 'G1 字面跨面成立（R-16 已生效语义）')
 
   // 错误原文往返：服务端 invalid 消息原文被 client 原样消费展示
   rowOf(tree, 'sessionDays').props.onChange(0)

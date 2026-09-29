@@ -1,5 +1,5 @@
 // dsh-login-gate — lib/settings-routes.js 用例（Task 11 设置面数据面）
-// 覆盖：GET/POST 契约形（writable/restartRequired）、白名单整单拒、校验失败拒、端口占用拒（mock+真 net）、
+// 覆盖：GET/POST 契约形（writable/applied 恒定）、白名单整单拒、校验失败拒、端口占用拒（mock+真 net）、
 //      未登录必拒（connection.requestRejection 缝）、users CRUD（真 fs、Config usersFile 路径显式断言、
 //      合并表判重名、响应永不含哈希、防自锁）、configEditor 缺位降级（writable:false/503）、
 //      假 ctx 真 apply() 注册面（webServer.register 被调、prefix 正确、真 handler 执行）。
@@ -88,7 +88,7 @@ async function startRoutes(t, overrides = {}) {
   return { url, get, post, registered }
 }
 
-test('GET /api/login-gate/settings：契约形（writable/restartRequired/config 九键/users 仅名字）', async (t) => {
+test('GET /api/login-gate/settings：契约形（writable/applied 恒定/config 九键/users 仅名字）', async (t) => {
   const { get } = await startRoutes(t, {
     getUsers: () => ({ alice: 'scrypt$16384$8$1$aa$bb', bob: 'scrypt$16384$8$1$cc$dd' }),
   })
@@ -96,7 +96,8 @@ test('GET /api/login-gate/settings：契约形（writable/restartRequired/config
   assert.equal(res.status, 200)
   const body = await res.json()
   assert.equal(body.data.writable, true)
-  assert.equal(typeof body.data.restartRequired, 'boolean')
+  assert.equal(body.data.applied, true, 'R-16：applied 恒定 true（配置写入经宿主 re-apply 即时生效）')
+  assert.equal('restartRequired' in body.data, false, 'restartRequired 面已废除（R-16）')
   assert.deepEqual(
     Object.keys(body.data.config).sort(),
     ['gzipPass', 'listenHost', 'maxFailures', 'port', 'rewriteHost', 'secureCookie', 'sessionDays', 'upstreamPort', 'wsAllow'].sort(),
@@ -107,15 +108,16 @@ test('GET /api/login-gate/settings：契约形（writable/restartRequired/config
   assert.equal(JSON.stringify(body).includes('usersFile'), false, 'GET config 不含 usersFile/users 内部键')
 })
 
-test('POST/GET（真接线 F5）：任一成功写入=已保存+restartRequired:true（R-11）；写后 GET 回读已保存值（R-12/F3）', async (t) => {
+test('POST/GET（真接线 F5）：任一成功写入=已保存+applied:true（R-16 即时生效）；写后 GET 回读已保存值（R-12/F3）', async (t) => {
   const { editor, getApplyPatch, getConfig } = wireEditor()
   const { post, get } = await startRoutes(t, { getApplyPatch, getConfig })
 
-  // 热键写入同样标重启（boot 期按值捕获，运行面不热生效——绝不宣称已生效）
+  // R-16：配置写入经宿主 re-apply 即时生效（实测 tester F-1 推翻重启假设），响应面 applied:true 恒定
   const res = await post('/api/login-gate/settings', { patch: { sessionDays: 7, maxFailures: 3 } })
   assert.equal(res.status, 200)
   const body = await res.json()
-  assert.equal(body.data.restartRequired, true, 'R-11：任一成功写入即需重启（含热键）')
+  assert.equal(body.data.applied, true, 'R-16：POST 成功 applied:true（写入即被宿主应用）')
+  assert.equal('restartRequired' in body.data, false, 'POST 响应无 restartRequired 面')
   assert.equal(body.data.config.sessionDays, 7)
   assert.equal(body.data.config.maxFailures, 3)
   assert.deepEqual(editor.state.config, { sessionDays: 7, maxFailures: 3 }, '写入形落 entry')
@@ -124,19 +126,19 @@ test('POST/GET（真接线 F5）：任一成功写入=已保存+restartRequired:
   // R-12/F3：写后 GET 回读已保存值（不是 boot 旧值）
   const after1 = await (await get('/api/login-gate/settings')).json()
   assert.equal(after1.data.config.sessionDays, 7, '写后 GET 应显已保存值')
-  assert.equal(after1.data.restartRequired, true)
+  assert.equal(after1.data.applied, true, '写后 GET applied 恒定 true')
 
   const res2 = await post('/api/login-gate/settings', { patch: { port: 4700 } })
   assert.equal(res2.status, 200)
   const body2 = await res2.json()
   assert.equal(body2.data.config.port, 4700)
-  assert.equal(body2.data.restartRequired, true)
+  assert.equal(body2.data.applied, true)
   assert.equal(editor.state.editCalls, 2)
 
   const after2 = await (await get('/api/login-gate/settings')).json()
   assert.equal(after2.data.config.port, 4700, '写后 GET 回读新端口（R-12 证据）')
   assert.equal(after2.data.config.sessionDays, 7, '既有已保存值保持')
-  assert.equal(after2.data.restartRequired, true)
+  assert.equal(after2.data.applied, true)
 })
 
 test('POST：白名单外/只读键携带=整单拒 not_editable，绝不触达写缝', async (t) => {
@@ -199,7 +201,7 @@ test('configEditor 缺位降级：GET writable:false、POST 503 write_unavailabl
   const { get, post } = await startRoutes(t, { getApplyPatch: () => null })
   const body = await (await get('/api/login-gate/settings')).json()
   assert.equal(body.data.writable, false)
-  assert.equal(body.data.restartRequired, false)
+  assert.equal(body.data.applied, true, 'applied 恒定 true（R-16；writable:false 只影响可写面）')
   const res = await post('/api/login-gate/settings', { patch: { sessionDays: 7 } })
   assert.equal(res.status, 503)
   assert.equal((await res.json()).error.code, 'write_unavailable')
@@ -280,13 +282,17 @@ test('错误码契约（F4）：畸形 JSON→invalid、未知路径→route_not
   assert.equal((await nf.json()).error.code, 'route_not_found')
 })
 
-test('getBootConfig 缺省（F6）：null 时跳过 boot 比较，restartRequired 只看 pendingRestart', async (t) => {
-  const { get, post } = await startRoutes(t, { getBootConfig: undefined })
+test('applied 恒定（R-16）：GET 写前/写后与 POST 均 true，且无 restartRequired 面（无 boot 比较、无 pendingRestart latch）', async (t) => {
+  const { get, post } = await startRoutes(t)
   const before = await (await get('/api/login-gate/settings')).json()
-  assert.equal(before.data.restartRequired, false, '无 boot 面且未写入=false')
-  await post('/api/login-gate/settings', { patch: { sessionDays: 7 } })
+  assert.equal(before.data.applied, true, '写前 GET：applied 恒定 true')
+  assert.equal('restartRequired' in before.data, false)
+  const w = await post('/api/login-gate/settings', { patch: { sessionDays: 7 } })
+  const wb = await w.json()
+  assert.equal(wb.data.applied, true, 'POST 成功：applied 恒定 true')
+  assert.equal('restartRequired' in wb.data, false)
   const after = await (await get('/api/login-gate/settings')).json()
-  assert.equal(after.data.restartRequired, true, '写入后 pendingRestart 置位=true')
+  assert.equal(after.data.applied, true, '写后 GET：applied 恒定 true（配置写入即被宿主应用，无需重启）')
 })
 
 test('users CRUD（真 fs）：写入 Config usersFile 路径（显式断言）、响应永不含哈希、合并表判重名', async (t) => {
@@ -473,4 +479,57 @@ test('假 ctx 真 apply()：webServer 缝 B1/B2 注册面成立（prefix /api/lo
 
   disposer()
   disposer() // 幂等/不炸
+})
+
+test('F-2 服务缝告警按注册实际结果（Task 14）：启动期探针半缺绝不告警（误报修法）；注入齐=注册成功不告警；注册现场半缺/失败=告警', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'dlg-home-'))
+  const cfgDir = mkdtempSync(join(tmpdir(), 'dlg-cfg-'))
+  const file = join(cfgDir, 'users.json')
+  const prevHome = process.env.DSH_HOME
+  process.env.DSH_HOME = home
+  const origLog = console.log
+  console.log = () => {} // log() 同时打 console，测试内静音（断言走 logger 缝）
+  t.after(() => {
+    console.log = origLog
+    if (prevHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = prevHome
+    rmSync(home, { recursive: true, force: true })
+    rmSync(cfgDir, { recursive: true, force: true })
+  })
+
+  // ① 启动期误报场景（tester F-1/F-2 实测）：connection 已就绪、webServer 服务尚未就绪——
+  //    旧探针在 apply() 期判「半缺」误报，稍后注入到位注册成功。修法 a：判据移到注册实际结果处。
+  const lines = []
+  const specs = []
+  const outerEffects = []
+  apply({
+    effect: (fn, label) => { outerEffects.push({ fn, label }) },
+    logger: { info: (l) => lines.push(String(l)) },
+    plugin: (spec) => { specs.push(spec) },
+    get: (name) => (name === 'connection' ? { requestRejection: () => undefined } : undefined),
+  }, { usersFile: file, users: { boss: 'scrypt$16384$8$1$aa$bb' } })
+  assert.equal(lines.some((l) => l.includes('半缺')), false, '启动期探针半缺绝不告警（F-2 误报修法）')
+
+  // ② 注册现场注入齐 → 注册成功、零告警（注入成功不告警）
+  const registered = []
+  const childEffects = []
+  specs[0].apply({
+    effect: (fn, label) => { childEffects.push({ fn, label }) },
+    webServer: { register: (spec) => { registered.push(spec); return () => {} } },
+    connection: { requestRejection: () => undefined },
+  })
+  childEffects[0].fn()
+  assert.equal(registered.length, 1, '注入齐=注册成功')
+  assert.equal(lines.some((l) => l.includes('半缺') || l.includes('注册失败')), false, '注入成功不告警')
+
+  // ③ 注册现场真半缺（webServer 缺位）→ 半缺如实告警 + 注册失败告警（F7 照旧，fail-open 行为不变）
+  const lines2 = []
+  apply({
+    effect: (fn, label) => { fn() }, // 真 cordis 形：注入到位当场激活，注册抛错上抛 F7 收敛
+    logger: { info: (l) => lines2.push(String(l)) },
+    plugin: (spec) => { spec.apply({ effect: (fn) => fn(), webServer: undefined, connection: { requestRejection: () => undefined } }) },
+    get: () => undefined,
+  }, { usersFile: file, users: { boss: 'scrypt$16384$8$1$aa$bb' } })
+  assert.ok(lines2.some((l) => l.includes('半缺')), '注册现场半缺=如实告警（判据在注册实际结果处）')
+  assert.ok(lines2.some((l) => l.includes('设置面注册失败')), '注册失败告警照旧（F7，fail-open：门禁/反代常）')
 })

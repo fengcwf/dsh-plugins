@@ -6,20 +6,15 @@
 //     （坏正则写入会让 proxy.js apply 期 `new RegExp` 炸装载——写入面直接拒）。
 //   - 端口可绑定性探测（net.createServer().listen 探测后立即 close）：占用拒 port_in_use + 占用提示；
 //     port 未变更不探测（探测自身 listener 必误报）。
-//   - restartRequired 只标记（R-11：九键任一写入/差异即标，绝不宣称热生效），绝不热重绑 listener（INV-1）。
+//   - R-16（2026-09-29 实测推翻重启假设，tester F-1）：配置写入经宿主 re-apply **即时生效**——
+//     无 restartRequired 面（boot 比较/pendingRestart latch 已废），响应面 applied:true 恒定；
+//     插件不主动重绑监听（INV-1），重绑由宿主重 apply 驱动；端口保存前 UI 警示断连（事前警示）。
 //   - configEditor 缝（createApplyPatch）：change 形按 kb-context/lib/settings-write.js 契约
 //     （edit(entry, cb) 的 cb 返回写入形），缺缝/缺入口/校验失败=结构化失败，绝不抛穿路由。
 import net from 'node:net'
 
 /** 可写白名单（顶层键）；其余键只读/不可见，POST 携带=整单拒 */
 export const EDITABLE_KEYS = Object.freeze(['port', 'sessionDays', 'maxFailures', 'secureCookie', 'wsAllow', 'gzipPass'])
-
-/**
- * 重启敏感键（R-11 裁定：语义扩到全部可写键）：config 展示九键全集——boot 期按值捕获（index.js
- * 直传 cfg 字段），写入后运行面不热生效，任一成功写入即「已保存，需重启生效」，绝不宣称已生效。
- * INV-1：只标记，服务端不做任何热重绑。
- */
-export const RESTART_KEYS = Object.freeze(['port', 'listenHost', 'upstreamPort', 'rewriteHost', 'sessionDays', 'maxFailures', 'secureCookie', 'wsAllow', 'gzipPass'])
 
 function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -114,17 +109,6 @@ export function applyEditablePatch({ inherited = {}, current = {}, patch }, Conf
   return { ok: true, config: { ...structuredClone(current), ...minimal }, effective: parsed.data }
 }
 
-/** 值等价（数组逐项、其余严格等）：wsAllow 等数组键不能用引用比较（normalize 每次新建数组） */
-function sameValue(a, b) {
-  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((x, i) => sameValue(x, b[i]))
-  return a === b
-}
-
-/** 任一重启敏感键变更→true（R-11：九键任一差异都需重启才生效；只标记，绝不热重绑 listener） */
-export function restartRequiredFor(before, after) {
-  return RESTART_KEYS.some((k) => !sameValue((before ?? {})[k], (after ?? {})[k]))
-}
-
 /**
  * 端口可绑定性探测：bind 探测后立即 close。返回 true=可绑定、false=被占用/不可用。
  * @param {number} port 目标端口
@@ -216,7 +200,7 @@ export function readEntryConfig(configEditor, entryId) {
 /**
  * 已保存面优先配置现读（R-12）：saved（configEditor entry 现读）overlay 于 base（boot/rawConfig），
  * saved 键优先（written∪boot）；缺缝回退 base；normalize 补 zod 缺省。
- * 语义=「GET 返回已保存值；生效需重启」（R-11：运行面不热生效）。
+ * 语义=「GET 返回已保存值」（R-16：写入经宿主 re-apply 即时生效，无「生效需重启」面）。
  */
 export function createConfigReader({ getBase, readSaved = () => null, normalize = (x) => x }) {
   return () => {

@@ -136,7 +136,7 @@ export function apply(ctx, rawConfig) {
     return null
   }
   // R-12：GET 配置=已保存面优先（configEditor entry 现读 overlay written∪boot），缺缝/缺入口回退 rawConfig；
-  // 语义=「返回已保存值；生效需重启」（R-11：boot 期按值捕获，运行面不热生效）
+  // 语义=「返回已保存值」（R-16：写入经宿主 re-apply 即时生效，实测推翻重启假设——tester F-1）
   const readCfg = createConfigReader({
     getBase: () => rawConfig,
     readSaved: () => readEntryConfig(probeService('configEditor'), 'login-gate'),
@@ -147,12 +147,8 @@ export function apply(ctx, rawConfig) {
     if (svc === null || typeof svc.edit !== 'function' || typeof svc.entries !== 'function') return null
     return createApplyPatch({ configEditor: svc, entryId: 'login-gate', Config })
   }
-  // 半缺缝（webServer/connection 只到其一）=接线异常，留痕；双缺=非 web 部署面正常形态不告警
-  const wsProbe = probeService('webServer')
-  const connProbe = probeService('connection')
-  if ((wsProbe === null) !== (connProbe === null)) {
-    log('⚠️ webServer/connection 服务缝半缺，设置面数据（/api/login-gate/settings）未注册（fail-open：门禁/反代照常）')
-  }
+  // F-2（Task 14）：半缺缝告警判据=注册实际结果——启动期探针会误报（webServer 服务尚未就绪时判「半缺」、
+  // 稍后注入到位注册成功），故不在 apply() 期探；注册现场判定见 effect 执行体内（注入成功不告警/失败才 warn）。
   // B2：注册动作在 effect 执行体内当场跑、返回值=拆除器；catch 收敛环覆盖已返回的 disposers
   try {
     if (typeof ctx?.plugin === 'function') {
@@ -163,11 +159,15 @@ export function apply(ctx, rawConfig) {
           c.effect(() => {
             const disposers = []
             try {
+              // F-2：注册现场判定服务缝（此刻注入面为真值，非启动期探针快照）——只到其一=接线异常如实
+              // 留痕；注入齐=注册成功不告警；注册抛错=下方 F7 收敛告警（行为不变，只动告警逻辑）。
+              if ((c?.webServer == null) !== (c?.connection == null)) {
+                log('⚠️ webServer/connection 服务缝半缺（注册现场判定，接线异常留痕），设置面数据（/api/login-gate/settings）注册面不完整（fail-open：门禁/反代照常）')
+              }
               const routeDisposers = registerSettingsRoutes({
                 register: (spec) => c.webServer.register(spec),
                 connection: c.connection,
                 getConfig: readCfg, // 已保存面优先现读（R-12）
-                getBootConfig: () => cfg,
                 getUsers,
                 usersFile,
                 getApplyPatch: lazyApplyPatch, // configEditor 惰性（后到可见）

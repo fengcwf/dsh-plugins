@@ -5,7 +5,8 @@
 // settings.section 注册（id='login-gate'、order=31、label='dsh-login-gate'）；四区一段：
 // 端口区（可改+重启提示+联动清单四行）/参数区（5 可改+3 只读）/账号区（增改删表单，列表仅名字
 // 永无哈希）/说明段（N 天免登录动态 + 固定过期/302 重登/logout-all 机制）。
-// 保存语义 R-11/R-12：空 draft 拒保存；成功=合并回显+字面「已保存，需重启生效」（G1）；
+// 保存语义 R-12/R-16：空 draft 拒保存；成功=合并回显+字面「已保存，已生效（监听端口/参数已即时应用）」（G1）；
+// 端口（port）草稿保存前必须先弹断连警示确认条（R-16 事前警示），确认才 POST、取消零 POST；其他键不弹；
 // 失败=服务端 message 原文；writable:false=全部只读+注记；载入失败容器内如实。
 // 删除契约（R-10）：{action:'delete', name, currentName}，currentName 取自 __gate/status 的 user；
 // 取不到→禁用删除按钮+提示（fail-closed）。
@@ -90,7 +91,7 @@ const BASE_CONFIG = {
   port: 3500, listenHost: '127.0.0.1', upstreamPort: 3080, rewriteHost: true,
   sessionDays: 30, maxFailures: 5, secureCookie: true, wsAllow: ['^/api/'], gzipPass: true,
 }
-const BASE_SETTINGS = { data: { writable: true, restartRequired: false, config: { ...BASE_CONFIG }, users: [{ name: 'alice' }, { name: 'bob' }] } }
+const BASE_SETTINGS = { data: { writable: true, applied: true, config: { ...BASE_CONFIG }, users: [{ name: 'alice' }, { name: 'bob' }] } }
 const BASE_STATUS = { ok: true, user: 'me', exp: 0, mode: 'hmac' }
 
 /** 装载就绪面：真模块加载 + 真注册 + 真组件驱动；onFetch 可覆写 POST 等分支 */
@@ -138,6 +139,11 @@ function allText(tree) {
 
 function noticeEl(tree) {
   return find(tree, (n) => typeof n.props?.className === 'string' && /notice|ok|error/.test(n.props.className))
+}
+
+/** 按钮文案定位（确认警示条两路驱动用） */
+function buttonByText(tree, text) {
+  return find(tree, (n) => n.type === 'button' && Array.isArray(n.children) && n.children.includes(text))
 }
 
 // ===== 工厂形 / 注册形 =====
@@ -239,7 +245,7 @@ test('说明段：「登录后约 N 天内免登录」N=sessionDays 动态 + 机
   const { tree, render, calls } = await mount({
     onFetch: async (url, init) => {
       if (url === 'api/login-gate/settings' && init && init.method === 'POST') {
-        return { json: async () => ({ data: { config: { ...BASE_CONFIG, sessionDays: 7 }, restartRequired: true } }) }
+        return { json: async () => ({ data: { config: { ...BASE_CONFIG, sessionDays: 7 }, applied: true } }) }
       }
       return undefined
     },
@@ -283,13 +289,13 @@ test('草稿改回原值=移出草稿：等价空 draft 拒保存（nextDraft �
   assert.ok(!calls.some((c) => c.init && c.init.method === 'POST'), '改回原值零 POST')
 })
 
-test('保存成功（G1）：只发变更叶子 → 合并回显 + 字面「已保存，需重启生效」+ draft 清空', async () => {
+test('保存成功（G1/R-16）：含 port 草稿=先弹断连警示确认条（零 POST）→ 确认才 POST → 合并回显 + 字面「已保存，已生效」+ draft 清空', async () => {
   const postBodies = []
-  const { tree, render, calls } = await mount({
+  const { tree, render } = await mount({
     onFetch: async (url, init) => {
       if (url === 'api/login-gate/settings' && init && init.method === 'POST') {
         postBodies.push(JSON.parse(init.body))
-        return { json: async () => ({ data: { config: { ...BASE_CONFIG, sessionDays: 7, port: 3600 }, restartRequired: true } }) }
+        return { json: async () => ({ data: { config: { ...BASE_CONFIG, sessionDays: 7, port: 3600 }, applied: true } }) }
       }
       return undefined
     },
@@ -300,18 +306,85 @@ test('保存成功（G1）：只发变更叶子 → 合并回显 + 字面「已�
   find(t, (n) => n.type === 'button' && n.props.className?.includes('save')).props.onClick()
   await settle()
   t = render()
+  // 事前警示条（R-16）：含 port 草稿先弹、零 POST
+  assert.equal(postBodies.length, 0, '确认前零 POST（端口断连警示先行）')
+  assert.ok(allText(t).includes('保存后监听端口将立即切换'), '断连警示文案在')
+  assert.ok(allText(t).includes('当前连接会断开'), '断连后果明示')
+  for (const kw of ['Lucky 外网反代', 'gate-watchdog', 'obsidian-web 3500 分享契约']) {
+    assert.ok(allText(t).includes(kw), `警示条联动点名：${kw}`)
+  }
+  assert.ok(buttonByText(t, '确认保存'), '确认按钮在')
+  assert.ok(buttonByText(t, '取消'), '取消按钮在')
+  // 确认 → 真正 POST
+  buttonByText(t, '确认保存').props.onClick()
+  await settle()
+  t = render()
+  assert.deepEqual(postBodies, [{ patch: { sessionDays: 7, port: 3600 } }], '只发变更叶子（数组整替）')
   const text = allText(t)
-  assert.ok(text.includes('已保存，需重启生效'), 'G1 字面文案落点')
+  assert.ok(text.includes('已保存，已生效'), 'G1 字面文案落点（R-16：已生效，非需重启）')
+  assert.ok(text.includes('监听端口/参数已即时应用'), '附注：监听端口/参数已即时应用')
   const okEl = find(t, (n) => typeof n.props?.className === 'string' && n.props.className.includes('login-gate-settings-ok'))
   assert.ok(okEl, '成功 notice 在')
-  assert.ok(allText(okEl).includes('已保存，需重启生效'), 'G1 字面文案=保存成功 notice 本体')
-  assert.deepEqual(postBodies, [{ patch: { sessionDays: 7, port: 3600 } }], '只发变更叶子（数组整替）')
+  assert.ok(allText(okEl).includes('已保存，已生效'), 'G1 字面文案=保存成功 notice 本体')
+  assert.equal(buttonByText(t, '确认保存'), null, '确认后警示条收起')
   // 合并回显：输入值=返回 config；draft 清空（再保存=空 draft 拒）
   assert.equal(rowOf(t, 'sessionDays').props.value, 7)
   assert.equal(rowOf(t, 'port').props.value, 3600)
   find(t, (n) => n.type === 'button' && n.props.className?.includes('save')).props.onClick()
   await settle()
   assert.ok(allText(render()).includes('没有待保存的变更'), '合并回显后 draft 清空')
+})
+
+test('端口警示条取消（R-16）：零 POST、警示条收起、草稿保留（可改后重存）', async () => {
+  const postBodies = []
+  const { tree, render } = await mount({
+    onFetch: async (url, init) => {
+      if (url === 'api/login-gate/settings' && init && init.method === 'POST') {
+        postBodies.push(JSON.parse(init.body))
+        return { json: async () => ({ data: { config: { ...BASE_CONFIG, port: 3600 }, applied: true } }) }
+      }
+      return undefined
+    },
+  })
+  rowOf(tree, 'port').props.onChange(3600)
+  let t = render()
+  find(t, (n) => n.type === 'button' && n.props.className?.includes('save')).props.onClick()
+  await settle()
+  t = render()
+  assert.ok(buttonByText(t, '取消'), '警示条在')
+  buttonByText(t, '取消').props.onClick()
+  await settle()
+  t = render()
+  assert.equal(postBodies.length, 0, '取消绝不 POST')
+  assert.equal(buttonByText(t, '确认保存'), null, '取消后警示条收起')
+  assert.equal(rowOf(t, 'port').props.value, 3600, '取消不清草稿（保留待保存变更）')
+  // 重新点保存→警示条再现（草稿仍在）
+  find(t, (n) => n.type === 'button' && n.props.className?.includes('save')).props.onClick()
+  await settle()
+  assert.ok(buttonByText(render(), '确认保存'), '草稿保留=警示条可再现')
+  assert.equal(postBodies.length, 0, '仍零 POST（未确认不发）')
+})
+
+test('非端口键保存不弹确认（R-16：无断连影响）：直接 POST', async () => {
+  const postBodies = []
+  const { tree, render } = await mount({
+    onFetch: async (url, init) => {
+      if (url === 'api/login-gate/settings' && init && init.method === 'POST') {
+        postBodies.push(JSON.parse(init.body))
+        return { json: async () => ({ data: { config: { ...BASE_CONFIG, sessionDays: 7 }, applied: true } }) }
+      }
+      return undefined
+    },
+  })
+  rowOf(tree, 'sessionDays').props.onChange(7)
+  let t = render()
+  find(t, (n) => n.type === 'button' && n.props.className?.includes('save')).props.onClick()
+  await settle()
+  t = render()
+  assert.deepEqual(postBodies, [{ patch: { sessionDays: 7 } }], '非端口键直接 POST（不经确认）')
+  assert.equal(buttonByText(t, '确认保存'), null, '非端口键不弹确认警示条')
+  assert.ok(allText(t).includes('已保存，已生效'), '成功 notice 字面')
+  assert.ok(allText(t).includes('监听端口/参数已即时应用'), '附注在')
 })
 
 test('保存失败：服务端 message 原文回显（not_editable），绝不静默', async () => {
@@ -342,7 +415,7 @@ test('卸载守卫（审查顺手清 c）：卸载后 save 异步回调零 setSt
     if (url === 'api/login-gate/settings' && !(init && init.method)) return { json: async () => JSON.parse(JSON.stringify(BASE_SETTINGS)) }
     if (url === 'api/login-gate/settings' && init && init.method === 'POST') {
       await held // 响应压到卸载之后才放行（在途请求的迟到响应）
-      return { json: async () => ({ data: { config: { ...BASE_CONFIG, sessionDays: 42 }, restartRequired: true } }) }
+      return { json: async () => ({ data: { config: { ...BASE_CONFIG, sessionDays: 42 }, applied: true } }) }
     }
     throw new Error('unexpected fetch: ' + url)
   }
@@ -364,7 +437,7 @@ test('卸载守卫（审查顺手清 c）：卸载后 save 异步回调零 setSt
 
 test('writable:false：全部输入只读 + 注记，无保存按钮', async () => {
   const { tree } = await mount({
-    settings: { data: { writable: false, restartRequired: false, config: { ...BASE_CONFIG }, users: [{ name: 'alice' }] } },
+    settings: { data: { writable: false, applied: true, config: { ...BASE_CONFIG }, users: [{ name: 'alice' }] } },
   })
   for (const key of ['port', 'sessionDays', 'maxFailures', 'secureCookie', 'wsAllow', 'gzipPass']) {
     assert.equal(rowOf(tree, key).props.readOnly, true, `${key} 只读`)

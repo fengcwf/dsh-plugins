@@ -6,9 +6,11 @@
 //   `settings.section` 命名空间注册（照 kb-context 形：{name:'settings.section', id, order, label}
 //   → 设置页 navLabel 自动进设置页）；数据走文档相对 api/login-gate/settings 与
 //   api/login-gate/settings/users（无前导斜杠=生产 404 教训，与宿主 base 同基）。
-//   栏目四区一段：端口区（可改+重启提示+联动清单四行，INV-7）/参数区（5 可改+3 只读）/
+//   栏目四区一段：端口区（可改+保存前断连警示确认条+联动清单四行，INV-7）/参数区（5 可改+3 只读）/
 //   账号区（增/改密/删表单，列表仅名字永无哈希，INV-3）/说明段（N 天免登录动态+机制说明）。
-// 保存语义（R-11/R-12）：空 draft 拒保存；任一保存成功=合并回显+字面「已保存，需重启生效」（G1）；
+// 保存语义（R-12/R-16：实测推翻重启假设，2026-09-29 tester F-1）：空 draft 拒保存；任一保存成功=
+// 合并回显+字面「已保存，已生效（监听端口/参数已即时应用）」（G1）；port 草稿保存前必须先弹断连
+// 警示确认条（事前警示）——确认才 POST、取消零 POST，其他键不弹（无断连影响）；
 // 失败=服务端 message 原文回显，绝不静默；writable:false=全部只读+注记；载入失败容器内如实。
 // 删除契约（R-10）：{action:'delete', name, currentName}，currentName 取自 __gate/status 的 user；
 // 取不到→禁用删除按钮+提示（fail-closed 同步）；当前登录账号行禁删（防自锁）。
@@ -37,7 +39,7 @@ window.__ModuleLoader__.load({
     var PORT_FIELD = {
       key: 'port', kind: 'number', min: 1, max: 65535,
       label: '门禁端口（默认 3500，1-65535）',
-      hint: '门禁监听端口（Lucky 反代目标）。保存后需重启生效，且下方联动面需人工同步。',
+      hint: '门禁监听端口（Lucky 反代目标）。保存后监听端口立即切换（当前连接断开），下方联动面需人工同步。',
     }
     var PARAM_FIELDS = [
       {
@@ -224,7 +226,7 @@ window.__ModuleLoader__.load({
      */
     function LoginGateSettingsSection() {
       var pair = react.useState({
-        status: 'loading', data: null, error: null, draft: {}, saving: false, notice: null,
+        status: 'loading', data: null, error: null, draft: {}, saving: false, notice: null, confirmPort: false,
         currentName: null, userBusy: false, userNotice: null, form: { addName: '', addPass: '', pw: {} },
       })
       var state = pair[0]
@@ -267,7 +269,7 @@ window.__ModuleLoader__.load({
                 var me = (st && st.ok && typeof st.user === 'string' && st.user.trim()) ? st.user.trim() : null
                 update(function (prev) {
                   return mergeState(prev, {
-                    status: 'ready', data: body.data, error: null, draft: {}, saving: false, notice: null,
+                    status: 'ready', data: body.data, error: null, draft: {}, saving: false, notice: null, confirmPort: false,
                     currentName: me, userBusy: false, userNotice: null, form: { addName: '', addPass: '', pw: {} },
                   })
                 })
@@ -290,14 +292,28 @@ window.__ModuleLoader__.load({
         })
       }
 
-      /** 保存：空 draft 拒；成功=合并回显+「已保存，需重启生效」（G1）；失败=服务端原文 */
+      /** 保存入口：空 draft 拒；port 草稿=先弹断连警示确认条（R-16 事前警示），确认才 POST；其他键直发 */
       function save() {
         if (state.saving || state.status !== 'ready') return
         if (Object.keys(state.draft).length === 0) {
-          update(function (prev) { return mergeState(prev, { notice: { kind: 'error', text: '没有待保存的变更' } }) })
+          update(function (prev) { return mergeState(prev, { notice: { kind: 'error', text: '没有待保存的变更' }, confirmPort: false }) })
           return
         }
-        update(function (prev) { return mergeState(prev, { saving: true, notice: null }) })
+        if (Object.hasOwn(state.draft, 'port')) {
+          update(function (prev) { return mergeState(prev, { confirmPort: true, notice: null }) })
+          return
+        }
+        doSave()
+      }
+
+      /** 取消断连警示（R-16）：不发请求、收起警示条、草稿保留（可改后重存） */
+      function cancelSave() {
+        update(function (prev) { return mergeState(prev, { confirmPort: false, notice: null }) })
+      }
+
+      /** 真正保存（警示确认后 / 非端口键）：成功=合并回显+「已保存，已生效（监听端口/参数已即时应用）」（G1/R-16） */
+      function doSave() {
+        update(function (prev) { return mergeState(prev, { saving: true, notice: null, confirmPort: false }) })
         Promise.resolve()
           .then(function () {
             return exports.__fetch(SETTINGS_URL, {
@@ -315,8 +331,10 @@ window.__ModuleLoader__.load({
             update(function (prev) {
               var merged = prev.data || {}
               if (r && r.data && r.data.config) merged = Object.assign({}, merged, { config: r.data.config })
-              if (r && r.data && typeof r.data.restartRequired === 'boolean') merged = Object.assign({}, merged, { restartRequired: r.data.restartRequired })
-              return mergeState(prev, { status: 'ready', data: merged, draft: {}, saving: false, notice: { kind: 'ok', text: '已保存，需重启生效' } })
+              return mergeState(prev, {
+                status: 'ready', data: merged, draft: {}, saving: false, confirmPort: false,
+                notice: { kind: 'ok', text: '已保存，已生效（监听端口/参数已即时应用）' },
+              })
             })
           })
           .catch(function (e) {
@@ -385,7 +403,6 @@ window.__ModuleLoader__.load({
       }
       var cfg = (state.data && state.data.config) || {}
       var writable = state.data && state.data.writable === true
-      var restartRequired = state.data && state.data.restartRequired === true
       var days = Number(draftValue('sessionDays')) || 30
       var users = (state.data && Array.isArray(state.data.users)) ? state.data.users : []
 
@@ -437,7 +454,7 @@ window.__ModuleLoader__.load({
 
       return react.createElement('div', { className: 'login-gate-settings', 'data-dsh-plugin': 'dsh-login-gate' },
         react.createElement('h3', { className: 'login-gate-settings-title' }, 'dsh-login-gate · 设置'),
-        react.createElement('p', { className: 'login-gate-settings-note' }, '可改项保存后需重启生效（不热生效）；只读项仅展示。'),
+        react.createElement('p', { className: 'login-gate-settings-note' }, '可改项保存后立即生效（配置写入经宿主 re-apply 即时应用）；只读项仅展示。'),
         // —— 端口区 ——
         react.createElement('h4', { className: 'login-gate-settings-group' }, '端口'),
         react.createElement(SettingsRow, {
@@ -446,9 +463,6 @@ window.__ModuleLoader__.load({
           readOnly: !writable,
           onChange: function (v) { onChange('port', v) },
         }),
-        restartRequired
-          ? react.createElement('p', { className: 'login-gate-settings-restart' }, '已保存，需重启生效（重启 dsh 服务前运行面不变）。')
-          : null,
         react.createElement('p', { className: 'login-gate-settings-hint' }, '端口变更需人工同步以下四处（联动清单）：'),
         react.createElement('ul', { className: 'login-gate-settings-link-list' },
           LINK_ITEMS.map(function (t, idx) {
@@ -486,6 +500,14 @@ window.__ModuleLoader__.load({
           writable
             ? react.createElement('button', { type: 'button', className: 'login-gate-settings-save', disabled: state.saving, onClick: save }, state.saving ? '保存中…' : '保存')
             : react.createElement('p', { className: 'login-gate-settings-note' }, '本部署配置写入缝缺失（configEditor 未挂载），暂只读展示。'),
+          // 端口保存前断连警示确认条（R-16 事前警示）：确认才 POST、取消零 POST
+          state.confirmPort
+            ? react.createElement('div', { className: 'login-gate-settings-confirm', role: 'alert' },
+                react.createElement('p', { className: 'login-gate-settings-warning' }, '保存后监听端口将立即切换，当前连接会断开，请同步外部联动（Lucky 外网反代 / gate-watchdog 探活 / obsidian-web 3500 分享契约）——确认保存？'),
+                react.createElement('button', { type: 'button', className: 'login-gate-settings-button login-gate-settings-confirm-yes', disabled: state.saving, onClick: doSave }, '确认保存'),
+                react.createElement('button', { type: 'button', className: 'login-gate-settings-button login-gate-settings-confirm-no', disabled: state.saving, onClick: cancelSave }, '取消'),
+              )
+            : null,
           state.notice
             ? react.createElement('p', { className: state.notice.kind === 'ok' ? 'login-gate-settings-ok' : 'login-gate-settings-error' }, state.notice.text)
             : null,
@@ -506,7 +528,8 @@ window.__ModuleLoader__.load({
       '.login-gate-settings-group + .login-gate-settings-row,.login-gate-settings-note + .login-gate-settings-row{border-top:none}',
       '.login-gate-settings-label{font-size:13px;font-weight:500;line-height:1.5;color:var(--dsw-alias-label-primary, currentColor)}',
       '.login-gate-settings-hint{margin:0;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary, currentColor)}',
-      '.login-gate-settings-restart{margin:0;padding:0 2px;font-size:12px;line-height:1.5;color:var(--dsw-alias-state-warning-primary, currentColor)}',
+      '.login-gate-settings-warning{margin:0;flex:1 1 100%;font-size:12px;line-height:1.5;color:var(--dsw-alias-state-warning-primary, currentColor)}',
+      '.login-gate-settings-confirm{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:8px 12px;border:0.5px solid var(--dsw-alias-state-warning-primary, transparent);border-radius:var(--dsw-radius-md, 6px);background:var(--dsw-alias-bg-layer-3, transparent)}',
       '.login-gate-settings-input{width:220px;max-width:100%;height:34px;padding:0 12px;border:0.5px solid var(--dsw-alias-border-l4, transparent);border-radius:var(--dsw-radius-md, 6px);background:var(--dsw-alias-bg-layer-3, transparent);font:inherit;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-primary, currentColor)}',
       '.login-gate-settings-input:focus-visible{outline:none;border-color:var(--dsw-alias-state-business-primary, currentColor)}',
       '.login-gate-settings-input:disabled{color:var(--dsw-alias-label-tertiary, currentColor);cursor:default}',
