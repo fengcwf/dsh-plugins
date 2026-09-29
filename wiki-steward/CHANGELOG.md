@@ -1,5 +1,16 @@
 # CHANGELOG — wiki-steward
 
+## 0.5.0 — 2026-09-29
+
+设置页/ingest 控制面改造批（Phase 8 轮，来源：`changes/2026-09-29-settings-ingest-controls/`，F1 面板搬家 + F2 UI 对齐 + F3 手动 ingest/定时控制 + T-F1/T-F2 收口）：
+
+- **面板搬家 + 历史记录入口**（F1）：首页侧栏面板行移除，「查看历史记录」入口迁入设置页（弹层日志面：各来源逐行来源标注、尾部 200 行、滚动翻旧不破坏回翻）；修裸 import 说明符（`Failed to resolve module specifier 'api/wiki-steward/panel.js'`）
+- **修真浏览器弹层挂根因**（T-F1 修复环 R1，潜伏缺陷非本批回归）：`web/vite.config.js` 缺 define 致构建物 219 处未替换 `process.env.NODE_ENV`（真浏览器 `import()` 抛 ReferenceError、历史弹层运行时挂；Node 测试面结构性盲区）→ vite define 钉 `"production"` + 重建 `web/dist` + 真浏览器加载回归锁（grep `process.env.NODE_ENV` = 0）
+- **设置页 UI 对齐 dsh 设置风格**（F2）：原生 primitives（Switch/Button/Input/Modal）+ dsh token 唯一色板（§3.2 契约逐值落 CSS）；React 设置节单文件工厂束 = 宿主 require 表契约（纯逻辑文件内命名函数区，账本裁定接受）
+- **手动 ingest + 定时执行控制**（F3，选项 A：插件自管 timer，零侵入 dsh-cron 通道）：设置页「扫描增量/触发蒸馏」双按钮（蒸馏=spawn `dsh-cron.sh wiki-ingest` 通道 detached + flock 防重入，通道不可用则不渲染按钮、如实提示走夜间任务）+ `ingest.schedule{enabled,time}` 配置键（到点 spawn 同通道、flock 兜底、错过补跑、配置热改 ≤60s 生效；**缺省 `enabled:false`** = 升级零行为变化）；原生「自动化任务」通道评估后不采用（提醒投递器与 headless 蒸馏执行体错位，automation-task-report.md §1-§5）
+- **测试 342→387**（+45）：`node --test` 387/387 pass fail 0；真浏览器复测（弹层日志面渲染/来源标注/滚动翻旧 chunk 10/10）、不写系统 crontab 红线核过（`crontab -l | md5sum` 前后未变）
+- **已知提示**：系统 crontab 00:25 行仍在（与插件 timer 双源并存，flock 防重入；设置页文案如实标注）；如需单一时间源请运维侧停用该行
+
 ## 0.4.1 — 2026-09-28
 
 B1/B2 修复波（来源：`changes/2026-09-28-b1b2-service-effect-fix/`，Task 1 实现 + Task 2 zod 归位）：
