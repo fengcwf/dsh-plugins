@@ -3,16 +3,16 @@
 //       CRUD、deleteUser 防自锁、返回值/错误信息永不包含哈希（INV-3）。
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, existsSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { generateHash, addUser, updatePassword, deleteUser, loadUsers } from '../lib/users.js'
 import { hashPassword, verifyPassword, SCRYPT_PREFIX } from '../lib/auth.js'
 
+// 注意：故意不预建 nested 父目录——CRUD 用例因此真实行使 atomicWriteUsers 的 mkdir（目录自动创建）
 function tmpUsersFile(t, sub = 'nested') {
   const dir = mkdtempSync(join(tmpdir(), 'dlg-users-'))
   t.after(() => rmSync(dir, { recursive: true, force: true }))
-  mkdirSync(join(dir, sub), { recursive: true })
   return join(dir, sub, 'users.json')
 }
 
@@ -34,13 +34,14 @@ test('generateHash：async API，参数/格式与 auth.js hashPassword 完全一
 })
 
 test('generateHash：空密码/非字符串拒绝', async () => {
-  await assert.rejects(() => generateHash(''), /密码不能为空/)
-  await assert.rejects(() => generateHash(undefined), /密码不能为空/)
-  await assert.rejects(() => generateHash(123), /密码不能为空/)
+  await assert.rejects(() => generateHash(''), /密码必须为非空字符串/)
+  await assert.rejects(() => generateHash(undefined), /密码必须为非空字符串/)
+  await assert.rejects(() => generateHash(123), /密码必须为非空字符串/)
 })
 
 test('addUser：原子写 usersFile——目录自动创建、0600、格式可被 loadUsers 消化、无临时文件残留', async (t) => {
   const file = tmpUsersFile(t)
+  assert.ok(!existsSync(dirname(file)), '预检：父目录应不存在（验证 mkdir 自动创建）')
   const res = await addUser('alice', 'pw-alice', { usersFile: file })
   assert.deepEqual(res, { ok: true, user: 'alice' })
 
@@ -66,7 +67,7 @@ test('addUser：拒绝重名/空名/空密码，返回值与错误信息不含�
     return true
   })
   await assert.rejects(() => addUser('', 'pw', { usersFile: file }), /用户名不能为空/)
-  await assert.rejects(() => addUser('bob', '', { usersFile: file }), /密码不能为空/)
+  await assert.rejects(() => addUser('bob', '', { usersFile: file }), /密码必须为非空字符串/)
 
   // 重名被拒后文件不变
   assert.deepEqual(Object.keys(readData(file)), ['alice'])
@@ -94,7 +95,7 @@ test('updatePassword：换密后新密码可校验/旧密码失效，其他条�
     return true
   })
   await assert.rejects(() => updatePassword('', 'pw', { usersFile: file }), /用户名不能为空/)
-  await assert.rejects(() => updatePassword('alice', '', { usersFile: file }), /密码不能为空/)
+  await assert.rejects(() => updatePassword('alice', '', { usersFile: file }), /密码必须为非空字符串/)
 })
 
 test('deleteUser：删除目标用户并保留其他条目', async (t) => {
@@ -155,4 +156,37 @@ test('写串行化：同名并发 addUser 仅一个成功（临界区内重读�
   assert.equal(rejected.length, 4)
   for (const r of rejected) assert.match(r.reason.message, /已存在/)
   assert.deepEqual(Object.keys(readData(file)), ['racer'])
+})
+
+test('坏 usersFile：错误信息不得泄漏文件内容/哈希（INV-3，覆盖非法 JSON + 数组/null JSON 路径）', async (t) => {
+  const file = tmpUsersFile(t)
+  mkdirSync(dirname(file), { recursive: true })
+  const secretHash = await generateHash('pw-secret')
+  // Node 的 JSON.parse 错误会内嵌输入摘录（如 `scrypt$163`）——前缀与前 10 字符都要断言
+  const leaks = (msg) =>
+    msg.includes(SCRYPT_PREFIX) || msg.includes(secretHash) || msg.includes(secretHash.slice(0, 10))
+
+  // ① 非法 JSON（正文就是哈希原文）
+  writeFileSync(file, secretHash, { mode: 0o600 })
+  await assert.rejects(() => addUser('bob', 'pw', { usersFile: file }), (e) => {
+    assert.match(e.message, /解析失败/)
+    assert.ok(!leaks(e.message), `错误信息泄漏哈希：${e.message}`)
+    return true
+  })
+
+  // ② 数组 JSON（格式非法分支）
+  writeFileSync(file, JSON.stringify([secretHash]), { mode: 0o600 })
+  await assert.rejects(() => addUser('bob', 'pw', { usersFile: file }), (e) => {
+    assert.match(e.message, /格式非法/)
+    assert.ok(!leaks(e.message), `错误信息泄漏哈希：${e.message}`)
+    return true
+  })
+
+  // ③ null JSON（同一格式非法分支，走 deleteUser 路径）
+  writeFileSync(file, 'null', { mode: 0o600 })
+  await assert.rejects(() => deleteUser('ann', 'bob', { usersFile: file }), (e) => {
+    assert.match(e.message, /格式非法/)
+    assert.ok(!leaks(e.message), `错误信息泄漏哈希：${e.message}`)
+    return true
+  })
 })

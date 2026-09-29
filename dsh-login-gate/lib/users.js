@@ -108,11 +108,19 @@ function mutateUsers(usersFile, mutate) {
   return withWriteLock(async () => {
     let data = {}
     if (existsSync(file)) {
+      // 错误信息只留 e.name，禁止插值 e.message——Node 的 JSON.parse 错误会内嵌输入摘录
+      // （如 `Unexpected token 's', "scrypt$163"... is not valid JSON`），直接泄漏哈希片段（INV-3）
+      let raw
+      try {
+        raw = await readFile(file, 'utf8')
+      } catch (e) {
+        throw new Error(`usersFile 读取失败（${file}）：${e.name}`)
+      }
       let parsed
       try {
-        parsed = JSON.parse(await readFile(file, 'utf8'))
+        parsed = JSON.parse(raw)
       } catch (e) {
-        throw new Error(`usersFile 解析失败（${file}）：${e.message}`)
+        throw new Error(`usersFile 解析失败（${file}）：不是合法 JSON（${e.name}）`)
       }
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
         throw new Error(`usersFile 格式非法（${file}）：应为 JSON 对象`)
@@ -133,7 +141,7 @@ function mutateUsers(usersFile, mutate) {
  * 严禁进入响应/错误信息（INV-3）。
  */
 export async function generateHash(password) {
-  if (typeof password !== 'string' || !password) throw new Error('密码不能为空')
+  if (typeof password !== 'string' || !password) throw new Error('密码必须为非空字符串')
   return hashPassword(password)
 }
 
