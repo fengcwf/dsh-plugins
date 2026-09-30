@@ -1,5 +1,16 @@
 # CHANGELOG — kb-context
 
+## 0.4.0 — 2026-09-30
+
+触发日志功能（Phase 6 分发执行，合同面 `changes/2026-09-30-kb-context-trigger-log/`，验收码 A-TL1…7）：给会话触发评估加可观测面——内存环记录每次评估的命中/未命中与原因，设置页可查可清，带 kill switch；零 I/O 零持久化。
+
+- **记录面**（`lib/trigger-log.js` 新增 + `lib/inject.js` 记录缝 + `lib/index.js` 接线）：内存环 `createTriggerLog {record,list,clear,stats}`（Array+头指针、超出丢最旧、恒 ≤200 条、重启即清空不落盘）；仅 `source.kind==='user'` 的评估入环，hit / no-trigger-match / no-hits / timeout / error 各出口 `rec()`；每条 entry = **8 键闭集白名单** `{ts,hit,channel,matched,snippets,tokenEst,elapsedMs,reason}`——命中/未命中+原因+通道（words/entity/none）+命中词/路径+片段数+token 估算+耗时
+- **脱敏白名单闭集（INV-TL1）**：entry 键集机械锁（多键即弃）、reason/channel 强制收敛闭集枚举、`matched` 只保字符串数组且由配置词表/实体成员派生——自由文本（用户消息原文/异常信息）绝不入日志
+- **fail-open（INV-TL2）**：`record` 全 try/catch 静默吞、记录缝双层防御——日志任何失败都不扰触发/注入主链路；`triggerLog.enabled` kill switch **现读**（热关=record 直接 no-op 零新增、旧条目保留，热开恢复）
+- **服务面**（`lib/settings-routes.js`）：`GET /api/kb-context/logs`（200 `{entries,capacity,enabled}`，entries 时间倒序）+ `POST /api/kb-context/logs/clear`（200 `{cleared:n}`）；错误形沿既有 `{error:{code,message}}` 包络（缺环 503 `logs_unavailable`、方法 405+allow、未知 404）
+- **设置面**（`lib/client.js` + `lib/settings-write.js`）：「触发日志」组 kill switch 字段（`triggerLog.enabled` 入 EDITABLE_PATHS 可改白名单，capacity 不可改、白名单外键整单拒语义不变）+「查看触发日志」按钮→弹层（沿 wiki-steward 历史记录形：原生 Modal `title/closeLabel/onClose` 契约、ui.Modal 在场用宿主控件缺席同契约自绘、尾部 50 行+滚动加载+清空按钮+条数 N/200+热关态如实）；文案如实：内存环、重启即清空不落盘、引 TECH 真源
+- **测试 194→236**（+42：trigger-log 19 / inject +11 / settings-routes、settings-write、client-settings 增例，TDD 先红后绿留痕——RED 基线与 GREEN 全量证据见 `changes/2026-09-30-kb-context-trigger-log/evidence-10a.md`、`evidence-10b.md`）；样式零新增 token 机械锁（SETTINGS_CSS 变量名 ⊆0.3.2 既有集）+ INV-TL1 键集机械断言入测；双 umask（022/0077）口径全绿、`npm run check` exit 0
+
 ## 0.3.2 — 2026-09-29
 
 Phase 8 修复波（用户反馈 3 项：①设置页面 UI 优化参考 dsh 本地 UI 效果 ②触发词面/索引实体路径给参考填写示例+功能说明 ③注入预算 token 上限的作用说明入设置面；参照 `changes/2026-09-29-kb-context-settings-ux/reports/ui-ux-brief.md`（T9-D1）、`fix-ui-ux-report.md`（T9-F1））：

@@ -6,7 +6,7 @@
 // 纪律：白名单外叶子=整单拒（not_editable，绝不静默丢键）；hotMap/vaultRoot 只读展示（裁定枚举外）；
 // 合并=对象深合并、数组整替；校验=真 zod（Config.safeParse 合并后的生效面 inherited∪current∪patch）。
 
-/** 可改字段白名单（叶子路径）：触发词面/索引实体、注入预算、检索超时、作用域 */
+/** 可改字段白名单（叶子路径）：触发词面/索引实体、注入预算、检索超时、作用域、触发日志 kill switch（0.4.0） */
 export const EDITABLE_PATHS = Object.freeze([
   Object.freeze(['triggers', 'words']),
   Object.freeze(['triggers', 'entityPaths']),
@@ -15,6 +15,9 @@ export const EDITABLE_PATHS = Object.freeze([
   Object.freeze(['timeoutMs']),
   Object.freeze(['scope', 'indexAll']),
   Object.freeze(['scope', 'grepOnDemand']),
+  // 0.4.0（A-TL5 kill switch）：triggerLog.enabled 可改（热关即时生效，走白名单持久化）；
+  // triggerLog.capacity 不可改（INV-TL4 环容量恒钳 ≤200 归读侧救济——配置想放大也不破）
+  Object.freeze(['triggerLog', 'enabled']),
 ])
 
 function isPlainObject(value) {

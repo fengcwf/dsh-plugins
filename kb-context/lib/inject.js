@@ -31,6 +31,7 @@ import { createHash } from 'node:crypto'
 import { Config, FACTORY_SCOPE } from './index.js'
 import { redact, REDACTED } from './redact.js'
 import { normalizeEmptyState } from './diagnose.js'
+import { DEFAULT_TRIGGER_WORDS, DEFAULT_ENTITY_PATHS } from './trigger.js'
 
 /** 同 query 去重窗口（毫秒）：TECH §3「同 query 10s 去重」契约字面 */
 export const QUERY_DEDUP_MS = 10_000
@@ -176,6 +177,51 @@ function diag(injected, degraded, reason, detail) {
   return out
 }
 
+// ── 触发日志记录缝支撑（10-A，TECH「记录契约」/ INV-TL1）────────────────────────
+
+/** 表语义救济（同 lib/trigger.js pickList 口径）：非空有效表=全量替换；空/缺省/脏表=出厂默认 */
+function pickVocab(list, fallback) {
+  if (!Array.isArray(list)) return fallback
+  const cleaned = list.filter((s) => typeof s === 'string' && s.trim() !== '')
+  return cleaned.length > 0 ? cleaned : fallback
+}
+
+/**
+ * 触发命中元素名收集（INV-TL1 脱敏红线）：**只回配置词表/实体路径成员本身**（配置数据非用户数据），
+ * 消息原文一个字不回传。宽松 containment 判定（词面全等子串；实体条目/basename/stem 三形态对齐
+ * trigger.js 的裸路径/wikilink/@ 引用）——宁可多报成员、绝不落原文；仅在 matchTrigger 命中后调用。
+ */
+function matchedVocab(text, raw) {
+  const lower = String(text ?? '').toLowerCase()
+  const out = []
+  for (const w of pickVocab(raw?.triggers?.words, DEFAULT_TRIGGER_WORDS)) {
+    if (lower.includes(w.toLowerCase())) out.push(w)
+  }
+  for (const e of pickVocab(raw?.triggers?.entityPaths, DEFAULT_ENTITY_PATHS)) {
+    const base = String(e).replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? ''
+    const stem = base.replace(/\.md$/i, '')
+    if ([e, base, stem].some((s) => s && lower.includes(s.toLowerCase()))) out.push(e)
+  }
+  return out
+}
+
+/**
+ * token 粗口径估算（同 lib/search.js estimateTokens：CJK/假名/谚文/兼容表意 ≈1 token 每码点，
+ * 其余 ≈4 字符 1 token）。不 import search.js——保持注入面零索引层静态依赖（本文件不碰索引）。
+ */
+function estimateTokenCost(text) {
+  let cjk = 0
+  let other = 0
+  for (const ch of String(text ?? '')) {
+    const cp = ch.codePointAt(0)
+    const isCjk = (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0x3400 && cp <= 0x4DBF) ||
+      (cp >= 0x3040 && cp <= 0x30FF) || (cp >= 0xAC00 && cp <= 0xD7AF) || (cp >= 0xF900 && cp <= 0xFAFF)
+    if (isCjk) cjk++
+    else other++
+  }
+  return cjk + Math.ceil(other / 4)
+}
+
 /** 竞速中止可识别标记（Symbol）：combined 中止时 race reject 的错误携带——与 search 自身异常区分（后者落 degraded:'error'） */
 const RACE_ABORT = Symbol('kb-context.race-abort')
 
@@ -232,6 +278,11 @@ function rejectOnAbort(signal) {
  * @param {object|Function} [deps.configSource] 当前 raw 配置（getter 形式优先，T4 建议）。
  * @param {(payload: object, decision: object) => Array} [deps.observeSurface] 可见面观察器（默认 decision.messages ?? payload.messages）。
  * @param {() => number} [deps.now] 时钟缝（10s 去重窗测试锚定）。
+ * @param {{record: Function}} [deps.triggerLog] 触发日志记录缝（10-A，lib/trigger-log.js 环；可缺省=无日志，
+ *   旧消费面零改动）。记录点=用户源评估各出口（hit/no-trigger-match/no-hits/timeout/error）；
+ *   **仅 source.kind==='user' 的评估入环**（非用户消息不评估也不记录，A-TL2 防刷屏）。
+ *   fail-open 双层（INV-TL2）：本缝 try/catch 包裹 + record 自身吞错——记录缝抛错/坏 getter 一律
+ *   静默吞，触发/注入主链路结果与零日志时逐字节一致（A-TL3）。
  * @returns {(payload: {agent, messages, turn, step, signal}, next: Function) => Promise<object>} pre-step handler（函数名 kbContextRecall）
  */
 export function createPreStepHandler({
@@ -241,6 +292,7 @@ export function createPreStepHandler({
   configSource = () => ({}),
   observeSurface = (payload, decision) => decision?.messages ?? payload?.messages ?? [],
   now = () => Date.now(),
+  triggerLog = null,
 }) {
   // ② 单槽 turn 记忆（恒占一槽）；③ query→注入时刻表（每次访问剪除 ≥10s 过期项，有界防 Map 泄漏）
   let hasInjectedTurn = false
@@ -255,6 +307,18 @@ export function createPreStepHandler({
     if (decision == null || decision.kind !== 'enter') return decision
     const signal = payload?.signal
     if (signal?.aborted) return decision // 官方姿势：外层取消原样返回（取消≠超时，不构造注入）
+
+    // 触发日志记录缝（10-A）：仅 source.kind==='user' 的评估入环（无用户源出口零记录，A-TL2）。
+    // evalState=沿流水线累计的判定摘要（hit=触发命中/通道/命中成员——INV-TL1 只落配置词表成员）；
+    // rec() 自身 try/catch（INV-TL2 第一层）+ record 兜底吞错（第二层）——记录缝抛错逐字节不改主链路结果。
+    const t0 = now()
+    const state = { hit: false, channel: 'none', matched: [], snippets: 0, tokenEst: 0 }
+    const rec = (reason, patch) => {
+      try {
+        if (!triggerLog) return
+        triggerLog.record({ ...state, ...(patch ?? {}), ts: now(), elapsedMs: Math.max(0, now() - t0), reason })
+      } catch { /* INV-TL2：记录缝自身任何异常静默吞，绝不影响触发/注入主链路 */ }
+    }
 
     // ⚠️ fail-open 信封覆盖整个注入流水线（configSource/matchTrigger/AbortSignal 构造全在内）：
     //   任何异常不得穿出 handler（「任何异常 return decision 原样 + 不注入」契约）
@@ -289,10 +353,18 @@ export function createPreStepHandler({
 
       const t = matchTrigger(triggerMessage, configSource)
       if (t?.degraded === 'config') configDegraded = 'config'
-      if (!t?.matched) return skip(decision, configDegraded, 'no-trigger')
+      if (!t?.matched) {
+        rec('no-trigger-match') // miss 出口（A-TL1）：未触发 → hit:false/channel:'none'/matched:[]
+        return skip(decision, configDegraded, 'no-trigger')
+      }
+      // 触发命中：判定摘要落 state（matched=配置词表/实体路径成员——INV-TL1 消息原文零落）
+      state.hit = true
+      state.channel = t.channel === 'entity' ? 'entity' : 'words'
+      state.matched = matchedVocab(visibleText(triggerMessage), raw)
 
       // ② 同 turn 一次（检索前挡，省多余检索）
       if (hasInjectedTurn && Object.is(lastInjectedTurn, payload?.turn)) {
+        rec('no-hits') // 跳过出口也入环（各出口记录）：命中但本次入会话片段 0（闭集无 dedup 成员，归 no-hits 口径）
         return skip(decision, configDegraded, 'dedup-turn')
       }
       // ③ 同 query 10s（检索前挡；剪除过期项保持有界）
@@ -301,11 +373,15 @@ export function createPreStepHandler({
         if (ts - at >= QUERY_DEDUP_MS) recentQueries.delete(q)
       }
       if (recentQueries.has(t.query)) {
+        rec('no-hits') // 同上：去重跳过出口入环
         return skip(decision, configDegraded, 'dedup-query')
       }
 
       // fail-open 信封（A5）：外层 signal + timeoutMs 竞速；timeoutMs:0 = 立即超时（T3 同语义）
-      if (!(timeoutMs > 0)) return { ...decision, kbContext: diag(false, 'timeout') }
+      if (!(timeoutMs > 0)) {
+        rec('timeout') // 立即超时出口（A-TL1）
+        return { ...decision, kbContext: diag(false, 'timeout') }
+      }
       const combined = AbortSignal.any([signal ?? new AbortController().signal, AbortSignal.timeout(timeoutMs)])
 
       // 竞速接线（handler 级硬中断，零 T3 依赖）：combined 前瞻作 search opts.signal（T3/T6 消费缝），
@@ -326,12 +402,14 @@ export function createPreStepHandler({
       } catch (e) {
         // combined 中止（超时/取消）→ fail-open 口径留痕 timeout；其余异常交外层信封（degraded:'error'）
         if (e?.[RACE_ABORT] === true || combined.aborted) {
+          rec('timeout') // 竞速硬中断出口（A-TL1）
           return { ...decision, kbContext: diag(false, 'timeout') }
         }
         throw e
       }
       // 超时（晚到前已中止 / search 内置 deadline 降级）→ fail-open：不注入，留痕进返回
       if (combined.aborted || result?.degraded === 'timeout') {
+        rec('timeout') // 超时出口（A-TL1）
         return { ...decision, kbContext: diag(false, 'timeout') }
       }
       const hits = Array.isArray(result?.hits) ? result.hits : []
@@ -340,14 +418,19 @@ export function createPreStepHandler({
         //（与片段注入同管线：INV-5 键集 / INV-11 转义+中和）；
         // 缺位/非法（stub 或未诊断缝）→ 回退 T5 零命中 identity
         const es = normalizeEmptyState(result?.emptyState)
-        if (es === null) return skip(decision, configDegraded, 'zero-hits')
+        if (es === null) {
+          rec('no-hits') // 零命中出口（A-TL1）：触发命中、零片段入会话
+          return skip(decision, configDegraded, 'zero-hits')
+        }
         const { text, redacted } = buildEmptyStateText(es)
         const message = createUserMessage(injectionInputFromText(text))
         if (message == null || typeof message !== 'object' || 'model' in message) {
+          rec('error') // 注入产物拒收出口（INV-5 反例路径）
           return { ...decision, kbContext: diag(false, 'error', 'model-field') }
         }
         const surface = observeSurface(payload, decision)
         if (digestOf(visibleText(message)) === lastRecallDigest(surface)) {
+          rec('no-hits') // 可见面去重跳过出口：本次入会话片段 0
           return skip(decision, configDegraded, 'dedup-surface')
         }
         // 诊断不占 ②③ 名额（审前裁定②）：不写 turn/query 槽——同窗随后真命中仍可注入
@@ -357,6 +440,7 @@ export function createPreStepHandler({
         if (configDegraded !== null || redacted > 0) {
           out.kbContext = diag(true, configDegraded ?? 'redacted', undefined, redacted > 0 ? { redacted } : undefined)
         }
+        rec('hit', { tokenEst: estimateTokenCost(text) }) // 诊断注入命中出口：片段数 0（诊断非片段）
         return out
       }
 
@@ -365,12 +449,14 @@ export function createPreStepHandler({
       const message = createUserMessage(input)
       // INV-5 必拒：缝产物夹带 model 字段（或非法产物）不得进会话
       if (message == null || typeof message !== 'object' || 'model' in message) {
+        rec('error') // 注入产物拒收出口（INV-5 反例路径）
         return { ...decision, kbContext: diag(false, 'error', 'model-field') }
       }
 
       // ① 可见面 SHA-1 去重（纯函数 lastRecallDigest + 可注入观察器 observeSurface）
       const surface = observeSurface(payload, decision)
       if (digestOf(visibleText(message)) === lastRecallDigest(surface)) {
+        rec('no-hits') // 可见面去重跳过出口：本次入会话片段 0
         return skip(decision, configDegraded, 'dedup-surface')
       }
 
@@ -385,8 +471,10 @@ export function createPreStepHandler({
       if (configDegraded !== null || redacted > 0) {
         out.kbContext = diag(true, configDegraded ?? 'redacted', undefined, redacted > 0 ? { redacted } : undefined)
       }
+      rec('hit', { snippets: hits.length, tokenEst: estimateTokenCost(text) }) // 命中出口（A-TL1）
       return out
     } catch (e) {
+      rec('error') // 异常出口（A-TL1）：判定摘要留环（reason 枚举强制——异常自由文本不入日志）
       // 任何异常 fail-open：messages 原样 + degraded:'error' 留痕（INV-15 禁静默）
       return { ...decision, kbContext: diag(false, 'error', undefined, String(e?.message ?? e)) }
     }

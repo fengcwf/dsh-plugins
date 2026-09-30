@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import { Config } from '../lib/index.js'
 import { EDITABLE_PATHS, applyEditablePatch, checkPatchEditable, createApplyPatch, isEditablePath } from '../lib/settings-write.js'
 
-test('可改白名单契约：7 叶子；hotMap / vaultRoot 永不在列（裁定枚举外=只读展示）', () => {
+test('可改白名单契约：8 叶子（0.4.0 增 triggerLog.enabled）；hotMap / vaultRoot 永不在列（裁定枚举外=只读展示）', () => {
   assert.deepEqual(EDITABLE_PATHS.map((p) => p.join('.')), [
     'triggers.words',
     'triggers.entityPaths',
@@ -17,12 +17,38 @@ test('可改白名单契约：7 叶子；hotMap / vaultRoot 永不在列（裁�
     'timeoutMs',
     'scope.indexAll',
     'scope.grepOnDemand',
+    'triggerLog.enabled',
   ])
   for (const banned of [['hotMap'], ['hotMap', 'enabled'], ['hotMap', 'maxChars'], ['vaultRoot']]) {
     assert.equal(isEditablePath(banned), false, `不可改：${banned.join('.')}`)
   }
   assert.equal(isEditablePath(['timeoutMs']), true, '顶层标量叶子在白名单')
   assert.equal(isEditablePath(['scope', 'indexAll']), true)
+  assert.equal(isEditablePath(['triggerLog', 'enabled']), true, 'kill switch 叶子在白名单（A-TL5）')
+  assert.equal(isEditablePath(['triggerLog', 'capacity']), false, 'capacity 不可改（INV-TL4 环容量恒钳 ≤200 归读侧救济）')
+  assert.equal(isEditablePath(['triggerLog']), false, '空对象=叶子（白名单无空对象路径）')
+})
+
+test('triggerLog.enabled kill switch 写入：白名单内合并+真 zod；外键同单=整单拒（A-TL5 语义不变）', () => {
+  const ok = applyEditablePatch({ current: {}, patch: { triggerLog: { enabled: false } } }, Config)
+  assert.equal(ok.ok, true)
+  assert.deepEqual(ok.config, { triggerLog: { enabled: false } }, '最小写入形只含白名单叶子')
+  assert.equal(ok.parsed.triggerLog.enabled, false, '真 zod 解析面生效（kill switch 可关）')
+  const on = applyEditablePatch({ current: { triggerLog: { enabled: false } }, patch: { triggerLog: { enabled: true } } }, Config)
+  assert.equal(on.ok, true)
+  assert.equal(on.parsed.triggerLog.enabled, true, '可再开（可改非只关）')
+
+  for (const patch of [{ triggerLog: { enabled: false }, hotMap: { enabled: true } }, { triggerLog: { enabled: false, capacity: 500 } }, { triggerLog: { enabled: 'yes' } }]) {
+    const r = applyEditablePatch({ current: {}, patch }, Config)
+    assert.equal(r.ok, false, `必拒：${JSON.stringify(patch)}`)
+  }
+  // 白名单外叶子整单拒语义不变：外键在单=整单不落盘（not_editable），与旧键同判
+  const cross = applyEditablePatch({ current: {}, patch: { triggerLog: { enabled: false }, hotMap: { enabled: true } } }, Config)
+  assert.equal(cross.code, 'not_editable', '白名单外叶子=整单拒（绝不静默丢键）')
+  const cap = applyEditablePatch({ current: {}, patch: { triggerLog: { enabled: false, capacity: 500 } } }, Config)
+  assert.equal(cap.code, 'not_editable', 'triggerLog.capacity 白名单外=整单拒')
+  const badType = applyEditablePatch({ current: {}, patch: { triggerLog: { enabled: 'yes' } } }, Config)
+  assert.equal(badType.code, 'invalid', '叶子在白名单但值类型非法=真 zod 拒（enabled 必须 boolean）')
 })
 
 test('白名单内合并：对象深合并、数组整替；返回最小写入形 + 真 zod 解析面', () => {

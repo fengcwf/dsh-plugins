@@ -74,6 +74,8 @@ function harness(opts = {}) {
   const searchImpl = opts.search ?? (async () => ({ hits: opts.hits ?? [HIT] }))
   const handler = createPreStepHandler({
     matchTrigger,
+    // 触发日志记录缝（10-A）：可缺省=无日志（旧用例零改动）；坏日志对象由 fail-open 用例注入
+    triggerLog: opts.triggerLog,
     // 检索缝：无论内置/自定义实现都记录调用（零调用断言才算真）
     search: async (query, o) => {
       calls.search.push({ query, opts: o })
@@ -727,4 +729,181 @@ test('§4.4 builder 级：文本体构建即中和（干净片段原样含框架
     assert.equal(result.messages.length, decision.messages.length + 1)
     assert.ok(!('kbContext' in result), '零中和计数不留痕（N=0 不加键）')
   })
+})
+
+// ── S8：触发日志记录缝（10-A：A-TL1/A-TL2/A-TL3 + INV-TL1/INV-TL2）──────────
+// entry 语义契约（TECH「记录契约」）：hit=触发判定命中（matchTrigger.matched）；channel=触发通道
+// （words|entity|none）；matched=命中元素名（**仅配置词表/实体路径成员**，INV-TL1 消息原文零落）；
+// snippets=本次入会话片段数（诊断注入=0）；tokenEst=注入文本粗口径 token 估算；elapsedMs=评估耗时；
+// reason=流水线结局（闭集：hit|no-trigger-match|no-hits|timeout|error；no-user-source 为闭集保留字面，
+// 按 A-TL2「非用户消息不评估也不记录」当前接线不产生）。
+
+/** 真件 trigger-log（lazy import：缺模块时只有本块用例红，旧用例不受染） */
+async function newTriggerLog(opts) {
+  const { createTriggerLog } = await import('../lib/trigger-log.js')
+  return createTriggerLog(opts)
+}
+
+test('A-TL1 命中出口：触发命中+注入成功 → entry{hit:true,channel:"words",matched:["wiki"],reason:"hit"}，键集==白名单', async () => {
+  const log = await newTriggerLog({})
+  const h = harness({ triggerLog: log })
+  const { result, decision } = await run(h, { text: 'wiki 成本核算 私密代号凤凰' })
+  assert.equal(result.messages.length, decision.messages.length + 1, '主链路注入照常（日志不扰主链路）')
+  const entries = log.list()
+  assert.equal(entries.length, 1, '一次评估恰一条 entry')
+  const e = entries[0]
+  const { ENTRY_KEYS } = await import('../lib/trigger-log.js')
+  assert.deepEqual(Object.keys(e).sort(), [...ENTRY_KEYS].sort(), 'INV-TL1 机械断言：键集==闭集白名单')
+  assert.equal(e.hit, true, 'hit=触发判定命中')
+  assert.equal(e.channel, 'words')
+  assert.deepEqual(e.matched, ['wiki'], 'matched=配置词表成员（非消息原文）')
+  assert.equal(e.reason, 'hit')
+  assert.equal(e.snippets, 1, 'snippets=本次入会话片段数')
+  assert.ok(Number.isFinite(e.tokenEst) && e.tokenEst > 0, 'tokenEst=注入文本粗口径估算')
+  assert.ok(Number.isFinite(e.elapsedMs) && e.elapsedMs >= 0)
+  assert.equal(e.ts, 1_000_000, 'ts 取记录时刻（时钟缝锚定）')
+  // INV-TL1 红线：用户消息正文零落日志
+  const dump = JSON.stringify(entries)
+  for (const leak of ['私密', '凤凰', '成本核算', '代号']) {
+    assert.ok(!dump.includes(leak), `用户消息正文零落日志：${leak}`)
+  }
+})
+
+test('A-TL1 未命中出口：miss entry{hit:false,channel:"none",matched:[],reason:"no-trigger-match"}，零注入零检索', async () => {
+  const log = await newTriggerLog({})
+  const h = harness({ triggerLog: log })
+  const { result, decision } = await run(h, { text: '成本核算入账口径怎么写' })
+  assert.equal(result, decision, '未触发 identity 原样返回（INV-4 零注入）')
+  assert.equal(h.calls.search.length, 0, '未触发零检索')
+  const [e] = log.list()
+  assert.equal(e.hit, false)
+  assert.equal(e.channel, 'none')
+  assert.deepEqual(e.matched, [])
+  assert.equal(e.reason, 'no-trigger-match')
+  assert.equal(e.snippets, 0)
+  assert.equal(e.tokenEst, 0)
+})
+
+test('A-TL1 实体通道出口：channel="entity"、matched=["INDEX.md"]（实体路径成员）', async () => {
+  const log = await newTriggerLog({})
+  const h = harness({ triggerLog: log })
+  await run(h, { text: 'INDEX.md 更新说明 私密内容' })
+  const [e] = log.list()
+  assert.equal(e.hit, true)
+  assert.equal(e.channel, 'entity')
+  assert.deepEqual(e.matched, ['INDEX.md'])
+  assert.equal(e.reason, 'hit')
+  assert.ok(!JSON.stringify(log.list()).includes('私密'), '用户消息正文零落')
+})
+
+test('A-TL1 零命中出口：触发命中+检索零片段（无诊断缝）→ entry{hit:true,reason:"no-hits",snippets:0}', async () => {
+  const log = await newTriggerLog({})
+  const h = harness({ triggerLog: log, hits: [] })
+  const { result } = await run(h, { text: 'wiki 成本核算' })
+  assert.ok(!('kbContext' in result), '无合法 emptyState 回退 identity（T7 缺位缝）')
+  const [e] = log.list()
+  assert.equal(e.hit, true, '触发判定命中')
+  assert.equal(e.reason, 'no-hits')
+  assert.equal(e.snippets, 0)
+  assert.equal(e.tokenEst, 0)
+  assert.deepEqual(e.matched, ['wiki'])
+})
+
+test('A-TL1 超时出口（立即超时）：timeoutMs:0 → entry{reason:"timeout"}；主链路 fail-open 不变', async () => {
+  const log = await newTriggerLog({})
+  const h = harness({ triggerLog: log, rawConfig: { timeoutMs: 0 } })
+  const { result } = await run(h, { text: 'wiki 成本核算' })
+  assert.deepEqual(result.kbContext, { injected: false, degraded: 'timeout' })
+  const [e] = log.list()
+  assert.equal(e.reason, 'timeout')
+  assert.equal(e.hit, true)
+  assert.equal(e.snippets, 0)
+})
+
+test('A-TL1 超时出口（竞速硬中断）：检索挂死也在 timeoutMs 内 fail-open 且记 timeout entry', async () => {
+  const log = await newTriggerLog({})
+  const h = harness({ triggerLog: log, rawConfig: { timeoutMs: 20 }, search: () => new Promise(() => {}) })
+  const { result } = await run(h, { text: 'wiki 成本核算' })
+  assert.deepEqual(result.kbContext, { injected: false, degraded: 'timeout' })
+  const [e] = log.list()
+  assert.equal(e.reason, 'timeout')
+})
+
+test('A-TL1 异常出口：检索抛错 → entry{reason:"error"}，degraded:"error" 留痕进返回不进会话', async () => {
+  const log = await newTriggerLog({})
+  const h = harness({ triggerLog: log, search: async () => { throw new Error('search exploded 私密') } })
+  const { result, decision } = await run(h, { text: 'wiki 成本核算' })
+  assert.equal(result.kbContext.injected, false)
+  assert.equal(result.kbContext.degraded, 'error', 'INV-15 禁静默（异常信息进返回 detail，不进会话）')
+  assert.deepEqual(result.messages, decision.messages, '异常零注入')
+  const [e] = log.list()
+  assert.equal(e.reason, 'error')
+  assert.equal(e.hit, true, '触发命中在先（状态保留）')
+  assert.ok(!JSON.stringify(log.list()).includes('私密'), '异常信息自由文本不入日志（reason 枚举强制）')
+})
+
+test('A-TL2 仅 source.kind==="user" 入环：非用户消息零 entry；混合消息面只记 1 条（用户源评估）', async () => {
+  const log = await newTriggerLog({})
+  const h = harness({ triggerLog: log })
+  // 仅插件注入消息（正文带满触发词——recall-loop 防护同源）：不评估、不记录
+  await run(h, { text: null, messages: [recallMessage('wiki 索引目录 INDEX.md 私密')] })
+  // 旧形 plugin 消息同样零 entry
+  await run(h, { text: null, messages: [{ content: [{ type: 'text', text: 'wiki 索引目录' }], source: { kind: 'plugin', plugin: 'x' } }] })
+  // 空消息面零 entry
+  await run(h, { text: null, messages: [] })
+  assert.deepEqual(log.list(), [], '非用户消息零 entry（A-TL2）')
+  // 混合消息面（插件+用户+插件）：按用户源评估记 1 条，不按消息条数刷屏
+  await run(h, { text: 'wiki 成本核算', messages: [recallMessage('wiki 索引'), user('wiki 成本核算'), recallMessage('wiki')] })
+  assert.equal(log.list().length, 1, '仅用户源评估入环')
+})
+
+test('A-TL3 fail-open 实证：记录缝抛错/坏 getter/空缝下主链路结果与零日志时逐字节一致', async () => {
+  const scenarios = [
+    { name: 'hit', opts: {}, text: 'wiki 成本核算' },
+    { name: 'miss', opts: {}, text: '成本核算入账口径' },
+    { name: 'zero-hits', opts: { hits: [] }, text: 'wiki 成本核算' },
+    { name: 'timeout', opts: { rawConfig: { timeoutMs: 0 } }, text: 'wiki 成本核算' },
+    { name: 'error', opts: { search: async () => { throw new Error('search exploded') } }, text: 'wiki 成本核算' },
+  ]
+  const hostiles = [
+    { record() { throw new Error('record boom') }, list: () => [], clear() {}, stats: () => ({}) },
+    { get record() { throw new Error('getter boom') } },
+    { record: null },
+    null,
+    undefined,
+  ]
+  for (const s of scenarios) {
+    const { result: base } = await run(harness(s.opts), { text: s.text })
+    const expected = JSON.stringify(base) // 零日志基线
+    for (const hostile of hostiles) {
+      const { result } = await run(harness({ ...s.opts, triggerLog: hostile }), { text: s.text })
+      assert.equal(JSON.stringify(result), expected, `fail-open 逐字节一致（${s.name}）`)
+    }
+  }
+})
+
+test('去重跳过出口也入环（各出口记录）：同 turn 二次评估 → entry{hit:true,reason:"no-hits",snippets:0}', async () => {
+  const log = await newTriggerLog({})
+  const h = harness({ triggerLog: log })
+  await run(h, { turn: 7, text: 'wiki 成本核算' })
+  await run(h, { turn: 7, text: 'wiki 成本核算' })
+  const entries = log.list()
+  assert.equal(entries.length, 2, '每次用户源评估各一条（含跳过出口）')
+  assert.equal(entries[0].reason, 'no-hits', '跳过出口归「本次入会话片段 0」口径（闭集无 dedup 成员）')
+  assert.equal(entries[0].hit, true, '触发判定命中（同 turn 去重跳过）')
+  assert.equal(entries[0].snippets, 0)
+  assert.equal(entries[1].reason, 'hit', '首条真注入')
+})
+
+test('triggerLog.enabled 现读（kill switch）：热关后零新增 entry、注入主链路照常', async () => {
+  let enabled = true
+  const log = await newTriggerLog({ isEnabled: () => enabled })
+  const h = harness({ triggerLog: log })
+  await run(h, { turn: 1, text: 'wiki 成本核算' })
+  assert.equal(log.list().length, 1)
+  enabled = false // 热关（不重建实例）
+  // 换 query 绕开 ③ 同 query 10s 去重（本用例测的是日志开关，不是去重面）
+  const { result, decision } = await run(h, { turn: 2, text: 'wiki 入账口径' })
+  assert.equal(result.messages.length, decision.messages.length + 1, '热关只灭日志，注入主链路照常')
+  assert.equal(log.list().length, 1, '热关后零新增 entry（A-TL5 语义）')
 })

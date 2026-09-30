@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url'
 const CLIENT_PATH = fileURLToPath(new URL('../lib/client.js', import.meta.url))
 const source = fs.readFileSync(CLIENT_PATH, 'utf8')
 
-function loadClientFace() {
+function loadClientFace(uiStub) {
   const loaded = []
   const win = { __ModuleLoader__: { load: (m) => loaded.push(m) } }
   const effects = []
@@ -32,6 +32,7 @@ function loadClientFace() {
   }
   const req = (name) => {
     if (name === 'react') return reactStub
+    if (uiStub !== undefined && name === '@deepseek-ai/dsh-client-ui-primitives') return uiStub
     throw new Error(`unexpected require: ${name}`)
   }
   const fn = new Function('window', source)
@@ -241,6 +242,7 @@ const READY_CONFIG = {
   scope: { indexAll: ['wiki', 'raw'], grepOnDemand: ['01-客户资料'] },
   hotMap: { enabled: false, maxChars: 600 },
   vaultRoot: '/mnt/unraid_data/Obsidian',
+  triggerLog: { enabled: true, capacity: 200 },
 }
 
 async function renderReady() {
@@ -366,4 +368,250 @@ test('行排布=宿主 .field 形：label→控件→hint 纵向（label 关联�
   assert.ok(btn, '可写面有保存按钮')
   assert.match(String(btn.props.className), /save/)
   assert.equal(JSON.stringify(btn.children), '["保存"]', '首个 button=保存（不新增前置 button，R2）')
+})
+
+// ===== 0.4.0 触发日志设置面（A-TL5 kill switch / A-TL6 弹层；PRODUCT US-2/3/5）=====
+// 形制源：wiki-steward/lib/client.js:424-476 历史记录入口+原生 Modal（title/closeLabel/onClose 契约）。
+// 状态由设置节持有（展示组件无钩子，wiki-steward 同纪律）；数据面=api/kb-context/logs 双端点（文档相对）。
+
+const logEntry = (i) => ({
+  ts: 1727000000000 + i * 1000, hit: i % 2 === 0, channel: i % 2 === 0 ? 'words' : 'none',
+  matched: i % 2 === 0 ? ['OA'] : [], snippets: i, tokenEst: i * 10, elapsedMs: i,
+  reason: i % 2 === 0 ? 'hit' : 'no-trigger-match',
+})
+
+/** 渲染「触发日志」入口块（组件元素在 footer 内、保存按钮之后——R2「不前置 button」保持） */
+function renderLogEntry(tree) {
+  const footer = tree.children.find((c) => c && typeof c.type === 'string' && String(c.props?.className ?? '').includes('kb-context-settings-footer'))
+  assert.ok(footer, 'footer 在')
+  const entryEl = footer.children.find((c) => c && typeof c.type === 'function')
+  assert.ok(entryEl, '设置节含触发日志入口组件')
+  return entryEl.type(entryEl.props)
+}
+
+/** 从入口树取弹层组件元素（开态） */
+function modalOf(entryTree) {
+  return entryTree.children.find((c) => c && typeof c.type === 'function')
+}
+
+/** 渲染弹层并取日志体组件元素（自绘形嵌套在 panel 内，ui.Modal 形为直接子） */
+function renderLogBody(Section) {
+  const modalEl = modalOf(renderLogEntry(Section()))
+  assert.ok(modalEl, '开态有弹层组件')
+  const modalTree = modalEl.type(modalEl.props)
+  const bodyEl = logBodyOf(modalTree)
+  assert.ok(bodyEl, '弹层含日志体组件')
+  return { modalEl, modalTree, bodyEl }
+}
+
+/** 递归取弹层树内第一个组件元素（=日志体；自绘形嵌套在 panel 内，ui.Modal 形为直接子） */
+function logBodyOf(node) {
+  if (node === null || node === undefined) return null
+  if (Array.isArray(node)) {
+    for (const c of node) { const hit = logBodyOf(c); if (hit) return hit }
+    return null
+  }
+  if (typeof node !== 'object') return null
+  if (typeof node.type === 'function') return node
+  return logBodyOf(node.children ?? [])
+}
+
+async function renderLogOpen(mod, effects, Section, entries, extra = {}) {
+  const calls = []
+  mod.__fetch = async (url, init) => {
+    calls.push({ url, init })
+    if (url === 'api/kb-context/logs') {
+      return { json: async () => ({ entries, capacity: extra.capacity ?? 200, enabled: extra.enabled ?? true }) }
+    }
+    return { json: async () => ({ data: { config: READY_CONFIG, editable: [], writable: true } }) }
+  }
+  Section(); effects[0](); await tick(); await tick()
+  let tree = Section()
+  const btn = find(renderLogEntry(tree), (n) => n.type === 'button' && JSON.stringify(n.children).includes('查看触发日志'))
+  assert.ok(btn, '设置节有「查看触发日志」按钮')
+  btn.props.onClick()
+  await tick(); await tick()
+  tree = Section()
+  return { tree, calls }
+}
+
+test('kill switch（A-TL5）：triggerLog.enabled 布尔行在「触发日志」组；hint 如实（内存环/重启清空/引 TECH 真源，不夸大）', async () => {
+  const tree = await renderReady()
+  assert.match(JSON.stringify(tree.children), /触发日志/, '「触发日志」分组在')
+  const row = renderRow(tree, 'triggerLog.enabled')
+  const input = find(row, (n) => n.type === 'input' && n.props.type === 'checkbox')
+  assert.ok(input, 'kill switch=checkbox（boolean 形）')
+  assert.equal(input.props.checked, true, '当前值来自 config.triggerLog.enabled')
+  const t = hintText(row)
+  assert.match(t, /内存|环/, '如实：仅存内存环')
+  assert.match(t, /重启/, '如实：重启清空')
+  assert.match(t, /清空/, '如实：重启/清空口径')
+  assert.match(t, /TECH\.md/, '日志说明引 TECH 真源（INV-TL4）')
+  assert.doesNotMatch(t, /永不丢失|重启后(仍|保留|恢复)|持久化保存/, '不夸大：绝不暗示持久化')
+})
+
+test('「查看触发日志」按钮→弹层（A-TL6）：GET api/kb-context/logs 载入（文档相对）；条数 N/200；开合沿历史记录形', async () => {
+  const { mod, effects } = loadClientFace()
+  const registered = []
+  mod.apply(mkCtx(registered, []))
+  const Section = registered[0].component
+  const { tree, calls } = await renderLogOpen(mod, effects, Section, [logEntry(1), logEntry(2)])
+  assert.deepEqual(calls.map((c) => c.url), ['api/kb-context/settings', 'api/kb-context/logs'], '文档相对请求（issue #1707 教训）')
+  const entryTree = renderLogEntry(tree)
+  const btn = find(entryTree, (n) => n.type === 'button')
+  assert.match(JSON.stringify(btn.children), /收起触发日志/, '开合文案沿 wiki-steward 历史记录形')
+  assert.equal(btn.props['aria-expanded'], 'true')
+  const modalEl = modalOf(entryTree)
+  assert.ok(modalEl, '开态渲染弹层')
+  const modalTree = modalEl.type(modalEl.props)
+  assert.match(JSON.stringify(modalTree), /kb-context · 触发日志/, 'title 形制')
+  assert.match(JSON.stringify(modalTree), /关闭/, 'closeLabel 契约')
+  const bodyTree = renderLogBody(Section).bodyEl.type(renderLogBody(Section).bodyEl.props)
+  assert.match(JSON.stringify(bodyTree), /条数 2\/200/, '条数 N/200（US-2）')
+  const list = find(bodyTree, (n) => typeof n.props?.className === 'string' && n.props.className.includes('kb-context-log-list'))
+  assert.ok(list, '日志列表容器在')
+  assert.equal(list.children.length, 2)
+  assert.match(JSON.stringify(list.children[0]), /命中/, '条目含判定摘要')
+})
+
+test('弹层尾部 50 行 + 滚动加载（A-TL6）：初始 50、到底追加、未到底不追加', async () => {
+  const { mod, effects } = loadClientFace()
+  const registered = []
+  mod.apply(mkCtx(registered, []))
+  const Section = registered[0].component
+  const entries = []
+  for (let i = 0; i < 70; i++) entries.push(logEntry(i))
+  await renderLogOpen(mod, effects, Section, entries)
+  const bodyList = () => {
+    const bodyEl = renderLogBody(Section).bodyEl
+    const bodyTree = bodyEl.type(bodyEl.props)
+    return find(bodyTree, (n) => typeof n.props?.className === 'string' && n.props.className.includes('kb-context-log-list'))
+  }
+  let list = bodyList()
+  assert.equal(list.children.length, 50, '尾部 50 行初始')
+  list.props.onScroll({ target: { scrollHeight: 2000, scrollTop: 0, clientHeight: 100 } }) // 未到底（差 1900）
+  list = bodyList()
+  assert.equal(list.children.length, 50, '未到底不加载')
+  list.props.onScroll({ target: { scrollHeight: 2000, scrollTop: 1900, clientHeight: 95 } }) // 差 5 < 阈值
+  list = bodyList()
+  assert.equal(list.children.length, 70, '滚动到底加载余量（70 条全显）')
+  list.props.onScroll({ target: { scrollHeight: 2000, scrollTop: 1900, clientHeight: 95 } })
+  list = bodyList()
+  assert.equal(list.children.length, 70, '到底后不无限追加')
+})
+
+test('清空按钮（US-2）：POST api/kb-context/logs/clear → {cleared:n} 如实 notice + 清后 0 行', async () => {
+  const { mod, effects } = loadClientFace()
+  const registered = []
+  mod.apply(mkCtx(registered, []))
+  const Section = registered[0].component
+  const calls = []
+  mod.__fetch = async (url, init) => {
+    calls.push({ url, init })
+    if (url === 'api/kb-context/logs') return { json: async () => ({ entries: [logEntry(1), logEntry(2), logEntry(3)], capacity: 200, enabled: true }) }
+    if (url === 'api/kb-context/logs/clear') return { json: async () => ({ cleared: 3 }) }
+    return { json: async () => ({ data: { config: READY_CONFIG, editable: [], writable: true } }) }
+  }
+  Section(); effects[0](); await tick(); await tick()
+  let tree = Section()
+  find(renderLogEntry(tree), (n) => n.type === 'button' && JSON.stringify(n.children).includes('查看触发日志')).props.onClick()
+  await tick(); await tick()
+  const bodyEl = () => renderLogBody(Section).bodyEl
+  let bodyTree = bodyEl().type(bodyEl().props)
+  const clearBtn = find(bodyTree, (n) => n.type === 'button' && JSON.stringify(n.children).includes('清空日志'))
+  assert.ok(clearBtn, '清空按钮在')
+  clearBtn.props.onClick()
+  await tick(); await tick()
+  const post = calls.find((c) => c.init && c.init.method === 'POST')
+  assert.ok(post, 'POST logs/clear 发出')
+  assert.equal(post.url, 'api/kb-context/logs/clear')
+  bodyTree = bodyEl().type(bodyEl().props)
+  assert.match(JSON.stringify(bodyTree), /已清空 3 条/, 'notice 如实（cleared:n）')
+  const list = find(bodyTree, (n) => typeof n.props?.className === 'string' && n.props.className.includes('kb-context-log-list'))
+  assert.equal(list.children.length, 0, '清后 0 行')
+  assert.match(JSON.stringify(bodyTree), /条数 0\/200/, '条数归零')
+})
+
+test('弹层形沿 wiki-steward 历史记录（INV-TL5）：宿主 ui.Modal 在场=原生 Modal（title/closeLabel/onClose）；缺席=同契约自绘', async () => {
+  // 路径 1：宿主 primitives 在场 → 原生 Modal（wiki-steward lib/client.js:443 同形）
+  function ModalStub() {}
+  const face1 = loadClientFace({ Modal: ModalStub })
+  const reg1 = []
+  face1.mod.apply(mkCtx(reg1, []))
+  const S1 = reg1[0].component
+  await renderLogOpen(face1.mod, face1.effects, S1, [logEntry(1)])
+  const entryTree1 = renderLogEntry(S1())
+  const modalEl = modalOf(entryTree1)
+  const modalTree1 = modalEl.type(modalEl.props)
+  assert.equal(modalTree1.type, ModalStub, 'ui.Modal 在场=原生 Modal（渲染产物根=宿主控件）')
+  assert.equal(modalTree1.props.open, true)
+  assert.equal(modalTree1.props.title, 'kb-context · 触发日志')
+  assert.equal(modalTree1.props.closeLabel, '关闭')
+  assert.equal(typeof modalTree1.props.onClose, 'function', 'onClose 收口（遮罩/Escape 归宿主控件）')
+
+  // 路径 2：primitives 缺席（本包未注入 require 表）→ 同契约自绘（role=dialog + 遮罩 + Escape）
+  const { mod, effects } = loadClientFace()
+  const registered = []
+  mod.apply(mkCtx(registered, []))
+  const Section = registered[0].component
+  await renderLogOpen(mod, effects, Section, [logEntry(1)])
+  const entryTree = renderLogEntry(Section())
+  const modalEl2 = modalOf(entryTree)
+  assert.equal(typeof modalEl2.props.onClose, 'function', 'onClose 契约同 ui.Modal')
+  let closed = 0
+  const modalTree = modalEl2.type({ ...modalEl2.props, onClose: () => { closed += 1 } })
+  const dialog = find(modalTree, (n) => n.props?.role === 'dialog')
+  assert.ok(dialog, '自绘弹层=role dialog（无障碍）')
+  assert.equal(dialog.props['aria-modal'], 'true')
+  const backdrop = find(modalTree, (n) => typeof n.props?.className === 'string' && n.props.className.includes('kb-context-log-backdrop'))
+  assert.ok(backdrop, '遮罩在')
+  backdrop.props.onClick()
+  assert.equal(closed, 1, '遮罩点击→onClose 收口')
+  const esc = find(modalTree, (n) => typeof n.props?.onKeyDown === 'function')
+  assert.ok(esc, 'Escape 收口在')
+  esc.props.onKeyDown({ key: 'Escape' })
+  assert.equal(closed, 2, 'Escape→onClose 收口')
+})
+
+test('样式零新增 token 机械锁（INV-TL5）：SETTINGS_CSS 变量名⊆0.3.2 既有集；零硬编码色值；零新增自定义属性定义', () => {
+  const cssMatch = source.match(/var SETTINGS_CSS = \[([\s\S]*?)\]\.join/)
+  assert.ok(cssMatch)
+  const css = cssMatch[1]
+  const vars = [...css.matchAll(/var\((--[A-Za-z0-9-]+)/g)].map((m) => m[1])
+  assert.ok(vars.length > 0)
+  const ALLOWED = new Set([
+    '--dsw-font-family', '--ds-font-family-code',
+    '--dsw-alias-label-primary', '--dsw-alias-label-secondary', '--dsw-alias-label-tertiary', '--dsw-alias-label-dimmed',
+    '--dsw-alias-border-l2', '--dsw-alias-border-l4', '--dsw-alias-bg-layer-3',
+    '--dsw-alias-state-business-primary', '--dsw-alias-state-success-primary', '--dsw-alias-state-error-primary',
+    '--dsw-radius-md', '--dsw-focus-ring-width', '--dsw-focus-ring-color',
+  ])
+  for (const v of new Set(vars)) assert.ok(ALLOWED.has(v), `零新增 token（复用 0.3.2 既有集）：${v}`)
+  assert.doesNotMatch(css, /--[A-Za-z0-9-]+\s*:/, '不定义新自定义属性（零新增 token）')
+  assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b/, '禁硬编码色值（hex）')
+  assert.doesNotMatch(css, /rgba?\(/i, '禁硬编码色值（rgb/rgba）')
+  assert.doesNotMatch(css, /hsla?\(/i, '禁硬编码色值（hsl/hsla）')
+  assert.doesNotMatch(source, /prefers-color-scheme|data-ds-dark-theme/, '暗色不写分支')
+})
+
+test('弹层文案不夸大（INV-TL4）+ 零新增外部网络请求（INV-TL5）：fetch 目标全为 api/kb-context/*', async () => {
+  const { mod, effects } = loadClientFace()
+  const registered = []
+  mod.apply(mkCtx(registered, []))
+  const Section = registered[0].component
+  const calls = []
+  const { tree } = await renderLogOpen(mod, effects, Section, [logEntry(1)], { enabled: false })
+  void tree
+  mod.__fetch = async (url, init) => { calls.push(url); return { json: async () => ({ entries: [], capacity: 200, enabled: false }) } }
+  const bodyEl = renderLogBody(Section).bodyEl
+  const bodyTree = bodyEl.type(bodyEl.props)
+  const text = JSON.stringify(bodyTree)
+  assert.match(text, /重启/, '如实：重启清空')
+  assert.match(text, /清空/, '如实：清空口径')
+  assert.match(text, /TECH\.md/, '引 TECH 真源')
+  assert.doesNotMatch(text, /永不丢失|重启后(仍|保留|恢复)|持久化保存/, '不夸大')
+  assert.match(text, /已关闭/, 'kill switch 热关态在弹层如实可见')
+  assert.doesNotMatch(source, /fetch\s*\(\s*['"`]https?:/, '零外部网络请求（fetch 全文档相对）')
+  assert.doesNotMatch(source, /@deepseek-ai\/dsh-client-ui-primitives[^\n]*from|import\s+[^\n]*dsh-client-ui-primitives/, '零相对/静态 import（单文件自包含）')
+  for (const c of calls) assert.ok(String(c).startsWith('api/kb-context/'), `文档相对：${c}`)
 })

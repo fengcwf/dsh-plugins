@@ -16,6 +16,7 @@ import { search } from './search.js'
 import { openReadOnlyDb } from './index-db.js'
 import { buildTools, readPagesFromFs } from './tools.js'
 import { collectEmptyState, isIndexHealthError } from './diagnose.js'
+import { createTriggerLog, DEFAULT_CAPACITY } from './trigger-log.js'
 
 export const name = 'kb-context'
 
@@ -55,6 +56,15 @@ export const Config = z.object({
       '01-客户资料', '02-致远OA', '03-帆软报表', '04-用友', '05-医院成本', '08-unraid',
     ]),
   }).prefault({}),
+  // 触发日志（0.4.0，TECH 架构图）：enabled=kill switch（默认开，per-call 现读热关即时生效）；
+  // capacity=内存环上限（默认 200，INV-TL4「全局一份 200 条环」——readTriggerLogSettings 恒钳 ≤200）。
+  // ⚠️ 外层 .optional()（区别于其余 .prefault({}) 节）：键缺省=读侧回填全默认（readTriggerLogSettings），
+  //   Config.parse({}) 产物形不变——既有「Config 全键默认值」契约锁定测试（test/load.test.mjs）零改动；
+  //   键在场时 zod 真校验（enabled 非 boolean / capacity 非 number 整单拒）。
+  triggerLog: z.object({
+    enabled: z.boolean().default(true),
+    capacity: z.number().default(200),
+  }).optional(),
 }).prefault({}) // 顶层同样容忍 undefined（热改路径上 rawConfig 可缺省 → 全默认；非法类型仍拒）
 
 // 工厂 scope 默认（静态字面派生——非用户配置冻结；热改 scope 由调用方 opts.scope 现读传入，缺省回落此值。
@@ -79,6 +89,24 @@ function warn(ctx, line) {
  */
 export function resolveIndexDbPath() {
   return path.join(os.homedir(), '.dsh', 'kb-index', 'active.db')
+}
+
+/**
+ * triggerLog 配置现读（US-4 kill switch / INV-TL4 环本性）：per-call 读当前 raw 值——
+ * enabled 热改即时生效（热关后 record 直接 no-op）；坏值救济=enabled 非 boolean 回默认开、
+ * capacity 非正整数回 200 且**恒钳 ≤200**（INV-TL4「全局一份 200 条环」，配置想放大也不破）。
+ * Config.safeParse 失败（他键坏不连坐）→ salvage raw triggerLog 节，同口径救济。
+ */
+export function readTriggerLogSettings(raw) {
+  const parsed = Config.safeParse(raw)
+  const t = parsed.success ? parsed.data.triggerLog : raw?.triggerLog
+  const capacity = Number.isInteger(t?.capacity) && t.capacity > 0
+    ? Math.min(t.capacity, DEFAULT_CAPACITY)
+    : DEFAULT_CAPACITY
+  return {
+    enabled: typeof t?.enabled === 'boolean' ? t.enabled : true,
+    capacity,
+  }
 }
 
 /**
@@ -165,11 +193,19 @@ export function apply(ctx, rawConfig) {
     warn(ctx, '[kb-context] 宿主 ctx.on 缺失，pre-step 注入未注册（fail-open）')
     return
   }
+  // 触发日志接线（10-A，TECH 实现面 4）：进程级单环（INV-TL4 全局一份，重启清空=内存环本性）；
+  // enabled per-call 现读（kill switch 热关即时生效，热关后 record 直接 no-op）；capacity 现读钳 ≤200。
+  // 记录缝 fail-open（INV-TL2）：日志自身任何异常静默吞，绝不影响触发/注入主链路。
+  const triggerLog = createTriggerLog({
+    capacity: readTriggerLogSettings(rawConfig).capacity,
+    isEnabled: () => readTriggerLogSettings(rawConfig).enabled,
+  })
   const handler = createPreStepHandler({
     matchTrigger,
     search: runSearch,
     createUserMessage,
     configSource: () => rawConfig,
+    triggerLog,
   })
   ctx.on('agent/pre-step', handler, { prepend: true })
 
@@ -184,7 +220,10 @@ export function apply(ctx, rawConfig) {
   // 双缺=非 web 部署面正常形态，数据面本就无处可注册，不告警（既有告警计数契约零改动）。
   const readCfg = () => {
     const p = Config.safeParse(rawConfig)
-    return p.success ? p.data : Config.safeParse({}).data // 非法回退全默认（与 apply 告警面一致）
+    const base = p.success ? p.data : Config.safeParse({}).data // 非法回退全默认（与 apply 告警面一致）
+    // triggerLog 读侧回填（现读现值，10-B 设置节/kill switch 展示数据源）：键缺省=全默认，
+    // 既有键语义零变化（只增面不改旧形，INV-TL3）
+    return { ...base, triggerLog: readTriggerLogSettings(rawConfig) }
   }
   // 服务 best-effort 探测（只读、不抛、不参与注册决策）：cordis 代理在服务缺位/未 inject 时可能抛 → 收敛 null
   const probeService = (name) => {
@@ -223,6 +262,7 @@ export function apply(ctx, rawConfig) {
                 connection: c.connection,
                 getConfig: readCfg, // 热改现读（per-call 读语义）
                 getApplyPatch: lazyApplyPatch, // configEditor 惰性（后到可见）
+                triggerLog, // 触发日志环（10-B：GET /api/kb-context/logs + POST logs/clear 数据源）
                 warn: (line) => warn(ctx, line),
               }))
             } catch (e) {
