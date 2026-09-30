@@ -17,9 +17,11 @@ export const ENTRY_KEYS = Object.freeze([
   'ts', 'hit', 'channel', 'matched', 'snippets', 'tokenEst', 'elapsedMs', 'reason',
 ])
 
-/** reason 闭集（TECH「记录契约」字面）：hit=命中且入会话；其余=未入会话原因摘要 */
+/** reason 闭集（TECH「记录契约」字面 + 复审修复轮 2 增补 'dedup'）：hit=命中且入会话；
+ *  'dedup'=触发命中但去重跳过（同 turn/同 query/可见面 SHA-1，本次入会话片段 0）；
+ *  其余=未入会话原因摘要。新增枚举成员须过脱敏审查（闭集纪律同键集）。 */
 export const ENTRY_REASONS = Object.freeze([
-  'hit', 'no-user-source', 'no-trigger-match', 'no-hits', 'timeout', 'error',
+  'hit', 'dedup', 'no-user-source', 'no-trigger-match', 'no-hits', 'timeout', 'error',
 ])
 
 /** channel 闭集：words=词面窄表 / entity=索引实体 / none=未命中 */
@@ -64,7 +66,7 @@ function normalizeEntry(entry, nowMs) {
  * @param {() => boolean} [opts.isEnabled=()=>true] kill switch 现读缝（每次 record 现调；false=no-op）
  * @returns {{record: Function, list: Function, clear: Function, stats: Function}}
  *  - `record(entry)`：归一后入环（覆写最旧）；任何异常/关闭态静默吞，返回存入的 entry 或 undefined。
- *  - `list()`：时间倒序数组（最新在前）。
+ *  - `list()`：时间倒序数组（最新在前）；**快照**——entry 浅拷贝（含 matched 切片），调用方随意改动不破环。
  *  - `clear()`：清空环（可继续用）。
  *  - `stats()`：`{count, capacity, enabled}`（enabled 现读）。
  */
@@ -93,7 +95,11 @@ export function createTriggerLog({ capacity = DEFAULT_CAPACITY, isEnabled = () =
   const list = () => {
     try {
       const out = []
-      for (let i = 0; i < size; i++) out.push(ring[(head - 1 - i + cap) % cap]) // 时间倒序（最新在前）
+      for (let i = 0; i < size; i++) {
+        const e = ring[(head - 1 - i + cap) % cap] // 时间倒序（最新在前）
+        // 浅拷贝（复审修复轮 2）：entry 本体 + matched 数组各切一刀——调用方改动/排序不污染环内真身
+        out.push({ ...e, matched: e.matched.slice() })
+      }
       return out
     } catch {
       return []

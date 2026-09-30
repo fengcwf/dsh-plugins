@@ -207,9 +207,10 @@ function matchedVocab(text, raw) {
 
 /**
  * token 粗口径估算（同 lib/search.js estimateTokens：CJK/假名/谚文/兼容表意 ≈1 token 每码点，
- * 其余 ≈4 字符 1 token）。不 import search.js——保持注入面零索引层静态依赖（本文件不碰索引）。
+ * 其余 ≈4 字符 1 token）。不 import search.js——保持注入面零索引层静态依赖（本文件不碰索引）；
+ * 双实现一致性由 test/inject.test.mjs 对拍测试钉住（复审修复轮 2 可选项）。
  */
-function estimateTokenCost(text) {
+export function estimateTokenCost(text) {
   let cjk = 0
   let other = 0
   for (const ch of String(text ?? '')) {
@@ -279,7 +280,8 @@ function rejectOnAbort(signal) {
  * @param {(payload: object, decision: object) => Array} [deps.observeSurface] 可见面观察器（默认 decision.messages ?? payload.messages）。
  * @param {() => number} [deps.now] 时钟缝（10s 去重窗测试锚定）。
  * @param {{record: Function}} [deps.triggerLog] 触发日志记录缝（10-A，lib/trigger-log.js 环；可缺省=无日志，
- *   旧消费面零改动）。记录点=用户源评估各出口（hit/no-trigger-match/no-hits/timeout/error）；
+ *   旧消费面零改动）。记录点=用户源评估各出口（hit/dedup/no-trigger-match/no-hits/timeout/error；
+ *   'dedup'=触发命中但去重跳过——同 turn/同 query/可见面 SHA-1，本次入会话片段 0，修复轮 2 从 no-hits 拆出）；
  *   **仅 source.kind==='user' 的评估入环**（非用户消息不评估也不记录，A-TL2 防刷屏）。
  *   fail-open 双层（INV-TL2）：本缝 try/catch 包裹 + record 自身吞错——记录缝抛错/坏 getter 一律
  *   静默吞，触发/注入主链路结果与零日志时逐字节一致（A-TL3）。
@@ -311,12 +313,16 @@ export function createPreStepHandler({
     // 触发日志记录缝（10-A）：仅 source.kind==='user' 的评估入环（无用户源出口零记录，A-TL2）。
     // evalState=沿流水线累计的判定摘要（hit=触发命中/通道/命中成员——INV-TL1 只落配置词表成员）；
     // rec() 自身 try/catch（INV-TL2 第一层）+ record 兜底吞错（第二层）——记录缝抛错逐字节不改主链路结果。
-    const t0 = now()
+    // ⚠️ 记录缝零裸露调用（复审修复轮 2）：取时一律走 safeNow（try 包裹收敛 0）——now 缝自身抛错
+    //   也绝不穿出记录缝；triggerLog 缺省时零取时零开销。
+    const safeNow = () => { try { return now() } catch { return 0 } }
+    const t0 = triggerLog ? safeNow() : 0
     const state = { hit: false, channel: 'none', matched: [], snippets: 0, tokenEst: 0 }
     const rec = (reason, patch) => {
       try {
         if (!triggerLog) return
-        triggerLog.record({ ...state, ...(patch ?? {}), ts: now(), elapsedMs: Math.max(0, now() - t0), reason })
+        const at = safeNow()
+        triggerLog.record({ ...state, ...(patch ?? {}), ts: at, elapsedMs: Math.max(0, at - t0), reason })
       } catch { /* INV-TL2：记录缝自身任何异常静默吞，绝不影响触发/注入主链路 */ }
     }
 
@@ -364,7 +370,7 @@ export function createPreStepHandler({
 
       // ② 同 turn 一次（检索前挡，省多余检索）
       if (hasInjectedTurn && Object.is(lastInjectedTurn, payload?.turn)) {
-        rec('no-hits') // 跳过出口也入环（各出口记录）：命中但本次入会话片段 0（闭集无 dedup 成员，归 no-hits 口径）
+        rec('dedup') // 去重跳过出口（修复轮 2：'dedup' 从 no-hits 拆出）：命中但本次入会话片段 0
         return skip(decision, configDegraded, 'dedup-turn')
       }
       // ③ 同 query 10s（检索前挡；剪除过期项保持有界）
@@ -373,7 +379,7 @@ export function createPreStepHandler({
         if (ts - at >= QUERY_DEDUP_MS) recentQueries.delete(q)
       }
       if (recentQueries.has(t.query)) {
-        rec('no-hits') // 同上：去重跳过出口入环
+        rec('dedup') // 去重跳过出口（修复轮 2）：同 query 10s 窗内跳过
         return skip(decision, configDegraded, 'dedup-query')
       }
 
@@ -430,7 +436,7 @@ export function createPreStepHandler({
         }
         const surface = observeSurface(payload, decision)
         if (digestOf(visibleText(message)) === lastRecallDigest(surface)) {
-          rec('no-hits') // 可见面去重跳过出口：本次入会话片段 0
+          rec('dedup') // 去重跳过出口（修复轮 2）：可见面 SHA-1 同文拦截，本次入会话片段 0
           return skip(decision, configDegraded, 'dedup-surface')
         }
         // 诊断不占 ②③ 名额（审前裁定②）：不写 turn/query 槽——同窗随后真命中仍可注入
@@ -456,7 +462,7 @@ export function createPreStepHandler({
       // ① 可见面 SHA-1 去重（纯函数 lastRecallDigest + 可注入观察器 observeSurface）
       const surface = observeSurface(payload, decision)
       if (digestOf(visibleText(message)) === lastRecallDigest(surface)) {
-        rec('no-hits') // 可见面去重跳过出口：本次入会话片段 0
+        rec('dedup') // 去重跳过出口（修复轮 2）：可见面 SHA-1 同文拦截，本次入会话片段 0
         return skip(decision, configDegraded, 'dedup-surface')
       }
 

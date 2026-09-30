@@ -84,7 +84,7 @@ test('鉴权缝：requestRejection 回拒 → 401/403 {error:{code}}，业务面
   assert.equal(res2.json().error.code, 'forbidden')
 })
 
-test('GET settings：Config 面 + 可改白名单 7 叶子 + writable 缺缝如实（false）', async () => {
+test('GET settings：Config 面 + 可改白名单 8 叶子 + writable 缺缝如实（false）', async () => {
   const { host } = mkSetup()
   const res = await call(host, { url: '/api/kb-context/settings' })
   assert.equal(res.status, 200)
@@ -225,16 +225,18 @@ test('GET /api/kb-context/logs：200 {entries,capacity,enabled}（entries 时间
   const res = await call(host, { url: '/api/kb-context/logs' })
   assert.equal(res.status, 200)
   const body = res.json()
-  assert.deepEqual(Object.keys(body).sort(), ['capacity', 'enabled', 'entries'], '成功形=TECH 实现面 3 字面 {entries,capacity,enabled}')
-  assert.equal(body.capacity, 200)
-  assert.equal(body.enabled, true)
-  assert.equal(body.entries.length, 3)
-  assert.deepEqual(body.entries.map((e) => e.ts), [1003, 1002, 1001], '时间倒序（最新在前）')
-  for (const e of body.entries) {
-    assert.deepEqual(Object.keys(e).sort(), [...ENTRY_KEYS].sort(), 'INV-TL1 机械断言：entry 键集==白名单 8 键')
+  // A-TL1 机械断言按新形重建（ledger R-5：成功形统一 {data:…} 包络）：顶层 ['data'] + 内层 3 键 + entry 8 键
+  assert.deepEqual(Object.keys(body), ['data'], '成功形=统一 {data:…} 包络（顶层仅 data）')
+  assert.deepEqual(Object.keys(body.data).sort(), ['capacity', 'enabled', 'entries'], '内层 3 键 {entries,capacity,enabled}')
+  assert.equal(body.data.capacity, 200)
+  assert.equal(body.data.enabled, true)
+  assert.equal(body.data.entries.length, 3)
+  assert.deepEqual(body.data.entries.map((e) => e.ts), [1003, 1002, 1001], '时间倒序（最新在前）')
+  for (const e of body.data.entries) {
+    assert.deepEqual(Object.keys(e).sort(), [...ENTRY_KEYS].sort(), 'INV-TL1 机械断言：entry 键集==白名单 8 键（不变）')
   }
-  assert.deepEqual(body.entries[1].matched, ['OA'], '命中词/路径面透传（配置词表成员，偶数条=hit）')
-  assert.deepEqual(body.entries[0].matched, [], '未命中条 matched 空（零原文）')
+  assert.deepEqual(body.data.entries[1].matched, ['OA'], '命中词/路径面透传（配置词表成员，偶数条=hit）')
+  assert.deepEqual(body.data.entries[0].matched, [], '未命中条 matched 空（零原文）')
 })
 
 test('POST /api/kb-context/logs/clear：200 {cleared:n}（n=清空前条数）；清后 GET entries 空', async () => {
@@ -242,13 +244,14 @@ test('POST /api/kb-context/logs/clear：200 {cleared:n}（n=清空前条数）�
   const { host } = mkSetup({ triggerLog: log })
   const res = await call(host, { method: 'POST', url: '/api/kb-context/logs/clear' })
   assert.equal(res.status, 200)
-  assert.deepEqual(Object.keys(res.json()), ['cleared'], '成功形=TECH 实现面 3 字面 {cleared:n}')
-  assert.equal(res.json().cleared, 2, 'cleared=清空前条数（A-TL4）')
+  assert.deepEqual(Object.keys(res.json()), ['data'], '成功形=统一 {data:…} 包络（顶层仅 data）')
+  assert.deepEqual(Object.keys(res.json().data), ['cleared'], '内层 {cleared:n}')
+  assert.equal(res.json().data.cleared, 2, 'cleared=清空前条数（A-TL4）')
   const after = await call(host, { url: '/api/kb-context/logs' })
   assert.equal(after.status, 200)
-  assert.deepEqual(after.json().entries, [], '清后零条目')
+  assert.deepEqual(after.json().data.entries, [], '清后零条目')
   const again = await call(host, { method: 'POST', url: '/api/kb-context/logs/clear' })
-  assert.equal(again.json().cleared, 0, '空环再清=0（如实不虚报）')
+  assert.equal(again.json().data.cleared, 0, '空环再清=0（如实不虚报）')
 })
 
 test('logs 双端点：鉴权缝回拒=401/403 {error:{code}}（沿既有包络）；方法守卫=405+allow；缺数据源=503 logs_unavailable', async () => {
@@ -285,9 +288,18 @@ test('logs 端点：环 enabled 现读透传（kill switch 热关后 GET enabled
   const { host } = mkSetup({ triggerLog: log })
   on = false
   const res = await call(host, { url: '/api/kb-context/logs' })
-  assert.equal(res.json().enabled, false, 'enabled 现读（A-TL5 热关可见）')
-  assert.equal(res.json().entries.length, 1, '热关不清旧条目（record no-op 语义）')
+  assert.equal(res.json().data.enabled, false, 'enabled 现读（A-TL5 热关可见）')
+  assert.equal(res.json().data.entries.length, 1, '热关不清旧条目（record no-op 语义）')
   const res2 = await call(host, { url: '/api/kb-context/nope' })
   assert.equal(res2.status, 404)
   assert.equal(res2.json().error.code, 'not_found')
+})
+
+test('capacity 回退=常量 200（DEFAULT_CAPACITY 口径）而非 entries.length（stats 缺位救济）', async () => {
+  const bare = { list: () => [{ ts: 1, hit: true, channel: 'words', matched: [], snippets: 0, tokenEst: 0, elapsedMs: 0, reason: 'hit' }], clear: () => {} }
+  const { host } = mkSetup({ triggerLog: bare })
+  const res = await call(host, { url: '/api/kb-context/logs' })
+  assert.equal(res.status, 200)
+  assert.equal(res.json().data.entries.length, 1)
+  assert.equal(res.json().data.capacity, 200, '回退常量 200（不取 entries.length=1）')
 })

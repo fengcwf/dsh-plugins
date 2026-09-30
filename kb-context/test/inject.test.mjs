@@ -87,7 +87,7 @@ function harness(opts = {}) {
     }),
     configSource: () => cfg.raw,
     observeSurface: (payload, decision) => { calls.observe++; return surface.messages },
-    now: () => clock,
+    now: opts.now ?? (() => clock), // 时钟缝可注入（修复轮 2：抛错时钟 fail-open 用例）
   })
   return {
     handler, calls, cfg, surface,
@@ -735,8 +735,9 @@ test('§4.4 builder 级：文本体构建即中和（干净片段原样含框架
 // entry 语义契约（TECH「记录契约」）：hit=触发判定命中（matchTrigger.matched）；channel=触发通道
 // （words|entity|none）；matched=命中元素名（**仅配置词表/实体路径成员**，INV-TL1 消息原文零落）；
 // snippets=本次入会话片段数（诊断注入=0）；tokenEst=注入文本粗口径 token 估算；elapsedMs=评估耗时；
-// reason=流水线结局（闭集：hit|no-trigger-match|no-hits|timeout|error；no-user-source 为闭集保留字面，
-// 按 A-TL2「非用户消息不评估也不记录」当前接线不产生）。
+// reason=流水线结局（闭集：hit|dedup|no-trigger-match|no-hits|timeout|error；dedup=触发命中但去重跳过
+// ——同 turn/同 query/可见面 SHA-1，本次入会话片段 0，修复轮 2 从 no-hits 拆出；no-user-source 为闭集
+// 保留字面，按 A-TL2「非用户消息不评估也不记录」当前接线不产生）。
 
 /** 真件 trigger-log（lazy import：缺模块时只有本块用例红，旧用例不受染） */
 async function newTriggerLog(opts) {
@@ -882,14 +883,14 @@ test('A-TL3 fail-open 实证：记录缝抛错/坏 getter/空缝下主链路结�
   }
 })
 
-test('去重跳过出口也入环（各出口记录）：同 turn 二次评估 → entry{hit:true,reason:"no-hits",snippets:0}', async () => {
+test('去重跳过出口也入环（各出口记录）：同 turn 二次评估 → entry{hit:true,reason:"dedup",snippets:0}', async () => {
   const log = await newTriggerLog({})
   const h = harness({ triggerLog: log })
   await run(h, { turn: 7, text: 'wiki 成本核算' })
   await run(h, { turn: 7, text: 'wiki 成本核算' })
   const entries = log.list()
   assert.equal(entries.length, 2, '每次用户源评估各一条（含跳过出口）')
-  assert.equal(entries[0].reason, 'no-hits', '跳过出口归「本次入会话片段 0」口径（闭集无 dedup 成员）')
+  assert.equal(entries[0].reason, 'dedup', '去重跳过出口=独立 reason（修复轮 2：从 no-hits 拆出）')
   assert.equal(entries[0].hit, true, '触发判定命中（同 turn 去重跳过）')
   assert.equal(entries[0].snippets, 0)
   assert.equal(entries[1].reason, 'hit', '首条真注入')
@@ -906,4 +907,44 @@ test('triggerLog.enabled 现读（kill switch）：热关后零新增 entry、�
   const { result, decision } = await run(h, { turn: 2, text: 'wiki 入账口径' })
   assert.equal(result.messages.length, decision.messages.length + 1, '热关只灭日志，注入主链路照常')
   assert.equal(log.list().length, 1, '热关后零新增 entry（A-TL5 语义）')
+})
+
+// ── S9：复审修复轮 2 回归锚（记录缝零裸露 / 双实现一致）────────────────────────
+
+test('修复轮2：now 缝全程抛错时记录缝零裸露——handler 不炸且主链路结果与零日志逐字节一致', async () => {
+  const boomClock = () => { throw new Error('clock boom') }
+  const scenarios = [
+    { name: 'miss', opts: {}, text: '成本核算入账口径' },
+    { name: 'hit', opts: {}, text: 'wiki 成本核算' },
+    { name: 'zero-hits', opts: { hits: [] }, text: 'wiki 成本核算' },
+    { name: 'timeout', opts: { rawConfig: { timeoutMs: 0 } }, text: 'wiki 成本核算' },
+  ]
+  for (const s of scenarios) {
+    const base = await run(harness({ ...s.opts, now: boomClock }), { text: s.text })
+    const expected = JSON.stringify(base.result) // 同抛错时钟的零日志基线
+    const log = await newTriggerLog({})
+    const { result } = await run(harness({ ...s.opts, now: boomClock, triggerLog: log }), { text: s.text })
+    assert.equal(JSON.stringify(result), expected, `抛错时钟下逐字节一致（${s.name}）——记录缝零裸露调用`)
+    assert.doesNotThrow(() => log.list(), '环自身照常可用')
+    for (const e of log.list()) {
+      assert.ok(Number.isFinite(e.ts) && Number.isFinite(e.elapsedMs), '取时异常收敛安全数值（0），entry 不破形')
+    }
+  }
+})
+
+test('修复轮2：token 估算双实现一致性（inject.estimateTokenCost ↔ search.estimateTokens）', async () => {
+  const { estimateTokenCost } = await import('../lib/inject.js')
+  const { estimateTokens } = await import('../lib/search.js')
+  const samples = [
+    '',
+    'hello world',
+    '索引目录总说明',
+    'wiki 索引 abc 混排',
+    '医院成本核算口径说明保持原样。',
+    '<kb-context source="wiki/INDEX.md:3-12">索引目录总说明</kb-context>',
+    '0123456789abcdef',
+  ]
+  for (const s of samples) {
+    assert.equal(estimateTokenCost(s), estimateTokens(s), `双实现必须同口径：${JSON.stringify(s)}`)
+  }
 })

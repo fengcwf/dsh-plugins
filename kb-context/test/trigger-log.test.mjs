@@ -101,6 +101,18 @@ test('INV-TL1：reason/channel 枚举强制——自由文本（如消息原文�
   assert.ok(!JSON.stringify(entry).includes('私事'), '用户消息正文零落（INV-TL1 红线）')
 })
 
+test('reason 闭集增补成员 "dedup"（修复轮 2）：合法枚举原样保留、闭集表含 dedup', () => {
+  const log = createTriggerLog({})
+  log.record({ ...FULL, reason: 'dedup' })
+  const [entry] = log.list()
+  assert.equal(entry.reason, 'dedup', '合法枚举成员不得被收敛（dedup 保留）')
+  assert.ok(ENTRY_REASONS.includes('dedup'), 'ENTRY_REASONS 必须含 dedup（去重跳过出口专用）')
+  // 闭集表机械形状：七个成员一个不多一个不少
+  assert.deepEqual([...ENTRY_REASONS].sort(), [
+    'dedup', 'error', 'hit', 'no-hits', 'no-trigger-match', 'no-user-source', 'timeout',
+  ])
+})
+
 test('INV-TL1：matched 只保字符串数组（配置词表/实体路径成员形），数值/对象成员剔除', () => {
   const log = createTriggerLog({})
   log.record({ ...FULL, matched: ['wiki', 42, null, { evil: 'x' }, 'INDEX.md'] })
@@ -181,6 +193,14 @@ test('list() 时间倒序且为快照（外改不污染环）', () => {
   assert.deepEqual(entries.map((e) => e.ts), [2, 1])
   entries.pop()
   assert.equal(log.list().length, 2, 'list() 返回独立数组（调用方改它不破环）')
+  // 浅拷贝（复审修复轮 2）：改 entry 本体/排序 matched 也不污染环内真身
+  const [first] = log.list()
+  first.hit = false
+  first.matched.reverse()
+  first.matched.push('污染')
+  const again = log.list()
+  assert.equal(again[0].hit, true, 'entry 本体改动不入环')
+  assert.deepEqual(again[0].matched, ['wiki'], 'matched 数组改动不入环（切片隔离）')
 })
 
 test('容量参数救济：capacity 非法（0/负/NaN/非整数）回退 200，环不塌', () => {

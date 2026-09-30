@@ -13,6 +13,7 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const CLIENT_PATH = fileURLToPath(new URL('../lib/client.js', import.meta.url))
+const TRIGGER_LOG_PATH = fileURLToPath(new URL('../lib/trigger-log.js', import.meta.url))
 const source = fs.readFileSync(CLIENT_PATH, 'utf8')
 
 function loadClientFace(uiStub) {
@@ -421,7 +422,7 @@ async function renderLogOpen(mod, effects, Section, entries, extra = {}) {
   mod.__fetch = async (url, init) => {
     calls.push({ url, init })
     if (url === 'api/kb-context/logs') {
-      return { json: async () => ({ entries, capacity: extra.capacity ?? 200, enabled: extra.enabled ?? true }) }
+      return { json: async () => ({ data: { entries, capacity: extra.capacity ?? 200, enabled: extra.enabled ?? true } }) }
     }
     return { json: async () => ({ data: { config: READY_CONFIG, editable: [], writable: true } }) }
   }
@@ -508,8 +509,8 @@ test('清空按钮（US-2）：POST api/kb-context/logs/clear → {cleared:n} �
   const calls = []
   mod.__fetch = async (url, init) => {
     calls.push({ url, init })
-    if (url === 'api/kb-context/logs') return { json: async () => ({ entries: [logEntry(1), logEntry(2), logEntry(3)], capacity: 200, enabled: true }) }
-    if (url === 'api/kb-context/logs/clear') return { json: async () => ({ cleared: 3 }) }
+    if (url === 'api/kb-context/logs') return { json: async () => ({ data: { entries: [logEntry(1), logEntry(2), logEntry(3)], capacity: 200, enabled: true } }) }
+    if (url === 'api/kb-context/logs/clear') return { json: async () => ({ data: { cleared: 3 } }) }
     return { json: async () => ({ data: { config: READY_CONFIG, editable: [], writable: true } }) }
   }
   Section(); effects[0](); await tick(); await tick()
@@ -567,10 +568,8 @@ test('弹层形沿 wiki-steward 历史记录（INV-TL5）：宿主 ui.Modal 在�
   assert.ok(backdrop, '遮罩在')
   backdrop.props.onClick()
   assert.equal(closed, 1, '遮罩点击→onClose 收口')
-  const esc = find(modalTree, (n) => typeof n.props?.onKeyDown === 'function')
-  assert.ok(esc, 'Escape 收口在')
-  esc.props.onKeyDown({ key: 'Escape' })
-  assert.equal(closed, 2, 'Escape→onClose 收口')
+  assert.equal(find(modalTree, (n) => typeof n.props?.onKeyDown === 'function'), null, 'Escape 不直挂 dialog（统一 document 收口，防 dialog+document 双触发翻转）')
+  // Escape 收口见下「焦点在外时 Escape 仍收口」用例（document 派发，不绕过前提）
 })
 
 test('样式零新增 token 机械锁（INV-TL5）：SETTINGS_CSS 变量名⊆0.3.2 既有集；零硬编码色值；零新增自定义属性定义', () => {
@@ -602,7 +601,7 @@ test('弹层文案不夸大（INV-TL4）+ 零新增外部网络请求（INV-TL5�
   const calls = []
   const { tree } = await renderLogOpen(mod, effects, Section, [logEntry(1)], { enabled: false })
   void tree
-  mod.__fetch = async (url, init) => { calls.push(url); return { json: async () => ({ entries: [], capacity: 200, enabled: false }) } }
+  mod.__fetch = async (url, init) => { calls.push(url); return { json: async () => ({ data: { entries: [], capacity: 200, enabled: false } }) } }
   const bodyEl = renderLogBody(Section).bodyEl
   const bodyTree = bodyEl.type(bodyEl.props)
   const text = JSON.stringify(bodyTree)
@@ -610,8 +609,63 @@ test('弹层文案不夸大（INV-TL4）+ 零新增外部网络请求（INV-TL5�
   assert.match(text, /清空/, '如实：清空口径')
   assert.match(text, /TECH\.md/, '引 TECH 真源')
   assert.doesNotMatch(text, /永不丢失|重启后(仍|保留|恢复)|持久化保存/, '不夸大')
-  assert.match(text, /已关闭/, 'kill switch 热关态在弹层如实可见')
+  assert.match(text, /kill switch 已关闭，不再新增记录（旧条目仍在）/, '如实口径：热关=不再新增记录、旧条目仍在（绝非「当前零记录」）')
   assert.doesNotMatch(source, /fetch\s*\(\s*['"`]https?:/, '零外部网络请求（fetch 全文档相对）')
   assert.doesNotMatch(source, /@deepseek-ai\/dsh-client-ui-primitives[^\n]*from|import\s+[^\n]*dsh-client-ui-primitives/, '零相对/静态 import（单文件自包含）')
   for (const c of calls) assert.ok(String(c).startsWith('api/kb-context/'), `文档相对：${c}`)
+})
+
+test('Escape 收口挂 document（焦点在外仍收口）：开启挂监听、关闭移除；绝不直接对 dialog 元素派发绕过前提', async () => {
+  const listeners = new Set()
+  const docStub = {
+    getElementById: () => null,
+    createElement: () => ({ setAttribute() {}, textContent: '' }),
+    head: { appendChild() {} },
+    documentElement: { appendChild() {} },
+    addEventListener: (type, fn) => { if (type === 'keydown') listeners.add(fn) },
+    removeEventListener: (type, fn) => { if (type === 'keydown') listeners.delete(fn) },
+  }
+  const prevDoc = globalThis.document
+  globalThis.document = docStub
+  try {
+    const { mod, effects } = loadClientFace()
+    const registered = []
+    mod.apply(mkCtx(registered, []))
+    const Section = registered[0].component
+    await renderLogOpen(mod, effects, Section, [logEntry(1)])
+    assert.equal(listeners.size, 0, '关闭态零 document 监听（弹层未渲染=零挂载）')
+    const modalEl = modalOf(renderLogEntry(Section()))
+    let closed = 0
+    const modalTree = modalEl.type({ ...modalEl.props, onClose: () => { closed += 1 } })
+    const escapeEffect = effects[effects.length - 1] // Modal 挂载效果=document keydown 收口缝
+    assert.equal(typeof escapeEffect, 'function', 'Modal 挂载注册 effect')
+    const cleanup = escapeEffect()
+    assert.equal(listeners.size, 1, '开启挂 document keydown 监听')
+    // 「焦点在外」前提：事件经 document 挂载的收口缝派发，绝不直接对 dialog 元素派发绕过前提
+    for (const fn of listeners) fn({ key: 'Escape' })
+    assert.equal(closed, 1, '焦点在外时 Escape 仍收口')
+    for (const fn of listeners) fn({ key: 'a' })
+    assert.equal(closed, 1, '非 Escape 键不收口')
+    assert.equal(typeof cleanup, 'function', 'effect 返回拆除器')
+    cleanup()
+    assert.equal(listeners.size, 0, '关闭时移除监听（零泄漏）')
+    assert.ok(modalTree, '自绘弹层树渲染成功')
+  } finally {
+    if (prevDoc === undefined) delete globalThis.document
+    else globalThis.document = prevDoc
+  }
+})
+
+test('reason label 表机械比对：client 源码 label 键集 ⊇ lib/trigger-log.js ENTRY_REASONS（单文件自包含禁 import，读源码比对）', () => {
+  const triggerLogSource = fs.readFileSync(TRIGGER_LOG_PATH, 'utf8')
+  const reasonsMatch = triggerLogSource.match(/export const ENTRY_REASONS = Object\.freeze\(\[([\s\S]*?)\]\)/)
+  assert.ok(reasonsMatch, 'ENTRY_REASONS 可解析')
+  const reasons = [...reasonsMatch[1].matchAll(/'([a-z-]+)'/g)].map((m) => m[1])
+  assert.ok(reasons.includes('dedup'), "ENTRY_REASONS 含 'dedup'（修复轮 2 增补）")
+  assert.ok(reasons.includes('hit') && reasons.includes('error'), 'reason 闭集基线在')
+  const labelsMatch = source.match(/var REASON_LABELS = \{([\s\S]*?)\n\s*\}/)
+  assert.ok(labelsMatch, 'REASON_LABELS 可解析')
+  const labelKeys = [...labelsMatch[1].matchAll(/(?:^|[\s{,])['"]?([a-z][a-z0-9-]*)['"]?\s*:/gm)].map((m) => m[1])
+  assert.ok(labelKeys.includes('dedup'), "label 表补 'dedup'（如「命中但本 turn 已注入（去重跳过）」）")
+  for (const r of reasons) assert.ok(labelKeys.includes(r), `label 表覆盖 reason：${r}（label 键集 ⊇ ENTRY_REASONS）`)
 })

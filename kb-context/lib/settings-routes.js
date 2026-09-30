@@ -2,13 +2,15 @@
 //   ctx.webServer.register({kind:"prefix", path:"/api/kb-context", ...}) 单 prefix 注册 + 内部分发：
 //   GET  /api/kb-context/settings   设置面展示（Config 面 + 可改白名单 + writable 缺缝如实）
 //   POST /api/kb-context/settings   设置面写入（可改白名单 → configEditor 缝持久化热生效）
-//   GET  /api/kb-context/logs       触发日志环条目（0.4.0，TECH 实现面 3：200 {entries,capacity,enabled}）
-//   POST /api/kb-context/logs/clear 触发日志清空（0.4.0：200 {cleared:n}，弹层清空按钮用）
-// API 形：settings 面成功 {data}；logs 双端点成功形按 TECH 实现面 3 字面 {entries,capacity,enabled} /
-// {cleared:n}；失败一律 {error:{code,message}} 包络（错误形沿既有）。每条 handler 第一行过鉴权缝
+//   GET  /api/kb-context/logs       触发日志环条目（0.4.0，TECH 实现面 3：200 {data:{entries,capacity,enabled}}）
+//   POST /api/kb-context/logs/clear 触发日志清空（0.4.0：200 {data:{cleared:n}}，弹层清空按钮用）
+// API 形：成功统一 {data:…} 包络（settings 面 {data:{config,editable,writable}}；logs 双端点
+// {data:{entries,capacity,enabled}} / {data:{cleared:n}}——ledger R-5 修订，原顶层键字面废止）；
+// 失败一律 {error:{code,message}} 包络（错误形沿既有）。每条 handler 第一行过鉴权缝
 // （connection.requestRejection —— OW-INV-8 同款）。客户端一律文档相对请求 api/kb-context/…
 // （无前导斜杠——skill-explorer issue #1707 教训）。
 import { EDITABLE_PATHS } from './settings-write.js'
+import { DEFAULT_CAPACITY } from './trigger-log.js'
 
 export const API_PREFIX = '/api/kb-context'
 
@@ -118,9 +120,12 @@ export function registerSettingsRoutes({ register, connection, getConfig, applyP
       const entries = Array.isArray(raw) ? raw : []
       const st = safeStats(log)
       sendJson(res, 200, {
-        entries, // list() 契约=时间倒序（最新在前，lib/trigger-log.js）
-        capacity: Number.isInteger(st.capacity) && st.capacity > 0 ? st.capacity : entries.length,
-        enabled: st.enabled !== false,
+        data: {
+          entries, // list() 契约=时间倒序（最新在前，lib/trigger-log.js）
+          // 回退=常量 200（DEFAULT_CAPACITY 口径），绝非 entries.length（stats 缺位不虚报环容量）
+          capacity: Number.isInteger(st.capacity) && st.capacity > 0 ? st.capacity : DEFAULT_CAPACITY,
+          enabled: st.enabled !== false,
+        },
       })
     } catch (e) {
       warn(`[kb-context] 触发日志读取失败：${e?.message ?? e}`)
@@ -141,7 +146,7 @@ export function registerSettingsRoutes({ register, connection, getConfig, applyP
         ? st.count
         : (Array.isArray(log.list()) ? log.list().length : 0)
       log.clear()
-      sendJson(res, 200, { cleared })
+      sendJson(res, 200, { data: { cleared } })
     } catch (e) {
       warn(`[kb-context] 触发日志清空失败：${e?.message ?? e}`)
       fail(res, 500, 'internal', String(e?.message ?? e))

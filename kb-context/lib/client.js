@@ -22,7 +22,8 @@ window.__ModuleLoader__.load({
 
     // 文档相对（无前导斜杠）：与宿主 <base href="./"> 同基
     var SETTINGS_URL = 'api/kb-context/settings'
-    // 触发日志数据面（0.4.0）：GET 环条目 / POST 清空（lib/settings-routes.js，TECH 实现面 3 同源）
+    // 触发日志数据面（0.4.0）：GET 环条目 / POST 清空（lib/settings-routes.js，TECH 实现面 3 同源）。
+    // 响应形=统一 {data:…} 包络：GET {data:{entries,capacity,enabled}}、POST {data:{cleared:n}}（ledger R-5 修订）
     var LOGS_URL = 'api/kb-context/logs'
     var LOGS_CLEAR_URL = 'api/kb-context/logs/clear'
     var LOG_TAIL_ROWS = 50 // 尾部行数初始（滚动加载增量同值，A-TL6）
@@ -169,9 +170,10 @@ window.__ModuleLoader__.load({
 
     // ===== 触发日志弹层（0.4.0，A-TL6；形制沿 wiki-steward/lib/client.js:424-476 历史记录先例）=====
     // reason 闭集中文标签（lib/trigger-log.js ENTRY_REASONS 同源；自由文本绝不入日志——INV-TL1）
+    // 键集 ⊇ lib/trigger-log.js ENTRY_REASONS（测试机械比对；'dedup'=修复轮 2 从 no-hits 拆出）
     var REASON_LABELS = {
-      'hit': '命中并注入', 'no-user-source': '非用户消息', 'no-trigger-match': '未命中触发',
-      'no-hits': '触发命中但零检索命中', 'timeout': '检索超时', 'error': '评估异常',
+      'hit': '命中并注入', 'dedup': '命中但本 turn 已注入（去重跳过）', 'no-user-source': '非用户消息',
+      'no-trigger-match': '未命中触发', 'no-hits': '触发命中但零检索命中', 'timeout': '检索超时', 'error': '评估异常',
     }
 
     /** 判定摘要行文案（INV-TL1 白名单 8 键直读，零消息正文；matched=配置词表/实体路径成员） */
@@ -187,7 +189,7 @@ window.__ModuleLoader__.load({
 
     /**
      * 触发日志弹层体（展示组件，无钩子；状态由设置节持有）：条数 N/C + 清空按钮 + 尾部 50 行滚动加载。
-     * 数据形=GET api/kb-context/logs {entries,capacity,enabled}（lib/settings-routes.js，TECH 实现面 3 同源）。
+     * 数据形=GET api/kb-context/logs {data:{entries,capacity,enabled}}（lib/settings-routes.js，TECH 实现面 3 同源）。
      */
     function KbContextLogBody(props) {
       var log = props.log || {}
@@ -214,7 +216,7 @@ window.__ModuleLoader__.load({
         ),
         react.createElement('p', { className: 'kb-context-settings-hint' },
           '触发日志仅存进程内存环（最多 ' + capacity + ' 条，超出丢最旧），重启即清空、不落盘；记录不含消息正文，字段口径以 changes/2026-09-30-kb-context-trigger-log/TECH.md 为准。' +
-          (log.enabled === false ? '（kill switch 已关闭，当前零记录）' : '')),
+          (log.enabled === false ? '（kill switch 已关闭，不再新增记录（旧条目仍在））' : '')),
         log.notice
           ? react.createElement('p', { className: log.notice.kind === 'ok' ? 'kb-context-settings-ok' : 'kb-context-settings-error' }, log.notice.text)
           : null,
@@ -241,8 +243,21 @@ window.__ModuleLoader__.load({
      * 遮罩 + Escape 收口，零第三方库、token 同源）。
      */
     function KbContextLogModal(props) {
+      var nativeModal = ui && typeof ui.Modal === 'function'
       var body = react.createElement(KbContextLogBody, { log: props.log, onClear: props.onClear, onLoadMore: props.onLoadMore })
-      if (ui && typeof ui.Modal === 'function') {
+      // Escape 收口挂 document（开启挂监听、关闭移除）：焦点在弹层外（或弹层内任意处）都能收口——
+      // 不直挂 dialog 元素（那要求焦点在 dialog 内才触发）。原生 Modal 自带 Escape 收口 → 本缝 no-op
+      // 防双触发翻转（onClose=onToggle 形，一次按键两次调用=开合互抵=缺陷）。
+      react.useEffect(function escapeWatch() {
+        if (nativeModal) return function noop() {}
+        if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') return function noop() {}
+        function onDocKey(e) { if (e && e.key === 'Escape') props.onClose() }
+        document.addEventListener('keydown', onDocKey)
+        return function removeDocKey() {
+          try { document.removeEventListener('keydown', onDocKey) } catch { /* 清理不抛 */ }
+        }
+      }, [])
+      if (nativeModal) {
         return react.createElement(ui.Modal, {
           open: props.open !== false, onClose: props.onClose, title: props.title, closeLabel: props.closeLabel,
         }, body)
@@ -252,7 +267,6 @@ window.__ModuleLoader__.load({
         react.createElement('div', {
           className: 'kb-context-log-modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': props.title,
           tabIndex: -1,
-          onKeyDown: function (e) { if (e && e.key === 'Escape') props.onClose() },
         },
           react.createElement('div', { className: 'kb-context-log-modal-head' },
             react.createElement('h4', { className: 'kb-context-settings-label' }, props.title),
@@ -374,7 +388,7 @@ window.__ModuleLoader__.load({
         loadLogs()
       }
 
-      /** 载入环条目：GET api/kb-context/logs（文档相对）→ {entries,capacity,enabled}（TECH 实现面 3） */
+      /** 载入环条目：GET api/kb-context/logs（文档相对）→ {data:{entries,capacity,enabled}}（TECH 实现面 3 + ledger R-5 包络） */
       function loadLogs() {
         Promise.resolve()
           .then(function () { return exports.__fetch(LOGS_URL) })
@@ -384,11 +398,12 @@ window.__ModuleLoader__.load({
               setLog({ open: true, status: 'error', entries: [], capacity: 200, enabled: true, visible: LOG_TAIL_ROWS, busy: false, notice: null, error: String(body.error.message || body.error.code || '读取失败') })
               return
             }
+            var d = body && body.data && typeof body.data === 'object' ? body.data : {}
             setLog({
               open: true, status: 'ready',
-              entries: Array.isArray(body && body.entries) ? body.entries : [],
-              capacity: body && Number.isInteger(body.capacity) && body.capacity > 0 ? body.capacity : 200,
-              enabled: !(body && body.enabled === false),
+              entries: Array.isArray(d.entries) ? d.entries : [],
+              capacity: Number.isInteger(d.capacity) && d.capacity > 0 ? d.capacity : 200,
+              enabled: !(d.enabled === false),
               visible: LOG_TAIL_ROWS, busy: false, notice: null, error: null,
             })
           })
@@ -397,7 +412,7 @@ window.__ModuleLoader__.load({
           })
       }
 
-      /** 清空环：POST api/kb-context/logs/clear → {cleared:n}（US-2；清后本地置空+如实 notice） */
+      /** 清空环：POST api/kb-context/logs/clear → {data:{cleared:n}}（US-2 + ledger R-5 包络；清后本地置空+如实 notice） */
       function clearLog() {
         if (state.log && state.log.busy === true) return
         setLog(Object.assign({}, state.log, { busy: true, notice: null }))
@@ -409,7 +424,7 @@ window.__ModuleLoader__.load({
               setLog(Object.assign({}, state.log, { busy: false, notice: { kind: 'error', text: String(body.error.message || body.error.code || '清空失败') } }))
               return
             }
-            var n = body && Number.isInteger(body.cleared) ? body.cleared : 0
+            var n = body && body.data && Number.isInteger(body.data.cleared) ? body.data.cleared : 0
             setLog(Object.assign({}, state.log, { busy: false, entries: [], visible: LOG_TAIL_ROWS, notice: { kind: 'ok', text: '已清空 ' + n + ' 条（内存环，重启本就清空）' } }))
           })
           .catch(function (e) {
