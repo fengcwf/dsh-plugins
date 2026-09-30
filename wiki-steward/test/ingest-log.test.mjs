@@ -19,6 +19,9 @@ const {
   readMergedLog,
   tailSlice,
   summarizeScan,
+  normalizeDateKey,
+  parseLogFilters,
+  applyLogFilters,
   SOURCE_IDS,
 } = await import('../lib/ingest-log.js')
 
@@ -201,4 +204,94 @@ test('summarizeScan：非 scan 输出/空串 = 全 null 不抛不编造', () => 
     assert.deepEqual(s.pendingFiles, [])
     assert.equal(s.unknown, true)
   }
+})
+
+// ── 筛选扩参（Phase 8 反馈轮④）：since/until/type 归一校验 + 过滤切片 ─────────
+// 契约：{data}/{error} 形不变；API 扩参向后兼容——缺省（不带参）=现状行为（不过滤）。
+test('normalizeDateKey：YYYY-MM-DD / YYYYMMDD → dateKey；空串=空界；非法=null（不猜不编造）', () => {
+  assert.equal(normalizeDateKey('2026-09-30'), '20260930')
+  assert.equal(normalizeDateKey('20260930'), '20260930')
+  assert.equal(normalizeDateKey(''), '')
+  assert.equal(normalizeDateKey(null), '')
+  for (const bad of ['2026-13-01', '2026-02-30', '2026-9-3', 'garbage', '2026-09-30T10:00', '30/09/2026']) {
+    assert.equal(normalizeDateKey(bad), null, `非法日期形必须 null：${bad}`)
+  }
+})
+
+test('parseLogFilters：缺省=全不过滤（现状行为）；since/until 归一 dateKey；type 逗串→集合；type= 空串→显式空选', () => {
+  const none = parseLogFilters(new URLSearchParams(''), SOURCE_IDS)
+  assert.deepEqual(none, { ok: true, filters: { since: null, until: null, types: null } }, '缺省=不过滤')
+  const ranged = parseLogFilters(new URLSearchParams('since=2026-09-01&until=20260930'), SOURCE_IDS)
+  assert.deepEqual(ranged.filters, { since: '20260901', until: '20260930', types: null })
+  const typed = parseLogFilters(new URLSearchParams('type=cron:wiki-ingest%2Calerts:kb'), SOURCE_IDS)
+  assert.deepEqual(typed.filters, { since: null, until: null, types: ['cron:wiki-ingest', 'alerts:kb'] })
+  const emptySel = parseLogFilters(new URLSearchParams('type='), SOURCE_IDS)
+  assert.deepEqual(emptySel.filters.types, [], '全不选=显式空集（与缺省缺席可区分）')
+  const blankBounds = parseLogFilters(new URLSearchParams('since=&until='), SOURCE_IDS)
+  assert.deepEqual(blankBounds.filters, { since: null, until: null, types: null }, '空串边界=不过滤')
+})
+
+test('parseLogFilters：非法日期/未知来源 = ok:false 如实（不静默放宽筛选）', () => {
+  assert.equal(parseLogFilters(new URLSearchParams('since=garbage'), SOURCE_IDS).ok, false)
+  assert.equal(parseLogFilters(new URLSearchParams('until=2026-13-01'), SOURCE_IDS).ok, false)
+  const unknown = parseLogFilters(new URLSearchParams('type=mystery'), SOURCE_IDS)
+  assert.equal(unknown.ok, false)
+  assert.match(unknown.message, /mystery/)
+})
+
+test('applyLogFilters：闭区间 [since,until]（dateKey 字典序）+ 类型集合；缺省/空 filters=不过滤', () => {
+  const merged = [
+    { source: 'cron:wiki-ingest', name: 'f', line: 1, text: 'a', dateKey: '20260927' },
+    { source: 'alerts:kb', name: 'g', line: 1, text: 'b', dateKey: '20260928' },
+    { source: 'manual:scan', name: 'h', line: 1, text: 'c', dateKey: '20260929' },
+    { source: 'cron:wiki-ingest', name: 'f', line: 2, text: 'd', dateKey: '20260930' },
+  ]
+  assert.deepEqual(applyLogFilters(merged, undefined).map((l) => l.text), ['a', 'b', 'c', 'd'], '缺省=现状行为')
+  assert.deepEqual(applyLogFilters(merged, { since: '20260928', until: '20260929' }).map((l) => l.text), ['b', 'c'], '闭区间含端点')
+  assert.deepEqual(applyLogFilters(merged, { types: ['manual:scan'] }).map((l) => l.text), ['c'], '类型过滤')
+  assert.deepEqual(applyLogFilters(merged, { since: '20260928', types: ['cron:wiki-ingest'] }).map((l) => l.text), ['d'], '时间+类型叠加')
+  assert.deepEqual(applyLogFilters(merged, { types: [] }), [], '空选=零条目（如实空，不伪造）')
+})
+
+test('tailSlice+filters：过滤后再切片（尾部=过滤集尾部），hasMore/cursor 在过滤集上保持', async (t) => {
+  const home = mkHome(t)
+  writeLog(home, '.dsh/logs/cron/wiki-ingest-20260927.log', 'old1\nold2\n')
+  writeLog(home, '.dsh/logs/cron/wiki-ingest-20260929.log', 'new1\nnew2\nnew3\n')
+  writeLog(home, '.dsh/logs/cron/wiki-ingest-scan-20260929.log', 'scan1\n')
+  const merged = readMergedLog(defaultLogSources({ home }))
+  const page = tailSlice(merged, { limit: 2, filters: { since: '20260929', types: ['cron:wiki-ingest'] } })
+  assert.deepEqual(page.lines.map((l) => l.text), ['new2', 'new3'], '区间+类型过滤后取尾部')
+  assert.equal(page.hasMore, true, 'hasMore=过滤集内还有更早（old… 不算）')
+})
+
+test('tailSlice+filters：翻旧（cursor）后过滤仍生效——各页同参、锚点在过滤集内、不重不漏', async (t) => {
+  const home = mkHome(t)
+  writeLog(home, '.dsh/logs/cron/wiki-ingest-20260927.log', 'out1\n')
+  writeLog(home, '.dsh/logs/cron/wiki-ingest-20260928.log', 'in1\nin2\nin3\nin4\n')
+  writeLog(home, '.dsh/logs/cron/wiki-ingest-scan-20260928.log', 'scan1\n')
+  writeLog(home, '.dsh/kb-alerts.md', '- [2026-09-28 09:00:00] alert-old\n')
+  const merged = readMergedLog(defaultLogSources({ home }))
+  const filters = { since: '20260928', until: '20260928', types: ['cron:wiki-ingest', 'alerts:kb'] }
+  const p1 = tailSlice(merged, { limit: 2, filters })
+  assert.deepEqual(p1.lines.map((l) => l.text), ['in3', 'in4'])
+  const p2 = tailSlice(merged, { limit: 2, cursor: p1.cursor, filters })
+  assert.deepEqual(p2.lines.map((l) => l.text), ['in1', 'in2'], '翻旧页仍在过滤集内（scan1/out1 不入）')
+  assert.equal(p2.hasMore, true)
+  const p3 = tailSlice(merged, { limit: 2, cursor: p2.cursor, filters })
+  assert.deepEqual(p3.lines.map((l) => l.text), ['- [2026-09-28 09:00:00] alert-old'], '过滤集内翻到底')
+  assert.equal(p3.hasMore, false)
+  const all = [...p3.lines, ...p2.lines, ...p1.lines]
+  assert.equal(new Set(all.map((l) => `${l.source}|${l.name}|${l.line}`)).size, all.length, '不重')
+  for (const l of all) assert.equal(l.dateKey, '20260928', '区间外零条目')
+  assert.deepEqual(all.map((l) => l.text), ['- [2026-09-28 09:00:00] alert-old', 'in1', 'in2', 'in3', 'in4'], '三页拼接=过滤集完整，不重不漏')
+})
+
+test('tailSlice+filters：过滤集为空 = 空页 hasMore=false（如实空态，不伪造）', async (t) => {
+  const home = mkHome(t)
+  writeLog(home, '.dsh/logs/cron/wiki-ingest-20260928.log', 'x\n')
+  const merged = readMergedLog(defaultLogSources({ home }))
+  const page = tailSlice(merged, { limit: 5, filters: { since: '20200101', until: '20200102' } })
+  assert.deepEqual(page.lines, [])
+  assert.equal(page.hasMore, false)
+  assert.equal(page.cursor, null)
 })

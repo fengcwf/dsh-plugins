@@ -400,3 +400,68 @@ test('静态面：panel.js 命中 dist 文件（MIME 正确）；穿越/越界�
     assert.notEqual(res.status, 200, `穿越/缺文件绝不 200：${url}`)
   }
 })
+
+// ── GET logs 筛选扩参（Phase 8 反馈轮④）：since/until/type 向后兼容 + 组合 ─────
+test('GET logs 扩参：since/until/type 组合——仅区间内+选中来源条目；{data} 形不变（integration 形真 handler）', async (t) => {
+  const { host, home } = mkSetup(t)
+  const cron = path.join(home, '.dsh/logs/cron/wiki-ingest-20260927.log')
+  fs.mkdirSync(path.dirname(cron), { recursive: true })
+  fs.writeFileSync(cron, 'old1\nold2\n')
+  fs.writeFileSync(path.join(home, '.dsh/logs/cron/wiki-ingest-20260928.log'), 'in1\nin2\n')
+  fs.writeFileSync(path.join(home, '.dsh/logs/cron/wiki-ingest-scan-20260928.log'), 'scan1\n')
+
+  const res = await call(host, { url: '/api/wiki-steward/ingest/logs?since=2026-09-28&until=2026-09-28&type=cron%3Awiki-ingest' })
+  assert.equal(res.status, 200)
+  const data = res.json().data
+  assert.deepEqual(Object.keys(data).sort(), ['cursor', 'hasMore', 'lines', 'sources'], '{data} 契约形零变化')
+  assert.deepEqual(data.lines.map((l) => l.text), ['in1', 'in2'], '时间区间+类型叠加过滤')
+  for (const l of data.lines) {
+    assert.equal(l.dateKey, '20260928', '仅区间内条目')
+    assert.equal(l.source, 'cron:wiki-ingest', '仅选中来源')
+  }
+  assert.equal(data.hasMore, false, 'hasMore 在过滤集上保持（更早的 out-of-range 不算）')
+})
+
+test('GET logs 扩参：type 多选=来源并集；type=（全不选）→ 空页如实不伪造', async (t) => {
+  const { host, home } = mkSetup(t)
+  fs.mkdirSync(path.join(home, '.dsh/logs/cron'), { recursive: true })
+  fs.writeFileSync(path.join(home, '.dsh/logs/cron/wiki-ingest-20260928.log'), 'in1\n')
+  fs.writeFileSync(path.join(home, '.dsh/logs/cron/wiki-ingest-scan-20260928.log'), 'scan1\n')
+
+  const multi = await call(host, { url: '/api/wiki-steward/ingest/logs?type=cron%3Awiki-ingest%2Cmanual%3Ascan' })
+  assert.deepEqual(multi.json().data.lines.map((l) => l.text).sort(), ['in1', 'scan1'], '多选=并集')
+
+  const none = await call(host, { url: '/api/wiki-steward/ingest/logs?type=' })
+  assert.equal(none.status, 200)
+  assert.deepEqual(none.json().data.lines, [], '全不选=如实空页')
+  assert.equal(none.json().data.hasMore, false)
+})
+
+test('GET logs 扩参：缺省（不带筛选参）= 现状行为（向后兼容）；翻旧 cursor 同参过滤仍生效', async (t) => {
+  const { host, home } = mkSetup(t)
+  fs.mkdirSync(path.join(home, '.dsh/logs/cron'), { recursive: true })
+  fs.writeFileSync(path.join(home, '.dsh/logs/cron/wiki-ingest-20260927.log'), 'out1\n')
+  fs.writeFileSync(path.join(home, '.dsh/logs/cron/wiki-ingest-20260928.log'), 'in1\nin2\nin3\n')
+  fs.writeFileSync(path.join(home, '.dsh/logs/cron/wiki-ingest-scan-20260928.log'), 'scan1\n')
+
+  const plain = await call(host, { url: '/api/wiki-steward/ingest/logs?limit=10' })
+  assert.deepEqual(plain.json().data.lines.map((l) => l.text), ['out1', 'in1', 'in2', 'in3', 'scan1'], '缺省不过滤=现状行为')
+
+  const f = 'since=2026-09-28&type=cron%3Awiki-ingest'
+  const p1 = await call(host, { url: `/api/wiki-steward/ingest/logs?limit=2&${f}` })
+  assert.deepEqual(p1.json().data.lines.map((l) => l.text), ['in2', 'in3'])
+  assert.equal(p1.json().data.hasMore, true)
+  const p2 = await call(host, { url: `/api/wiki-steward/ingest/logs?limit=2&cursor=${encodeURIComponent(p1.json().data.cursor)}&${f}` })
+  assert.deepEqual(p2.json().data.lines.map((l) => l.text), ['in1'], '翻旧页同参过滤仍生效（out1/scan1 不入）')
+  assert.equal(p2.json().data.hasMore, false)
+})
+
+test('GET logs 扩参：非法日期/未知来源 = 400 {error:{code:bad_request}} 如实（不静默放宽筛选）', async (t) => {
+  const { host } = mkSetup(t)
+  for (const q of ['since=garbage', 'until=2026-13-01', 'type=mystery']) {
+    const res = await call(host, { url: `/api/wiki-steward/ingest/logs?${q}` })
+    assert.equal(res.status, 400, q)
+    assert.equal(res.json().error.code, 'bad_request', q)
+    assert.ok(res.json().error.message.length > 0, q)
+  }
+})

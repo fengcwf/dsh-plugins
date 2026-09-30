@@ -14,7 +14,7 @@
 // 静态面围栏：解码失败/绝对路径/'..' 分量/realpath 越界/缺文件一律不 200（穿越围栏）。
 import fs from 'node:fs'
 import path from 'node:path'
-import { readMergedLog, tailSlice } from './ingest-log.js'
+import { readMergedLog, tailSlice, parseLogFilters } from './ingest-log.js'
 import { EDITABLE_PATHS } from './settings-write.js'
 
 export const API_PREFIX = '/api/wiki-steward'
@@ -193,13 +193,17 @@ export function registerIngestRoutes({ register, connection, getConfig, trigger,
     }
   }
 
-  // GET logs —— 尾部 N 行 + 滚动加载（cursor=锚点 {s,f,i}）
+  // GET logs —— 尾部 N 行 + 滚动加载（cursor=锚点 {s,f,i}）+ 筛选扩参（Phase 8 反馈轮④）：
+  // since/until（YYYY-MM-DD 闭区间）/type（来源 id 逗串，空串=全不选）——缺省=不过滤（现状行为，
+  // 向后兼容）；非法参 = 400 如实（不静默放宽筛选面）；{data}/{error} 契约形零变化。
   const logsGet = async (req, res) => {
     if (!authGate(connection, req, res)) return
     if (!methodGuard(req, res, ['GET'])) return
     const q = queryOf(req)
+    const parsed = parseLogFilters(q, sources.map((s) => s.id))
+    if (!parsed.ok) return fail(res, 400, 'bad_request', parsed.message)
     const merged = readMergedLog(sources)
-    const page = tailSlice(merged, { limit: q.get('limit') ?? undefined, cursor: q.get('cursor') })
+    const page = tailSlice(merged, { limit: q.get('limit') ?? undefined, cursor: q.get('cursor'), filters: parsed.filters })
     sendJson(res, 200, {
       data: {
         lines: page.lines,

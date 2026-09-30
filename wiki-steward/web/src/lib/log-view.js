@@ -32,6 +32,15 @@ export function prependChunk(current, older) {
   return [...fresh, ...current]
 }
 
+/**
+ * 时间倒序展示序（Phase 8 反馈轮④：默认最新在上）。
+ * 存储面=服务端（dateKey,文件名,行号）升序（数据面语义零改动）；本函数只给视图逆序：
+ * 翻旧（applyOlder 拼前）在展示面自然落于下方，去重/闸门语义保持。纯函数不改原数组。
+ */
+export function toDisplayOrder(lines) {
+  return [...lines].reverse()
+}
+
 /** 行首来源角标（三来源各有短标注；未知来源回退 id，不编造） */
 export function shortTag(source) {
   if (source === 'cron:wiki-ingest') return '夜间任务'

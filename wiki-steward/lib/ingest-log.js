@@ -165,12 +165,68 @@ function normalizeLimit(limit, dflt = DEFAULT_PAGE_LIMIT) {
 }
 
 /**
+ * 筛选（Phase 8 反馈轮④扩参）：闭区间 [since,until]（dateKey 字典序）+ 类型集合（types=null 不滤）。
+ * 缺省 filters=不过滤（现状行为零变化）；空 types=[]=显式空选→零条目（如实空，不伪造）。
+ */
+export function applyLogFilters(merged, filters) {
+  const f = filters ?? {}
+  const since = f.since ?? null
+  const until = f.until ?? null
+  const types = f.types ?? null
+  return merged.filter((l) => {
+    if (since !== null && l.dateKey < since) return false
+    if (until !== null && l.dateKey > until) return false
+    if (types !== null && !types.includes(l.source)) return false
+    return true
+  })
+}
+
+/** 空串/缺席=空界 ''；YYYY-MM-DD / YYYYMMDD → dateKey；非法=null（不猜不编造） */
+export function normalizeDateKey(value) {
+  const v = String(value ?? '').trim()
+  if (v === '') return ''
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v) ?? /^(\d{4})(\d{2})(\d{2})$/.exec(v)
+  if (m === null) return null
+  const y = Number(m[1]); const mo = Number(m[2]); const d = Number(m[3])
+  const date = new Date(y, mo - 1, d)
+  if (date.getFullYear() !== y || date.getMonth() !== mo - 1 || date.getDate() !== d) return null
+  return `${m[1]}${m[2]}${m[3]}`
+}
+
+/**
+ * 扩参解析（since/until/type）：缺省（缺席/空串）=不过滤（API 缺省=现状行为，向后兼容）。
+ * 非法日期/未知来源 → ok:false 如实（不静默放宽筛选面）。
+ * @param {{get:(k:string)=>string|null}} params URLSearchParams 形
+ * @param {string[]} sourceIds 可选来源 id（deps.sources 形）
+ */
+export function parseLogFilters(params, sourceIds) {
+  const get = (k) => (params && typeof params.get === 'function' ? params.get(k) : null)
+  const sinceRaw = get('since')
+  const untilRaw = get('until')
+  const typeRaw = get('type')
+  const since = sinceRaw === null ? '' : normalizeDateKey(sinceRaw)
+  const until = untilRaw === null ? '' : normalizeDateKey(untilRaw)
+  if (since === null) return { ok: false, message: `起始时间须为 YYYY-MM-DD：${sinceRaw}` }
+  if (until === null) return { ok: false, message: `结束时间须为 YYYY-MM-DD：${untilRaw}` }
+  let types = null
+  if (typeRaw !== null) {
+    types = typeRaw.split(',').map((x) => x.trim()).filter((x) => x !== '')
+    for (const id of types) {
+      if (!sourceIds.includes(id)) return { ok: false, message: `未知来源类型：${id}` }
+    }
+  }
+  return { ok: true, filters: { since: since === '' ? null : since, until: until === '' ? null : until, types } }
+}
+
+/**
  * 尾部 N 行 + 滚动加载（锚点游标=返回块最旧行，追加新日志不破坏回翻）。
  * cursor=null → 最新块；cursor=锚点 → 锚点之前的更早块；锚点失效 → 空页 + stale 留痕。
+ * filters（可选）：先过滤后锚点切片——hasMore/cursor/锚点语义全部在过滤集上保持（翻旧同参=过滤仍生效）。
  */
-export function tailSlice(merged, { limit, cursor } = {}) {
+export function tailSlice(merged, { limit, cursor, filters } = {}) {
   const pageLimit = normalizeLimit(limit)
-  let end = merged.length
+  const visible = applyLogFilters(merged, filters)
+  let end = visible.length
   if (cursor !== null && cursor !== undefined && cursor !== '') {
     let anchor = null
     try {
@@ -179,14 +235,14 @@ export function tailSlice(merged, { limit, cursor } = {}) {
     } catch {
       anchor = null
     }
-    const idx = anchor === null ? -1 : merged.findIndex((l) => l.source === anchor.s && l.name === anchor.f && l.line === anchor.i)
+    const idx = anchor === null ? -1 : visible.findIndex((l) => l.source === anchor.s && l.name === anchor.f && l.line === anchor.i)
     if (idx === -1) {
       return { lines: [], hasMore: false, cursor: null, stale: true }
     }
     end = idx
   }
   const start = Math.max(0, end - pageLimit)
-  const lines = merged.slice(start, end)
+  const lines = visible.slice(start, end)
   return {
     lines,
     hasMore: start > 0,

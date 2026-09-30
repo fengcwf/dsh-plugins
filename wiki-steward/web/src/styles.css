@@ -173,3 +173,37 @@
   font-size: 12px;
   line-height: 18px;
 }
+/* 日志筛选条（Phase 8 反馈轮④）：起止日期 + 类型多选——色板唯一来源仍=--dsw-alias-* token */
+.ws-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+}
+.ws-filter-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+.ws-filter-label {
+  color: var(--dsw-alias-label-secondary);
+}
+.ws-input {
+  box-sizing: border-box;
+  height: 28px;
+  padding: 0 8px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+}
+.ws-input:focus-visible {
+  box-shadow: 0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: none;
+}

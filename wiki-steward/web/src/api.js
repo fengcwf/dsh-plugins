@@ -16,10 +16,15 @@ async function requestJson(url, options = {}) {
 export function createApi(base) {
   return {
     fetchSettings: () => requestJson(`${base}/ingest/settings`),
-    fetchLogs: (limit, cursor) => {
+    fetchLogs: (limit, cursor, filters) => {
       const q = new URLSearchParams()
       if (limit != null) q.set('limit', String(limit))
       if (cursor != null) q.set('cursor', String(cursor))
+      // 筛选扩参（Phase 8 反馈轮④）：since/until/type 仅置位才发（缺省=现状行为，向后兼容）；
+      // 空串值（如 type= 全不选）如实透传——与缺席可区分
+      for (const [k, v] of Object.entries(filters ?? {})) {
+        if (v != null) q.set(k, String(v))
+      }
       const qs = q.toString()
       return requestJson(`${base}/ingest/logs${qs === '' ? '' : `?${qs}`}`)
     },
