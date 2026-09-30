@@ -84,29 +84,31 @@ defineExpose({ openDrawer })
     >
       <template #default="{ data }">
         <span class="ob-tree-node" :data-type="data.type">
-          {{ data.label }}
-          <button
-            type="button"
-            class="ob-tree-dl"
-            :aria-label="`下载 ${data.key}`"
-            title="下载（单文件=原文件；目录=zip 打包）"
-            @click.stop="onDownloadClick(data)"
-          >下载</button>
-          <button
-            v-if="data.type === 'file'"
-            type="button"
-            class="ob-tree-rename"
-            :aria-label="`改名/移动 ${data.key}`"
-            title="改名/移动（多文件事务：零断链 wikilink 同步）"
-            @click.stop="onRenameClick(data)"
-          >改名</button>
-          <button
-            type="button"
-            class="ob-tree-del"
-            :aria-label="`删除 ${data.key}`"
-            title="删除（可逆：移入回收站）"
-            @click.stop="onDeleteClick(data)"
-          >删除</button>
+          <span class="ob-tree-node-label">{{ data.label }}</span>
+          <span class="ob-tree-row-actions">
+            <button
+              type="button"
+              class="ob-tree-dl"
+              :aria-label="`下载 ${data.key}`"
+              title="下载（单文件=原文件；目录=zip 打包）"
+              @click.stop="onDownloadClick(data)"
+            >下载</button>
+            <button
+              v-if="data.type === 'file'"
+              type="button"
+              class="ob-tree-rename"
+              :aria-label="`改名/移动 ${data.key}`"
+              title="改名/移动（多文件事务：零断链 wikilink 同步）"
+              @click.stop="onRenameClick(data)"
+            >改名</button>
+            <button
+              type="button"
+              class="ob-tree-del"
+              :aria-label="`删除 ${data.key}`"
+              title="删除（可逆：移入回收站）"
+              @click.stop="onDeleteClick(data)"
+            >删除</button>
+          </span>
         </span>
       </template>
     </el-tree-v2>

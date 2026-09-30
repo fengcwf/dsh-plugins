@@ -1,10 +1,16 @@
 /* styles — 构图与 token 跟随（ARC-5：token 全走 --dsw-* 体系，禁自造色板；
-   色彩一律 var(--dsw-…, 系统色兜底)，零自定义色值；唯三例外=AA 派生三处
+   色彩一律 var(--dsw-…, 系统色兜底)，零自定义色值；例外=AA 派生①②③ + UI-A 方向 a 派生 A1-A7
    （color-mix 单向推导自 dsh token，推导式与出处见 :root 注释——非第二套色板））。
    字号基线 16px、行高 1.6。UI C 公共底座（S1）：4/8 间距刻度、圆角两档、统一焦点环、
    保存状态徽标四态、面板统一头、hairline 分组、骨架/错误/空状态治理（candidate-c.md）。
    UI A 阅读优先（S2）：行长 68ch + 字阶四档 + 段距节奏 + 专注模式 + 按钮四档 + 排印微调
-   （candidate-a.md / candidate-c.md 7·9 尾项）。 */
+   （candidate-a.md / candidate-c.md 7·9 尾项）。
+   UI-C 视觉波（方向 c「苹果风深色高质感 / 明态同构分层」，用户看图定稿 2026-09-30「完全安装
+   dir-c-light 发版」）：视觉正本=dir-c-apple-dark.html light 模式（唯一裁判）+ dir-c-light.png
+   （渲染正本）+ dir-c-dark.png（暗态一致性参照）。落地=区域面板卡片化（C1 面板底/C2 外壳底/
+   C3 内高光/C4 同相影）+ 焦点环光晕 C7 + 带对勾保存徽标 C6 + 行内操作 hover·当前显形 + 发丝分隔
+   + 控件细节精致化；派生 C1-C8 逐条注释（见 :root），暗分支独立推导。零 IA 变更、四区构图不动、
+   .vue 仅两处展示层最小改动（树行工具位 flex 化=ui-a-review M1、徽标对勾）。 */
 
 :root {
   --ow-menu-width: 72px;
@@ -60,15 +66,63 @@
      （现状 raw #ec1313 白底 4.50:1 差一线不过 AA 4.5:1）；混色轴记法同上（black=#000 同值）。 */
   --ow-danger-text: color-mix(in srgb, var(--dsw-alias-state-error-primary, CanvasText), black 8%);
 
-  /* ── 阅读字阶轴（S2 候选 A 3「字阶四档」）：页题 ×1.75 / h1·h2 ×1.35 / h3 ×1.15 / h4+ ×1.0，
-     全部派生 --dsh-content-font-size（TECH §3.9.2：用户字号即跟随）；
-     TECH §3.10.4 定稿三档 display ×1.6 / 阅读 ×1 / caption ×0.75 保留命名档：
-     display=状态面大标题（.ob-empty-title）、caption=脚注小字（.ob-prose .footnotes）── */
-  --ow-fs-page: calc(var(--dsh-content-font-size, 16px) * 1.75);
+  /* ── 阅读字阶轴（UI-C 定稿 dir-c-light：页题 27px/-0.02em/1.3 对正文 15px——C 的字阶对比比 a 收敛
+     （27/15=1.8 档比，a 为 2.06）。档比映射=mock 元素 px ÷ mock 正文 15px，绝对值随内容字号轴缩放
+     （TECH §3.9.2：用户字号即跟随）：页题 ×1.8（27/15）/ h1·h2 ×1.13（17/15）/ h3 ×0.93（14/15）
+     / h4+ ×1.0（mock 无 h4 样式，既有锁）；TECH §3.10.4 定稿三档 display ×1.6 / 阅读 ×1 /
+     caption ×0.75 保留命名档：display=状态面大标题（.ob-empty-title）、caption=脚注小字（.ob-prose .footnotes）── */
+  --ow-fs-page: calc(var(--dsh-content-font-size, 16px) * 1.8);
   --ow-fs-display: calc(var(--dsh-content-font-size, 16px) * 1.6);
-  --ow-fs-h2: calc(var(--dsh-content-font-size, 16px) * 1.35);
-  --ow-fs-h3: calc(var(--dsh-content-font-size, 16px) * 1.15);
+  --ow-fs-h2: calc(var(--dsh-content-font-size, 16px) * 1.13);
+  --ow-fs-h3: calc(var(--dsh-content-font-size, 16px) * 0.93);
   --ow-fs-caption: calc(var(--dsh-content-font-size, 16px) * 0.75);
+}
+
+/* ── UI-C 方向 c 视觉派生 C1-C8（dir-c-apple-dark.html 头注推导式逐条落码，均从 dsh token 单向推导
+     =非第二套色板；明暗双分支见下方 prefers-color-scheme 块（暗分支独立推导非简单反转）。
+     合成底注：color-mix(…, transparent N%)=N% 不透明度叠于所在面，AA 比值复测按合成底算
+     （test/web-visual-token.test.mjs ⑤）；渲染正本=dir-c-light.png / dir-c-dark.png（像素采样核对）── */
+:root {
+  /* C1 面板底 = color-mix(bg-base, white 3.5%)（暗）/ bg-base（明）——区域面板卡片化底 */
+  --ow-panel-bg: var(--dsw-alias-bg-base, Canvas);
+  /* C2 外壳底 = color-mix(bg-base, black 22%)（暗）/ color-mix(bg-base, black 2.5%)（明）——面板之下的沉底 */
+  --ow-shell-bg: color-mix(in srgb, var(--dsw-alias-bg-base, Canvas), black 2.5%);
+  /* C3 面板内高光 = inset 0 1px 0 color-mix(label-primary, transparent 93%)（暗）
+     / color-mix(bg-base, transparent 55%)（明） */
+  --ow-highlight-top: inset 0 1px 0 color-mix(in srgb, var(--dsw-alias-bg-base, Canvas), transparent 55%);
+  /* C4 卡片同相阴影 = 0 1px 3px color-mix(label-primary, transparent 92%)（明暗同式；暗=白相 8% 微光
+     抬升，dir-c-dark.png 像素采样实证 panel 边下 27→22→17→16 白相渐隐非黑相压暗）；
+     按钮档 = 0 1px 1px …94%（mock .btn 明）/ 0 1px 2px color-mix(business-primary, transparent 70%)
+     （mock .btn-primary 主档同相影，两态同式） */
+  --ow-shadow-card: 0 1px 3px color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), transparent 92%);
+  --ow-shadow-btn: 0 1px 1px color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), transparent 94%);
+  --ow-shadow-accent: 0 1px 2px color-mix(in srgb, var(--dsw-alias-state-business-primary, Highlight), transparent 70%);
+  /* 行内件/代码块/引文顶缘内高光（mock .row-btn 93% / .prose pre·blockquote 94%，两态同式
+     = color-mix(label-primary, transparent 93-94%)）——并为 94% 单口径（1% 透明差不可辨，偏差表记账） */
+  --ow-highlight-soft: inset 0 1px 0 color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), transparent 94%);
+  /* C5 主色淡底 = color-mix(business-primary, transparent 88%)（树选中行/菜单当前项/大纲当前项）；
+     伴生选中内描边 = inset 0 0 0 1px color-mix(business-primary, transparent 78%)（mock 选中项逐值） */
+  --ow-accent-tint: color-mix(in srgb, var(--dsw-alias-state-business-primary, Highlight), transparent 88%);
+  --ow-ring-accent: inset 0 0 0 1px color-mix(in srgb, var(--dsw-alias-state-business-primary, Highlight), transparent 78%);
+  /* C7 焦点光晕 = 0 0 0 4px color-mix(business-primary, transparent 86%)（2px 焦点描边之外的柔光圈） */
+  --ow-glow-focus: 0 0 0 4px color-mix(in srgb, var(--dsw-alias-state-business-primary, Highlight), transparent 86%);
+  /* C8 accent 文字安全色 = color-mix(business-primary, #000 15%)（明）/ business-primary（暗）——
+     淡底上 4.81:1（raw 4.2 不足 AA）；与 A7 同式收敛 */
+  --ow-accent-text: color-mix(in srgb, var(--dsw-alias-state-business-primary, Highlight), black 15%);
+  /* C6 徽标语义底 = color-mix(semantic, transparent 88%)（明）/ 84%（暗），
+     文字 = color-mix(semantic, #000 40%)（明）/ color-mix(semantic, #fff 24%)（暗）——saved/dirty/conflict
+     三态同式（C6 自 saved 泛化到四态；mock 仅画 saved 态） */
+  --ow-chip-saved-bg: color-mix(in srgb, var(--dsw-alias-state-success-primary, CanvasText), transparent 88%);
+  --ow-chip-saved-fg: color-mix(in srgb, var(--dsw-alias-state-success-primary, CanvasText), black 40%);
+  --ow-chip-dirty-bg: color-mix(in srgb, var(--dsw-alias-state-warn-primary, ButtonBorder), transparent 88%);
+  --ow-chip-dirty-fg: color-mix(in srgb, var(--dsw-alias-state-warn-primary, ButtonBorder), black 40%);
+  --ow-chip-conflict-bg: color-mix(in srgb, var(--dsw-alias-state-error-primary, CanvasText), transparent 88%);
+  --ow-chip-conflict-fg: color-mix(in srgb, var(--dsw-alias-state-error-primary, CanvasText), black 40%);
+  /* 错误卡淡底 = A6 同口径保留面（dir-c 未画状态面）：color-mix(error-primary, transparent 96%) */
+  --ow-error-bg: color-mix(in srgb, var(--dsw-alias-state-error-primary, CanvasText), transparent 96%);
+  /* 阅读列外框宽 = 内容行长 68ch（TECH §3.9.2 行跟随合同）+ 32px 双内距（mock .prose 32px 边距）；
+     阅读头/正文/状态面同左缘（mock 文档卡=左对齐排版） */
+  --ow-read-col: calc(68ch + var(--ow-sp-8) * 2);
 }
 
 /* 深色主题（跟随 prefers-color-scheme，与 lib/share-theme.js 分享页同口径）：派生色直用 token */
@@ -77,16 +131,49 @@
     --ow-accent-solid: var(--dsw-alias-state-business-primary, Highlight);
     --ow-link-safe: var(--dsw-alias-link, LinkText);
     --ow-danger-text: var(--dsw-alias-state-error-primary, CanvasText);
+    /* UI-C 派生暗分支（dir-c C1-C8 暗色形——暗分支独立推导非简单反转，逐条同 mock 推导式）：
+       C1 面板底 = color-mix(bg-base, white 3.5%)（面板抬升一档）；
+       C2 外壳底 = color-mix(bg-base, black 22%)（外壳沉底=三层抬升第一层）；
+       C3 内高光换 label-primary 93% 透明；C4 阴影=白相微光（label-primary 92% 透明；
+       dir-c-dark.png 像素采样：panel 边下 27→22→17→16 渐隐=白相抬升非黑相压暗）；
+       C6 徽标底 84% 透明 + 文字 color-mix(semantic, #fff 24%)；C8 accent 文字直用 token */
+    --ow-panel-bg: color-mix(in srgb, var(--dsw-alias-bg-base, Canvas), white 3.5%);
+    --ow-shell-bg: color-mix(in srgb, var(--dsw-alias-bg-base, Canvas), black 22%);
+    --ow-highlight-top: inset 0 1px 0 color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), transparent 93%);
+    --ow-shadow-card: 0 1px 3px color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), transparent 92%);
+    --ow-shadow-btn: 0 1px 1px color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), transparent 92%);
+    --ow-accent-text: var(--dsw-alias-state-business-primary, Highlight);
+    --ow-chip-saved-bg: color-mix(in srgb, var(--dsw-alias-state-success-primary, CanvasText), transparent 84%);
+    --ow-chip-saved-fg: color-mix(in srgb, var(--dsw-alias-state-success-primary, CanvasText), white 24%);
+    --ow-chip-dirty-bg: color-mix(in srgb, var(--dsw-alias-state-warn-primary, ButtonBorder), transparent 84%);
+    --ow-chip-dirty-fg: color-mix(in srgb, var(--dsw-alias-state-warn-primary, ButtonBorder), white 24%);
+    --ow-chip-conflict-bg: color-mix(in srgb, var(--dsw-alias-state-error-primary, CanvasText), transparent 84%);
+    --ow-chip-conflict-fg: color-mix(in srgb, var(--dsw-alias-state-error-primary, CanvasText), white 24%);
   }
 }
 
 * { box-sizing: border-box; }
 
-/* ── 焦点环统一（candidate-c 3）：2px business-primary 描边 + 2px 偏移，全部可交互件；
+/* ── 焦点环统一（candidate-c 3 → UI-C C7 焦点光晕）：2px business-primary 描边 + 2px 偏移
+   + 4px 柔光圈（mock :focus-visible / .btn.is-focus 逐值），全部可交互件；
    非文本对比 business-primary vs bg-base = 4.23:1（浅）/ 7.83:1（深）≥ 3:1 AA ── */
 :focus-visible {
   outline: 2px solid var(--dsw-alias-state-business-primary, Highlight);
   outline-offset: 2px;
+  box-shadow: var(--ow-glow-focus);
+}
+
+/* ── 控件细节当主角（dir-c .btn）：13px/500 字面 + 1px 中性微影（C4 按钮档）+ 内高光（C3）
+   + 按下 0.5px 位移；圆角两档=radius-sm 控件档（--el-border-radius-base 同源）。
+   阴影轻且同色相：中性微影取 label-primary 94% 透明（近无色），主档另配同相影（下）── */
+.el-button {
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  font-weight: 500;
+  box-shadow: var(--ow-shadow-btn), var(--ow-highlight-top);
+}
+
+.el-button:not(.is-disabled):active {
+  transform: translateY(0.5px);
 }
 
 /* ── AA 派生①应用面：实心主按钮（el-button type=primary）白字配派生实底 6.32:1
@@ -102,6 +189,9 @@
   --el-button-active-text-color: var(--ow-accent-solid-fg, Canvas);
   --el-button-active-bg-color: var(--ow-accent-solid, Highlight);
   --el-button-active-border-color: var(--ow-accent-solid, Highlight);
+  /* dir-c .btn-primary：同色相轻阴影（C4 主档 0 1px 2px business-primary 70% 透明）替代中性微影，字重升 600 */
+  font-weight: 600;
+  box-shadow: var(--ow-shadow-accent);
 }
 .el-button.el-button--primary:not(.is-disabled):hover { filter: brightness(1.06); }
 
@@ -113,6 +203,8 @@
   --el-button-text-color: var(--ow-link-safe, LinkText);
   --el-button-bg-color: transparent;
   --el-button-border-color: transparent;
+  /* 幽灵档=纯平（无微影无内高光，与实档拉开质感差） */
+  box-shadow: none;
   --el-button-hover-text-color: var(--ow-link-safe, LinkText);
   --el-button-hover-bg-color: var(--dsw-alias-interactive-bg-hover, ButtonFace);
   --el-button-hover-border-color: transparent;
@@ -140,63 +232,173 @@ html, body, #app {
 }
 
 body {
-  font-family: var(--dsw-font-family, sans-serif);
+  /* 字族唯一源=dsh token --dsw-font-family（值即 -apple-system/SF 系就近无衬线，dir-a 系统栈同形）；
+     兜底链补 dir-a 字体栈（token 缺席时才走） */
+  font-family: var(--dsw-font-family, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Noto Sans CJK SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif);
   /* 阅读字号轴（TECH §3.9.2）：正文/标题派生 --dsh-content-font-size（用户设置即跟随）；UI chrome 固定档 */
   font-size: var(--dsh-content-font-size, 16px);
   line-height: 1.6;
   color: var(--dsw-alias-label-primary, CanvasText);
   background: var(--dsw-alias-bg-base, Canvas);
+  /* dir-c 精致细节：字形平滑 + 优化可读性（macOS/SF 面渲染质感） */
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-/* ── 三栏构图：菜单轨 + 树 300px + 中央列（阅读/反链面板） + TOC 248px（终态归 T13）── */
+/* ── 四区构图（IA 零变更）：菜单轨 72 / 树 300 / 中央 / 大纲 248；UI-C 区域面板卡片化：
+   外壳沉底（C2）+ 12px 间隔与内距（mock .shell gap/padding 12px）+ 面板卡（C1 底 + border-l2
+   + radius-sm + C4 同相影 + C3 内高光）——明态同构分层 / 暗态三层抬升（外壳沉/面板升/卡内件再升）── */
 .ob-shell {
   display: grid;
   grid-template-columns: var(--ow-menu-width) var(--ow-tree-width) minmax(0, 1fr) var(--ow-toc-width);
+  gap: var(--ow-sp-3);
+  padding: var(--ow-sp-3);
   height: 100vh;
   overflow: hidden;
+  background: var(--ow-shell-bg);
 }
 
+/* 区域面板卡（mock .panel）：明确边界 + 内高光 + 同相轻影（选择器序：.ob-toc 打头防规则体锁误匹配） */
+.ob-toc,
+.ob-menu,
+.ob-tree,
+.ob-center {
+  background: var(--ow-panel-bg);
+  border: 1px solid var(--dsw-alias-border-l2, ButtonBorder);
+  border-radius: var(--ow-radius-control);
+  box-shadow: var(--ow-shadow-card), var(--ow-highlight-top);
+}
+
+/* 菜单轨（dir-c .menu 文字瓦片：11.5px/500/0.06em 居中字片）：当前项=主色淡底瓦片（C5）
+   + accent 文字（C8）+ 选中内描边（C5 伴生） */
 .ob-menu {
-  border-right: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
-  background: var(--dsw-alias-bg-layer-1, Canvas);
+  padding: 10px;
 }
 
+.ob-menu .el-menu {
+  border-right: 0;
+  background: transparent;
+}
+
+.ob-menu .el-menu-item {
+  height: 36px;
+  margin: 2px 0;
+  padding: 0 var(--ow-sp-2);
+  justify-content: center;
+  border-radius: var(--ow-radius-control);
+  font-size: 11.5px; /* mock .menu a 11.5px（chrome 排印定值） */
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--dsw-alias-label-secondary, GrayText);
+}
+
+.ob-menu .el-menu-item:hover {
+  background: var(--dsw-alias-interactive-bg-hover, ButtonFace);
+  color: var(--dsw-alias-label-primary, CanvasText);
+}
+
+.ob-menu .el-menu-item.is-active {
+  background: var(--ow-accent-tint);
+  color: var(--ow-accent-text);
+  font-weight: 600;
+  box-shadow: var(--ow-ring-accent); /* mock aria-current 选中内描边 */
+}
+
+/* 树（dir-c .tree）：行 28px 圆角行、选中=C5 淡底 + 选中内描边、hover/当前才显行内操作 */
 .ob-tree {
-  border-right: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
   overflow: auto;
-  padding: 8px 4px;
-  background: var(--dsw-alias-bg-layer-1, Canvas);
+  padding: 8px; /* mock .tree-body 8px */
 }
 
+.ob-tree .el-tree-node__content {
+  height: 28px;
+  margin-bottom: 1px;
+  border-radius: var(--ow-radius-control);
+  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  color: var(--dsw-alias-label-secondary, GrayText);
+}
+
+.ob-tree .el-tree-node__content:hover {
+  background: var(--dsw-alias-interactive-bg-hover, ButtonFace);
+  color: var(--dsw-alias-label-primary, CanvasText);
+}
+
+.ob-tree .el-tree-node.is-current > .el-tree-node__content {
+  background: var(--ow-accent-tint);
+  color: var(--dsw-alias-label-primary, CanvasText);
+  font-weight: 500;
+  box-shadow: var(--ow-ring-accent); /* mock aria-current 选中内描边 */
+}
+
+/* 目录行=小字重分组标签（dir-c .dir-row：11px/600/字距 0.08em） */
+.ob-tree .ob-tree-node[data-type='dir'] {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--dsw-alias-label-secondary, GrayText);
+}
+
+/* ── M1 修复（ui-a-review M1 树行工具位压字）：行内操作=右侧工具位（dir-c .row-actions：hover/当前显形）
+   ——替代 UI-A 波三档 right 硬值 + 108px 数值预留（预留位 108px < 按钮块实占 128px=压字根因）。
+   两态形：闲置=脱流不占标签宽度（默认短标签全显，dir-c mock 闲置行全显）+ opacity 0 仍可 Tab 聚焦；
+   显形（hover/聚焦/当前项）=flex 在流内：工具位宽恒=按钮块宽（预留位≥按钮块宽由构造成立），
+   标签独立收缩位截断（省略号不压按钮）── */
 .ob-tree-node {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ob-tree-node-label {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* 改名入口（T13）+ 删除入口（T6）+ 下载入口（T7）：悬停/键盘聚焦显露，点击不触发选中（@click.stop） */
+.ob-tree-row-actions {
+  position: absolute; /* 闲置脱流（right 仅安置无形块，非按钮三档硬值） */
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  gap: 3px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 行内操作显形（dir-c .row-actions）：hover / 键盘聚焦 / 当前项恒显 → 收回流内（永不压字） */
+.ob-tree-node:hover .ob-tree-row-actions,
+.ob-tree-node:focus-within .ob-tree-row-actions,
+.ob-tree .el-tree-node.is-current .ob-tree-row-actions {
+  position: static;
+  transform: none;
+  margin-left: auto;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* 改名入口（T13）+ 删除入口（T6）+ 下载入口（T7）：点击不触发选中（@click.stop）；
+   dir-c .row-btn 细节：描边 l2 + 行内圆角 4px + bg-base + 顶缘内高光（--ow-highlight-soft）；
+   DOM 序下载/改名/删除 → 左起同序 */
 .ob-tree-rename,
 .ob-tree-del,
 .ob-tree-dl {
-  margin-left: var(--ow-sp-2);
-  padding: 0 var(--ow-sp-2);
-  border: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  flex: none; /* 按钮块不收缩（工具位宽=按钮块宽，M1 锁形） */
+  padding: 1px 7px;
+  border: 1px solid var(--dsw-alias-border-l2, ButtonBorder);
   border-radius: var(--ow-radius-inline);
-  background: transparent;
-  color: inherit;
-  font-size: 12px;
-  line-height: 18px;
+  background: var(--dsw-alias-bg-base, Canvas);
+  color: var(--dsw-alias-label-secondary, GrayText);
+  font-size: 10.5px; /* mock .row-btn 10.5px */
+  line-height: 1.6;
+  white-space: nowrap;
   cursor: pointer;
-  opacity: 0;
-}
-
-.ob-tree-node:hover .ob-tree-rename,
-.ob-tree-rename:focus-visible,
-.ob-tree-node:hover .ob-tree-del,
-.ob-tree-del:focus-visible,
-.ob-tree-node:hover .ob-tree-dl,
-.ob-tree-dl:focus-visible {
-  opacity: 1;
+  box-shadow: var(--ow-highlight-soft);
 }
 
 .ob-center {
@@ -204,17 +406,28 @@ body {
   overflow: auto;
 }
 
+/* 大纲（dir-c .toc：panel-bar 头 + 安静清单）：题=38px 面板条（11.5px/600/0.08em 标签 + 发丝下缘），
+   体=toc-body 8px 呼吸位，条目=圆角行 */
 .ob-toc {
-  border-left: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
   overflow: auto;
-  padding: 12px 8px;
-  background: var(--dsw-alias-bg-layer-1, Canvas);
+  padding: 0;
 }
 
 .ob-toc-title {
-  margin: 0 0 8px;
-  font-size: var(--dsw-font-m-18-font-size, 18px);
+  display: flex;
+  align-items: center;
+  height: 38px;
+  margin: 0;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  font-size: 11.5px; /* mock .panel-bar 11.5px */
   font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--dsw-alias-label-secondary, GrayText);
+}
+
+.ob-toc > .ob-toc-list {
+  padding: 8px; /* mock .toc-body 8px */
 }
 
 .ob-toc-list {
@@ -226,17 +439,19 @@ body {
 .ob-toc-link {
   display: block;
   width: 100%;
-  padding: var(--ow-sp-1);
+  padding: 5px 8px; /* mock .toc-body a 5px 8px */
   border: 0;
+  border-radius: var(--ow-radius-control);
   background: none;
   color: var(--dsw-alias-label-secondary, CanvasText);
-  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  font-size: 12.5px; /* mock .toc-body a 12.5px */
+  line-height: 1.5;
   text-align: left;
   cursor: pointer;
 }
 
 .ob-toc-link:hover {
-  color: var(--ow-link-safe);
+  color: var(--dsw-alias-label-primary, CanvasText);
   background: var(--dsw-alias-interactive-bg-hover, ButtonFace);
 }
 
@@ -281,25 +496,39 @@ body {
 }
 
 /* ── Markdown 阅读面（服务端渲染 HTML 的样式承接，零前端解析）——
-   S2 候选 A 排印轴：行长 68ch 居中、正文行高 1.75、段距 0.85em、标题与正文间距 1.4–1.6em 分档、
-   字阶四档（页题 ×1.75 在 .ob-note-title / h1·h2 ×1.35 / h3 ×1.15 / h4+ ×1.0，派生见 :root）── */
+   UI-C 定稿排印（dir-c .prose 逐项映射）：行长=内容 68ch（TECH §3.9.2 行跟随合同）+ 32px 双内距
+   与阅读头同左缘（mock 文档卡左对齐排版）、正文行高 1.75（mock 1.72，0.03 轴差沿既有锁）、
+   段距 0.9em、h2 前发丝线节奏（margin 1.53em 0 0.71em + padding-top 18px + border-top hairline）、
+   字阶（页题 ×1.8 在 .ob-note-title / h1·h2 ×1.13 / h3 ×0.93 / h4+ ×1.0，档比=mock 元素/正文，见 :root）── */
 .ob-prose {
-  max-width: 68ch;
-  margin: 0 auto;
-  padding: var(--ow-sp-4) var(--ow-sp-8) var(--ow-sp-12);
+  max-width: var(--ow-read-col);
+  margin: 0;
+  padding: 4px var(--ow-sp-8) 28px; /* mock .prose 4px 32px 28px */
   font-size: var(--dsh-content-font-size, 16px); /* 阅读档 ×1（TECH §3.10.4） */
   line-height: 1.75;
 }
 
 .ob-prose h1, .ob-prose h2 {
   font-size: var(--ow-fs-h2);
-  line-height: 1.35;
-  margin: 1.6em 0 0.5em;
+  letter-spacing: -0.012em;
+  margin: 1.53em 0 0.71em;
+  /* dir-c .prose h2：h2 前发丝线节奏（mock 26px 0 12px + 内距 18px=排印定值） */
+  padding-top: 18px;
+  border-top: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+}
+
+/* 首节豁免（ui-a-review m3 修复：h1/h2 同档全豁免——正文以 # 开头的笔记首元素为 h1 时不再悬空发丝线；
+   mock .prose h2:first-child = margin 12px + padding 0 + border 0 逐值） */
+.ob-prose h1:first-child,
+.ob-prose h2:first-child {
+  margin-top: 12px;
+  padding-top: 0;
+  border-top: 0;
 }
 
 .ob-prose h3 {
   font-size: var(--ow-fs-h3);
-  margin: 1.4em 0 0.45em;
+  margin: 1.29em 0 0.57em;
 }
 
 .ob-prose h4, .ob-prose h5, .ob-prose h6 {
@@ -307,46 +536,58 @@ body {
   margin: 1.3em 0 0.4em;
 }
 
-.ob-prose p { margin: 0 0 0.85em; }
+.ob-prose p { margin: 0 0 0.9em; }
 
-.ob-prose ul, .ob-prose ol { margin: 0 0 0.85em; padding-left: 1.4em; }
+.ob-prose ul, .ob-prose ol { margin: 0 0 0.9em; padding-left: 1.45em; }
 
-.ob-prose li { margin: 0 0 0.35em; }
+.ob-prose li { margin: 0 0 0.38em; }
 
 .ob-prose pre {
-  margin: 1.1em 0;
-  padding: 14px; /* candidate-c 9 点名「代码块 14px 内距」（排印定值，非组件间距刻度） */
+  margin: 0 0 0.9em;
+  padding: 13px 15px; /* dir-c .prose pre 13px 15px（排印定值，非组件间距刻度） */
   overflow: auto;
   background: var(--dsw-alias-markdown-code-block, ButtonFace);
-  border: 1px solid var(--dsw-alias-border-l2, ButtonBorder);
+  border: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
   border-radius: var(--ow-radius-control);
+  /* dir-c .prose pre：顶缘内高光（--ow-highlight-soft，mock 94% 透明） */
+  box-shadow: var(--ow-highlight-soft);
 }
 
 .ob-prose code {
   font-family: var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace);
   background: var(--dsw-alias-markdown-inline-code, ButtonFace);
   border-radius: var(--ow-radius-inline);
-  padding: 0 var(--ow-sp-1);
-  font-size: 0.9em;
+  padding: 1px 6px; /* dir-c .prose code 行内件内距 */
+  font-size: 0.88em;
 }
 
 .ob-prose pre code {
   background: none;
   padding: 0;
-  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  font-size: 0.8em; /* mock 12px@15px 正文=0.8em 档比（随内容字号轴缩放） */
   line-height: 1.7;
 }
 
 .ob-prose blockquote {
-  margin: 1.1em 0;
-  padding: 2px 16px;
-  border-left: 3px solid var(--dsw-alias-border-l3, ButtonBorder);
+  margin: 0 0 0.9em;
+  padding: 11px 15px; /* dir-c .prose blockquote：卡内距（mock 11px 15px） */
+  border: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  border-radius: var(--ow-radius-control);
+  /* dir-c .prose blockquote：code-block 底 + 发丝描边 + 顶缘内高光（A6 引文淡底让位于 C 定稿形） */
+  background: var(--dsw-alias-markdown-code-block, ButtonFace);
+  box-shadow: var(--ow-highlight-soft);
+  color: var(--dsw-alias-label-secondary, CanvasText);
+}
+
+.ob-prose blockquote p {
+  margin: 0;
   color: var(--dsw-alias-label-secondary, CanvasText);
 }
 
 .ob-prose a {
   /* AA 修④链接色：派生链接色 5.55:1（现状 raw link 白底 4.23:1 不过 AA）；推导式见 :root 注释 */
   color: var(--ow-link-safe);
+  text-decoration-thickness: 1px;
   text-underline-offset: 3px;
 }
 
@@ -384,21 +625,27 @@ body {
   min-height: 0;
 }
 
-/* ── 面板统一头（candidate-c 5）：阅读/编辑/搜索/反链/分享共用（标题 + 路径副文 + 状态徽标 + 动作）；
-   编辑面沿用 .ob-editor-toolbar 类承载 compact 退化锁（TECH §3.9.4 逐区块显式）── */
+/* ── 面板统一头（candidate-c 5 → UI-C panel-bar 形：mock .panel-bar 38px 条 + 发丝下缘 +
+   11.5px/600/0.08em 标签 + 副文计数形（500/0 字距/tabular-nums））：阅读/编辑/搜索/反链/分享共用
+   （标题 + 路径副文 + 状态徽标 + 动作）；编辑面沿用 .ob-editor-toolbar 类承载 compact 退化锁（TECH §3.9.4）── */
 .ob-pane-head {
   display: flex;
   align-items: center;
-  gap: var(--ow-sp-3);
-  padding: var(--ow-sp-3) var(--ow-sp-6);
+  gap: var(--ow-sp-2);
+  height: 38px;
+  padding: 0 14px;
   border-bottom: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
-  background: var(--dsw-alias-bg-base, Canvas);
+  background: transparent;
 }
 
 .ob-pane-title {
   margin: 0;
-  font-size: calc(var(--dsh-content-font-size, 16px) * 1.35);
+  /* dir-c .panel-bar：面板题=小字距标签形（11.5px/600/0.08em/secondary） */
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
   line-height: 1.35;
+  color: var(--dsw-alias-label-secondary, GrayText);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -406,7 +653,10 @@ body {
 
 .ob-pane-sub {
   color: var(--dsw-alias-label-secondary, GrayText);
-  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -420,41 +670,67 @@ body {
   gap: var(--ow-sp-2);
 }
 
-/* ── 阅读头（S2 候选 A 4）：路径 + 页题（字阶四档的页题档 ×1.75）+ 元信息（更新时间/字数/标题数）
-   + 动作（专注/编辑/分享），与阅读正文同 68ch 列宽居中；窄屏折叠见 960px 块 ── */
+/* ── 阅读头（UI-C 定稿 dir-c .doc-head）：路径左 + 动作右上工具位（全卡宽工具行）→ 页题
+   （×1.8 档 + -0.02em/600/1.3 + max-width 620px）→ 元信息（·分隔）+ 头部区与正文区发丝分隔
+   （全卡宽，dir-c-light.png 像素采样实证 y=162 贯通 x=412..1165）；元素·动作·文案零变化=纯网格排版；
+   窄屏折叠见 960px 块 ── */
 .ob-note-head {
-  max-width: 68ch;
-  margin: 0 auto;
-  padding: var(--ow-sp-8) var(--ow-sp-8) 0;
+  /* 阅读头节奏=排印定值（mock .doc-head 22px 32px 18px；水平向取 sp-8=32px 与正文同左缘） */
+  padding: 22px var(--ow-sp-8) 18px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'top acts'
+    'title title'
+    'meta meta';
 }
 
 .ob-note-path {
-  margin: 0 0 var(--ow-sp-2);
-  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  grid-area: top;
+  align-self: center;
+  margin: 0;
+  font-size: 12px; /* mock .note-path 12px（chrome 排印定值） */
+  letter-spacing: 0.02em;
   color: var(--dsw-alias-label-secondary, GrayText);
 }
 
 .ob-note-title {
-  margin: 0 0 var(--ow-sp-2);
+  grid-area: title;
+  margin: 10px 0 0; /* mock .note-title 10px 0 0（ui-a-review m4③ 按 mock 逐值对齐） */
+  max-width: 620px; /* mock .note-title max-width 620px */
   font-size: var(--ow-fs-page);
-  line-height: 1.25;
-  font-weight: 700;
+  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: -0.02em;
 }
 
 .ob-note-meta {
+  grid-area: meta;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--ow-sp-3);
-  margin: 0 0 var(--ow-sp-2);
-  font-size: var(--dsw-font-xs-13-font-size, 13px);
+  gap: 0;
+  margin: 10px 0 0;
+  font-size: 12px; /* mock .note-meta 12px（chrome 排印定值） */
+  color: var(--dsw-alias-label-secondary, GrayText);
+}
+
+/* mock .note-meta .it + .it::before：·分隔（mock 9px 间距）；分隔点=secondary 保 AA
+   （mock tertiary 3.7:1 不采用——ui-a-review D3 继承，AA 红线优先） */
+.ob-note-meta span + span::before {
+  content: '·';
+  margin: 0 9px;
   color: var(--dsw-alias-label-secondary, GrayText);
 }
 
 .ob-note-acts {
+  grid-area: acts;
+  justify-self: end;
   display: flex;
+  align-items: center;
   gap: var(--ow-sp-2);
-  padding: var(--ow-sp-2) 0 0;
+  padding: 0;
 }
 
 .ob-editor-split {
@@ -552,23 +828,34 @@ body {
 
 .ob-diff-same { color: var(--dsw-alias-label-secondary, GrayText); }
 
-/* ── 表格/脚注/任务清单承接（T4 复杂语法面）+ S1 尾项 candidate-c 9 排印微调：
-   表格横向 hairline（去全框线、表头加重）、代码块 14px 内距（上文 pre）、引用 hairline 对齐（上文 blockquote）── */
+/* ── 表格/脚注/任务清单承接（T4 复杂语法面）+ dir-c 表格排印：横向发丝分档（th border-l3 /
+   td border-l1，去全框线、表头加重）、代码块内距（上文 pre）、引用发丝描边卡（上文 blockquote）── */
 .ob-prose table {
   border-collapse: collapse;
   width: 100%;
-  margin: 1.1em 0;
-  font-size: calc(var(--dsh-content-font-size, 16px) * 0.9);
+  margin: 0 0 0.9em;
+  font-size: calc(var(--dsh-content-font-size, 16px) * 0.87); /* mock td 13px@15px 正文=0.87em 档比 */
 }
 
 .ob-prose th,
 .ob-prose td {
-  border-bottom: 1px solid var(--dsw-alias-border-l2, ButtonBorder);
-  padding: 8px 10px;
+  padding: 7px 10px; /* mock th/td 7px 10px */
   text-align: left;
 }
 
-.ob-prose th { font-weight: 600; }
+/* dir-c .prose td：横向发丝=border-l1（ui-a-review m4④/D9 收口：C 定稿 th l3 / td l1 逐值分档） */
+.ob-prose td {
+  border-bottom: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+}
+
+/* dir-c .prose th：小字距标签形（11px/600/0.05em/secondary——档比 11/15=0.73em 正文）+ border-l3 发丝 */
+.ob-prose th {
+  border-bottom: 1px solid var(--dsw-alias-border-l3, ButtonBorder);
+  font-weight: 600;
+  font-size: 0.84em; /* 表体 0.87em × 0.84 ≈ 0.73em 正文（mock th 11px@15px） */
+  letter-spacing: 0.05em;
+  color: var(--dsw-alias-label-secondary, GrayText);
+}
 
 .ob-prose .footnotes {
   margin-top: 2.2em;
@@ -583,7 +870,7 @@ body {
   padding-left: 0.2em;
 }
 
-.ob-prose .contains-task-list input { margin-right: var(--ow-sp-2); }
+.ob-prose .contains-task-list input { margin-right: var(--ow-sp-2); accent-color: var(--dsw-alias-state-business-primary, Highlight); }
 
 /* ── 分享管理 / 设置面板（T10，OW-US-9/10）：布局局部变量 --ow-* 豁免（ARC-5），色彩全走 dsw token ── */
 .ob-share-target {
@@ -655,43 +942,53 @@ body {
   color: var(--dsw-alias-state-error-primary, CanvasText);
 }
 
-/* ── 保存状态徽标四态（candidate-c 4）：文字在场 + 语义底色，无装饰色点；
-   胶囊圆角=圆角两档锁死的唯一例外（只给状态徽标）。文字一律 label-primary/secondary：
-   dirty/conflict 底色承载语义（warn-tertiary / file-diff-deleted-bg），不复用 warn-label 文字色
-   （AA 修②同源：warn-label 配 warn-tertiary 仅 2.58:1）── */
+/* ── 保存状态徽标四态（candidate-c 4 → UI-C dir-c .badge 带对勾徽标形）：文字在场 + 语义淡底
+   + 深一档语义文字（派生 C6，比值复测 test/web-visual-token.test.mjs ⑤）+ saved 态对勾（mock .badge .tick），
+   无描边无装饰色点；胶囊圆角=圆角两档锁死的唯一例外（只给状态徽标）。明暗双分支各自推导（非简单反转）：
+   文字 = color-mix(semantic, #000 40%)（明）/ color-mix(semantic, #fff 24%)（暗），
+   语义底 = color-mix(semantic, transparent 88%|84%)（C6 三态同式）── */
 .ob-chip {
   display: inline-flex;
   align-items: center;
-  gap: var(--ow-sp-1);
-  padding: var(--ow-sp-1) var(--ow-sp-2);
-  border: 1px solid var(--dsw-alias-border-l2, ButtonBorder);
+  gap: 5px; /* mock .badge gap 5px */
+  padding: 2px 10px;
+  border: 0;
   border-radius: var(--ow-radius-pill);
   background: var(--dsw-alias-bg-layer-1, Canvas);
   color: var(--dsw-alias-label-secondary, GrayText);
-  font-size: var(--dsw-font-xs-13-font-size, 13px);
-  line-height: 1.6;
+  font-size: 11.5px; /* mock .badge 11.5px */
+  font-weight: 600;
+  line-height: 1.7;
   white-space: nowrap;
 }
 
-.ob-chip-saved { color: var(--dsw-alias-label-primary, CanvasText); }
+/* 对勾（mock .badge .tick 10px）：只给 saved 态（mock 仅画「✓ 已保存」；未保存/保存中/冲突
+   语义上不打勾）；装饰性字形 aria-hidden（SaveStatusBadge.vue） */
+.ob-chip-tick {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.ob-chip-saved {
+  background: var(--ow-chip-saved-bg);
+  color: var(--ow-chip-saved-fg);
+}
 
 .ob-chip-dirty {
-  background: var(--dsw-alias-state-warn-tertiary, Canvas);
-  color: var(--dsw-alias-label-primary, CanvasText);
-  border-color: var(--dsw-alias-state-warn-primary, ButtonBorder);
+  background: var(--ow-chip-dirty-bg);
+  color: var(--ow-chip-dirty-fg);
 }
 
 .ob-chip-conflict {
-  background: var(--dsw-alias-file-diff-deleted-bg, Canvas);
-  color: var(--dsw-alias-label-primary, CanvasText);
-  border-color: var(--dsw-alias-state-error-primary, ButtonBorder);
+  background: var(--ow-chip-conflict-bg);
+  color: var(--ow-chip-conflict-fg);
 }
 
 /* ── 状态面（candidate-c 8）：骨架贴布局形状（非圆圈 spinner、无渐变闪动）/
    内联可解释错误（错误线 + 标题 + 原因 + 指引 + 路径 + 动作）/ 空状态构图（下一步 + 最近打开）── */
 .ob-state-wrap {
-  max-width: 68ch;
-  margin: 0 auto;
+  max-width: var(--ow-read-col);
+  margin: 0; /* 与阅读列同左缘（dir-c 文档卡左对齐排版） */
   padding: var(--ow-sp-8) var(--ow-sp-8) var(--ow-sp-12);
 }
 
@@ -700,13 +997,14 @@ body {
   border-radius: var(--ow-radius-inline);
 }
 
+/* 骨架贴版式（UI-A 新字阶：标题条 32px=页题档高度、段落条 12px、代码块形 88px） */
 .ob-sk-title {
-  height: 28px;
+  height: 32px;
   margin: 0 0 var(--ow-sp-4);
 }
 
 .ob-sk-line {
-  height: 14px;
+  height: 12px;
   margin: 0 0 var(--ow-sp-3);
 }
 
@@ -722,20 +1020,24 @@ body {
   font-size: var(--dsw-font-xs-13-font-size, 13px);
 }
 
-/* 错误块=唯一描边容器之一（candidate-c 6：只有弹层与错误块用描边容器）；错误线=左侧 3px error */
+/* 错误块=唯一描边容器之一（candidate-c 6：只有弹层与错误块用描边容器）；错误线=左侧 3px error；
+   UI-A 层级清晰化：淡底（派生 A6 同口径 error 形）+ 题 h2 档 600 → 原因正文 → 指引 13px secondary
+   → 路径 mono → 动作行，逐层降噪 */
 .ob-error-card {
-  max-width: 68ch;
-  margin: var(--ow-sp-4) auto;
+  max-width: var(--ow-read-col);
+  margin: var(--ow-sp-4) 0;
   padding: var(--ow-sp-6);
   border: 1px solid var(--dsw-alias-border-l2, ButtonBorder);
   border-left: 3px solid var(--dsw-alias-state-error-primary, ButtonBorder);
   border-radius: var(--ow-radius-control);
-  background: var(--dsw-alias-bg-layer-1, Canvas);
+  background: var(--ow-error-bg);
 }
 
 .ob-error-title {
   margin: 0 0 var(--ow-sp-2);
-  font-size: calc(var(--dsh-content-font-size, 16px) * 1.15);
+  font-size: var(--ow-fs-h2);
+  font-weight: 600;
+  letter-spacing: -0.015em;
 }
 
 .ob-error-why { margin: 0 0 var(--ow-sp-2); }
@@ -762,14 +1064,17 @@ body {
 
 /* 空状态构图（下一步 + 最近打开） */
 .ob-empty-state {
-  max-width: 68ch;
-  margin: 0 auto;
+  max-width: var(--ow-read-col);
+  margin: 0;
   padding: var(--ow-sp-8) var(--ow-sp-8) var(--ow-sp-12);
 }
 
 .ob-empty-title {
   margin: 0 0 var(--ow-sp-2);
   font-size: var(--ow-fs-display); /* display 档 ×1.6（TECH §3.10.4 命名档消费面=状态面大标题） */
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.28;
 }
 
 .ob-empty-body { margin: 0 0 var(--ow-sp-4); }
@@ -856,8 +1161,6 @@ body {
     grid-row: 1;
     max-height: 44px;
     overflow: hidden;
-    border-right: 0;
-    border-bottom: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
   }
 
   .ob-tree[data-open='true'] {
@@ -905,8 +1208,9 @@ body {
     overflow: auto;
   }
 
-  /* 面板统一头窄屏（candidate-c 移动端折叠声明）：标题独占第一行，状态徽标与动作换行到第二行 */
+  /* 面板统一头窄屏（candidate-c 移动端折叠声明）：38px 条退为自适应高，标题独占第一行，徽标与动作换行 */
   .ob-pane-head {
+    height: auto;
     flex-wrap: wrap;
     padding: var(--ow-sp-3) var(--ow-sp-4);
   }
@@ -928,12 +1232,22 @@ body {
     min-height: 36px;
   }
 
-  /* 阅读头窄屏（candidate-a 移动端折叠声明）：左右 padding 32→16、顶距 32→24，动作换行 + 44px 触达 */
+  /* 阅读头窄屏（candidate-a 移动端折叠声明）：左右 padding 32→16、顶距 24，动作换行 + 44px 触达；
+     UI-C 网格排版窄屏退化：动作位从右上退到路径行下方左对齐（逐区块显式）；
+     ui-a-review m4④ 收口：下距与宽屏同 18px（头尾节奏对称，不再退化为 0） */
   .ob-note-head {
-    padding: var(--ow-sp-6) var(--ow-sp-4) 0;
+    padding: var(--ow-sp-6) var(--ow-sp-4) 18px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'top'
+      'acts'
+      'title'
+      'meta';
   }
 
+  /* ui-a-review m5 收口：窄屏动作位双规则合并为单规则 */
   .ob-note-acts {
+    justify-self: start;
     flex-wrap: wrap;
   }
 
@@ -954,4 +1268,11 @@ body {
 .ob-shell.is-focus .ob-tree,
 .ob-shell.is-focus .ob-toc {
   display: none;
+}
+
+/* 专注模式阅读卡收窄居中（dir-c 未画专注态，按 C 卡片语汇补形：卡=宽屏 760px 规格居中，
+   外壳沉底（C2）环绕——与宽屏四区构图下中央卡同宽，左对齐排印不受专注态放大失衡） */
+.ob-shell.is-focus .ob-center {
+  max-width: 760px;
+  margin: 0 auto;
 }
