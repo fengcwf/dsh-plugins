@@ -269,7 +269,7 @@ test('tailSlice+filters：翻旧（cursor）后过滤仍生效——各页同参
   writeLog(home, '.dsh/logs/cron/wiki-ingest-20260927.log', 'out1\n')
   writeLog(home, '.dsh/logs/cron/wiki-ingest-20260928.log', 'in1\nin2\nin3\nin4\n')
   writeLog(home, '.dsh/logs/cron/wiki-ingest-scan-20260928.log', 'scan1\n')
-  writeLog(home, '.dsh/kb-alerts.md', '- [2026-09-28 09:00:00] alert-old\n')
+  writeLog(home, '.dsh/plugins/wiki-steward/data/kb-alerts.md', '- [2026-09-28 09:00:00] alert-old\n')
   const merged = readMergedLog(defaultLogSources({ home }))
   const filters = { since: '20260928', until: '20260928', types: ['cron:wiki-ingest', 'alerts:kb'] }
   const p1 = tailSlice(merged, { limit: 2, filters })
