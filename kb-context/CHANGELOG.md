@@ -1,5 +1,13 @@
 # CHANGELOG — kb-context
 
+## 0.4.0 — 2026-09-30
+
+数据面收口（~/.dsh 根目录治理）：
+
+- **索引库落点迁移**：活跃索引库 `~/.dsh/kb-index/` → 源码位插件数据目录 `~/.dsh/plugins/kb-context/data/kb-index/`（active.db 本体 + `-shm`/`-wal` 侧车 + `.candidate` 候选库）。
+- **遗留迁移**：`migrateLegacyIndexDb()` apply 期一次性搬迁——只搬 `active.db*`（queue/、schedule-ledger.json 归 wiki-steward 对家自迁）；无遗留=零副作用（T7 apply 零落盘不变式不动）；新家已有 active.db=不覆盖不搬；旧 `kb-index/` 迁空即删、非空保留；失败留痕不阻塞加载。
+- **测试**：新增 `test/migrate.test.mjs` 4 项（零副作用/全迁含侧车与候选库/对家状态不动/不覆盖），既有路径断言随迁（198 全绿）。
+
 ## 0.3.2 — 2026-09-29
 
 Phase 8 修复波（用户反馈 3 项：①设置页面 UI 优化参考 dsh 本地 UI 效果 ②触发词面/索引实体路径给参考填写示例+功能说明 ③注入预算 token 上限的作用说明入设置面；参照 `changes/2026-09-29-kb-context-settings-ux/reports/ui-ux-brief.md`（T9-D1）、`fix-ui-ux-report.md`（T9-F1））：

@@ -59,7 +59,8 @@ export function defaultLogSources({ home }) {
       id: 'alerts:kb',
       label: LABELS['alerts:kb'],
       kind: 'file',
-      file: path.join(home, '.dsh', 'kb-alerts.md'),
+      // 告警账本（2026-09-30 数据面收口→源码位插件目录；旧落点 ~/.dsh/kb-alerts.md 已废弃）
+      file: path.join(home, '.dsh', 'plugins', 'wiki-steward', 'data', 'kb-alerts.md'),
       order: 3,
       // 告警账本行内时间戳优先（dsh-cron.sh alert 行形 `- [YYYY-MM-DD HH:MM:SS] …`）
       lineDate: (text) => {

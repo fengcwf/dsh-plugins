@@ -1,5 +1,10 @@
 # Changelog — dsh-login-gate
 
+## 0.4.0 — 2026-09-30
+- **数据面收口（~/.dsh 根目录治理）**：门禁数据落源码位插件数据目录 `~/.dsh/plugins/dsh-login-gate/data/`（secret / accounts.txt / breakglass.txt / users.json / last-good-plugin.tar.gz；旧落点 `$DSH_HOME/login-gate/` 废弃）。
+- **遗留迁移**：`migrateLegacyGateData()` apply 期一次性搬迁——逐文件「新家已有=不覆盖」（防旧 secret 反灌现役）；rename 同盘原子、0600 权限随 inode 保留；无遗留=零副作用（不 mkdir）；迁空即删；失败留痕不阻塞加载。
+- **`defaultUsersFile()` 缺省位随迁**。测试：新增 `test/migrate.test.mjs` 3 项（零副作用/全迁保 0600 权限/不覆盖），既有路径断言随迁（75 全绿）。
+
 ## 0.3.0 — 2026-09-29
 - **设置栏目**：dsh 设置菜单「dsh-login-gate」栏目（`settings.section` 槽）——端口维护 / 参数区 / 账号区 / 超时说明段四区一段；零构建单文件 `lib/client.js`（`__ModuleLoader__` 工厂形 + React.createElement）。
 - **端口维护（US-1 / INV-7）**：端口可改（默认 3500，整数 1-65535）+ 服务端端口占用预检 + 保存前断连警示确认条（R-16 事前警示：确认才写入、取消零请求）+ 联动清单四行（gate-watchdog.sh:36 探活 curl 行 / start-dsh.sh:118-129 [3/3] 验证监听端口与门禁段 / obsidian-web 3500 `/ob_share` 分享契约 / Lucky 外网反代需人工同步）。

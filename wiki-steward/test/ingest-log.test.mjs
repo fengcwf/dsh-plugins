@@ -43,7 +43,7 @@ test('defaultLogSources：三来源各归其位（cron 任务日志 / 手动扫�
   const [cron, manual, alerts] = sources
   assert.equal(cron.dir, path.join(home, '.dsh', 'logs', 'cron'))
   assert.equal(manual.dir, path.join(home, '.dsh', 'logs', 'cron'))
-  assert.equal(alerts.file, path.join(home, '.dsh', 'kb-alerts.md'))
+  assert.equal(alerts.file, path.join(home, '.dsh', 'plugins', 'wiki-steward', 'data', 'kb-alerts.md'))
   for (const s of sources) assert.ok(s.label && s.label.length > 0, `${s.id} 必须带来源标注文案`)
 })
 
@@ -53,7 +53,7 @@ test('readMergedLog：跨来源真文件拼接，逐行带来源 id/label/文件
   writeLog(home, '.dsh/logs/cron/wiki-ingest-20260927.log', 'A1\nA2\n')
   writeLog(home, '.dsh/logs/cron/wiki-ingest-20260928.log', 'B1\nB2\n')
   writeLog(home, '.dsh/logs/cron/wiki-ingest-scan-20260928.log', 'S1\n')
-  writeLog(home, '.dsh/kb-alerts.md', '- [2026-09-27 08:00:00] cron:hourly-check exit=1\n- [2026-09-28 09:00:00] cron:wiki-ingest exit=1\n')
+  writeLog(home, '.dsh/plugins/wiki-steward/data/kb-alerts.md', '- [2026-09-27 08:00:00] cron:hourly-check exit=1\n- [2026-09-28 09:00:00] cron:wiki-ingest exit=1\n')
 
   const merged = readMergedLog(defaultLogSources({ home }))
   const keys = merged.map((l) => `${l.source}|${l.name}|${l.line}`)
@@ -80,7 +80,7 @@ test('readMergedLog：跨来源真文件拼接，逐行带来源 id/label/文件
 test('readMergedLog：告警账本行内时间戳优先于文件名日期；无时间戳行回退文件日期（形合法）', async (t) => {
   const home = mkHome(t)
   writeLog(home, '.dsh/logs/cron/wiki-ingest-20991231.log', 'L\n')
-  writeLog(home, '.dsh/kb-alerts.md', 'orphan-no-timestamp\n- [2026-09-29 10:00:00] old\n')
+  writeLog(home, '.dsh/plugins/wiki-steward/data/kb-alerts.md', 'orphan-no-timestamp\n- [2026-09-29 10:00:00] old\n')
   const merged = readMergedLog(defaultLogSources({ home }))
   const alerts = merged.filter((l) => l.source === 'alerts:kb')
   const dated = alerts.find((l) => l.text.includes('old'))

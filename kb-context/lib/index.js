@@ -73,12 +73,51 @@ function warn(ctx, line) {
 }
 
 /**
- * 活跃索引库路径（TECH §1 数据面 `~/.dsh/kb-index/`；文件名 active.db 呼应 T2 refresh(activePath)
+ * 插件数据目录（2026-09-30 数据面收口）：`~/.dsh/plugins/kb-context/data/`（源码位插件目录）。
+ * 旧落点 `~/.dsh/kb-index/` 已废弃（~/.dsh 根目录堆积治理）——遗留库由 migrateLegacyIndexDb
+ * 启动一次性迁移。每次调用现算（os.homedir() 可被 HOME 导向，测试隔离用）。
+ */
+export function pluginDataDir() {
+  return path.join(os.homedir(), '.dsh', 'plugins', 'kb-context', 'data')
+}
+
+/**
+ * 活跃索引库路径（数据面 `<data>/kb-index/`；文件名 active.db 呼应 T2 refresh(activePath)
  * 的「活跃库」语义——copy-on-write 激活后的只读消费面）。每次调用现算（os.homedir() 可被 HOME 导向，
  * 测试隔离用）。
  */
 export function resolveIndexDbPath() {
-  return path.join(os.homedir(), '.dsh', 'kb-index', 'active.db')
+  return path.join(pluginDataDir(), 'kb-index', 'active.db')
+}
+
+/**
+ * 遗留落点一次性迁移（2026-09-30 数据面收口）：旧 `~/.dsh/kb-index/active.db*`（含 .candidate
+ * 与侧车）→ `<data>/kb-index/`。只搬自己拥有的 active.db*（queue/、schedule-ledger.json 归
+ * wiki-steward 对家迁移；旧目录非空时留着）。**无遗留 = 零副作用**（T7 apply 零落盘不变式不动）；
+ * 新家已有 active.db = 不覆盖不搬（skipped）。迁移失败绝不阻塞加载——error 由 apply 留痕
+ * （INV-15 禁静默），旧落点留人工处置。
+ */
+export function migrateLegacyIndexDb() {
+  const legacyDir = path.join(os.homedir(), '.dsh', 'kb-index')
+  const newDir = path.join(pluginDataDir(), 'kb-index')
+  try {
+    if (!fs.existsSync(legacyDir)) return { moved: [] }
+    // active.db 本体 + 侧车（active.db-shm/-wal，连字符）+ 候选库（active.db.candidate，点）
+    const entries = fs.readdirSync(legacyDir)
+      .filter((n) => n === 'active.db' || n.startsWith('active.db-') || n.startsWith('active.db.'))
+    if (entries.length === 0) return { moved: [] }
+    if (fs.existsSync(path.join(newDir, 'active.db'))) return { moved: [], skipped: true }
+    fs.mkdirSync(newDir, { recursive: true })
+    const moved = []
+    for (const n of entries) {
+      fs.renameSync(path.join(legacyDir, n), path.join(newDir, n))
+      moved.push(n)
+    }
+    try { fs.rmdirSync(legacyDir) } catch { /* 非空（wiki-steward 状态仍在）= 留给对家迁移 */ }
+    return { moved }
+  } catch (e) {
+    return { moved: [], error: String(e?.message ?? e) }
+  }
 }
 
 /**
@@ -136,6 +175,10 @@ function runReadPages(paths, opts) {
 }
 
 export function apply(ctx, rawConfig) {
+  // 数据面收口（2026-09-30）：遗留 ~/.dsh/kb-index/ 一次性迁移（无遗留零副作用；失败留痕不阻塞加载）
+  const mig = migrateLegacyIndexDb()
+  if (mig.error) warn(ctx, `[kb-context] 遗留索引库迁移失败（旧落点留人工处置）：${mig.error}`)
+  else if (mig.moved.length) warn(ctx, `[kb-context] 遗留索引库已迁移至 plugins/kb-context/data/kb-index/：${mig.moved.join(', ')}`)
   // 配置防御性校验：非法配置留痕告警后 fail-open（INV-15 禁静默）。
   // 热改语义：handler 每次调用读当前 config（safeParse 当前值），此处不做启动时冻结。
   const parsed = Config.safeParse(rawConfig)

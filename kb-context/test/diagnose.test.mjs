@@ -324,12 +324,12 @@ test('runSearch 真缝 e2e：缺库 not-indexed / 坏库 failed（不抛）/ 候
   assert.deepEqual(r1.hits, [])
   assert.equal(r1.emptyState?.state, 'not-indexed')
   assert.ok(r1.emptyState.hint.includes('索引库不存在'))
-  assert.ok(!fs.existsSync(path.join(home1, '.dsh', 'kb-index', 'active.db')), '读侧不建库')
+  assert.ok(!fs.existsSync(path.join(home1, '.dsh', 'plugins', 'kb-context', 'data', 'kb-index', 'active.db')), '读侧不建库')
 
   // ② 坏库（非 SQLite 字节）→ failed：健康面错误转 emptyState，不原样上抛（A4 failed 可达）
   const home2 = tmpDir(t, 'kb-home-')
   process.env.HOME = home2
-  const dbPath2 = path.join(home2, '.dsh', 'kb-index', 'active.db')
+  const dbPath2 = path.join(home2, '.dsh', 'plugins', 'kb-context', 'data', 'kb-index', 'active.db')
   fs.mkdirSync(path.dirname(dbPath2), { recursive: true })
   fs.writeFileSync(dbPath2, 'this is not a sqlite database, just garbage bytes')
   const r2 = runSearch('wiki 成本核算', { scope: SCOPE })
@@ -342,7 +342,7 @@ test('runSearch 真缝 e2e：缺库 not-indexed / 坏库 failed（不抛）/ 候
   process.env.HOME = home3
   const { openDb, registerScope, applyIncremental } = await import('../lib/index-db.js')
   const vault = makeVault(t, { 'wiki/cost.md': '医院成本核算口径' })
-  const dbPath3 = path.join(home3, '.dsh', 'kb-index', 'active.db')
+  const dbPath3 = path.join(home3, '.dsh', 'plugins', 'kb-context', 'data', 'kb-index', 'active.db')
   fs.mkdirSync(path.dirname(dbPath3), { recursive: true })
   const db3 = openDb(dbPath3)
   registerScope(db3, SCOPE)
@@ -364,7 +364,7 @@ test('runSearch 真缝 e2e：空白文件 no-text / grepOnDemand excluded / resi
   process.env.HOME = home
 
   const vault = makeVault(t, { 'wiki/cost.md': '医院成本核算口径', 'wiki/blank.md': '' })
-  const dbPath = path.join(home, '.dsh', 'kb-index', 'active.db')
+  const dbPath = path.join(home, '.dsh', 'plugins', 'kb-context', 'data', 'kb-index', 'active.db')
   fs.mkdirSync(path.dirname(dbPath), { recursive: true })
   const db = openDb(dbPath)
   registerScope(db, SCOPE)

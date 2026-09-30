@@ -623,7 +623,7 @@ test('apply 全链路集成：真 T2 索引 + 真 T3 search + 真 dsh-llm 注入
 
   // 真 T2 建索引（活跃库落 ~/.dsh/kb-index/active.db——TECH §1 数据面）
   const vault = makeVault(t, { 'wiki/cost.md': '医院成本核算口径说明\n第二行\n第三行' })
-  const dbPath = path.join(home, '.dsh', 'kb-index', 'active.db')
+  const dbPath = path.join(home, '.dsh', 'plugins', 'kb-context', 'data', 'kb-index', 'active.db')
   fs.mkdirSync(path.dirname(dbPath), { recursive: true })
   const db = openDb(dbPath)
   registerScope(db, { indexAll: ['wiki'] })
@@ -669,7 +669,7 @@ test('apply 空索引：active.db 缺失零命中 → 注入 not-indexed 空态�
   assert.ok(diagText.includes('索引库不存在'), 'hint 解释缺库原因')
   assert.ok(diagText.includes('索引刷新'), 'hint 给建议动作')
   assert.ok(!('kbContext' in result), '干净诊断注入不留痕（无 degraded 不加键）')
-  assert.ok(!fs.existsSync(path.join(home, '.dsh', 'kb-index', 'active.db')), '读侧不得创建索引库（零副作用——诊断仅 fs.existsSync 观察）')
+  assert.ok(!fs.existsSync(path.join(home, '.dsh', 'plugins', 'kb-context', 'data', 'kb-index', 'active.db')), '读侧不得创建索引库（零副作用——诊断仅 fs.existsSync 观察）')
 })
 
 // ── S7：脱敏哨兵（INV-11 / delta-spec §4.4）────────────────────────────────────
