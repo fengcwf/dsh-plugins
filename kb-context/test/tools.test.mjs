@@ -369,7 +369,7 @@ test('apply e2e（HOME 隔离真活跃库 + vaultRoot fs 直读）：注册工�
     'wiki/cost.md': '医院成本核算口径说明\n第二行内容',
     'wiki/fresh.md': '未索引新改文件',
   })
-  const dbPath = path.join(home, '.dsh', 'kb-index', 'active.db')
+  const dbPath = path.join(home, '.dsh', 'plugins', 'kb-context', 'data', 'kb-index', 'active.db')
   fs.mkdirSync(path.dirname(dbPath), { recursive: true })
   const db = openDb(dbPath)
   registerScope(db, { indexAll: ['wiki'] })

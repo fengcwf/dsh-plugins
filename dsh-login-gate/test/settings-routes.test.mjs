@@ -319,7 +319,7 @@ test('users CRUD（真 fs）：写入 Config usersFile 路径（显式断言）�
   assert.deepEqual(body, { data: { users: [{ name: 'alice' }, { name: 'bob' }] } }, 'users 列表=合并表名字（sorted）')
   assert.equal(JSON.stringify(body).includes('scrypt$'), false, '响应永不含哈希')
   assert.ok(existsSync(file), '应写入 Config usersFile 路径')
-  assert.ok(!existsSync(join(home, 'login-gate', 'users.json')), '绝不写 $DSH_HOME/login-gate/users.json 缺省位')
+  assert.ok(!existsSync(join(home, 'plugins', 'dsh-login-gate', 'data', 'users.json')), '绝不写 $DSH_HOME/login-gate/users.json 缺省位')
   const stored = JSON.parse(readFileSync(file, 'utf8'))
   assert.equal(verifyPassword('pw-alice', stored.alice), true, '落盘为 scrypt$ 哈希且可校验')
 
@@ -472,7 +472,7 @@ test('假 ctx 真 apply()：webServer 缝 B1/B2 注册面成立（prefix /api/lo
   })
   assert.equal(add.status, 200)
   assert.ok(existsSync(file), '真 apply() 接线也必须写 Config usersFile 路径')
-  assert.ok(!existsSync(join(home, 'login-gate', 'users.json')), '绝不落 $DSH_HOME 缺省位')
+  assert.ok(!existsSync(join(home, 'plugins', 'dsh-login-gate', 'data', 'users.json')), '绝不落 $DSH_HOME 缺省位')
   const listed = await (await fetch(url + '/api/login-gate/settings', { headers: AUTH })).json()
   assert.deepEqual(listed.data.users, [{ name: 'alice' }, { name: 'boss' }], '合并表判重/列表：文件条目与 config.users 并集')
 

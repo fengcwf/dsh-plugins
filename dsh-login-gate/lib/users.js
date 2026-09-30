@@ -1,5 +1,6 @@
 // dsh-login-gate — 用户账号模块：加载（config.users ∪ usersFile，文件优先）+ 账号 CRUD 写入
-// 文件缺省 $DSH_HOME/login-gate/users.json（0600），JSON 格式 {"用户名": "scrypt$..."}
+// 文件缺省 <插件数据目录>/users.json（0600，2026-09-30 数据面收口：$DSH_HOME/login-gate/ 已废弃），
+// JSON 格式 {"用户名": "scrypt$..."}
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
@@ -7,8 +8,9 @@ import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { hashPassword, SCRYPT_PREFIX } from './auth.js'
 
+// 缺省落点（与 index.js gateDir() 同口径——两处各持一份避免循环导入）
 export function defaultUsersFile() {
-  return join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'login-gate', 'users.json')
+  return join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'plugins', 'dsh-login-gate', 'data', 'users.json')
 }
 
 /** 归一 usersFile 参数：空值 → 缺省文件；~ 前缀展开为 home */

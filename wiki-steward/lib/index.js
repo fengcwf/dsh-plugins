@@ -17,6 +17,7 @@
 //   新建不合指引/readOnly 拦截/非法越界路径；②kb_mark 豁免 readOnly（INV-1 明文例外=sha256 机械回写非内容写），
 //   写类 readOnly 执行面收窄为 crud 族（wiki_write/wiki_delete/wiki_rename），kb_validate 只读永不拦。
 import os from 'node:os'
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
@@ -356,6 +357,35 @@ export function buildTools({ defineTool, configSource = () => ({}) }) {
 }
 
 /**
+ * 遗留落点一次性迁移（2026-09-30 数据面收口）：旧 `~/.dsh/kb-index/{queue,schedule-ledger.json}`
+ * 与 `~/.dsh/kb-alerts.md` → 源码位插件数据目录 `<data>/`。逐项「新家已有=不覆盖不搬」；
+ * **无遗留 = 零副作用**（绝不 mkdir 空目录）；旧 `~/.dsh/kb-index/` 迁空后 rmdir（非空=对家
+ * kb-context 的 active.db 仍在，留给它自己迁）。迁移失败绝不阻塞加载——warn 留痕（INV-15 禁静默）。
+ */
+export function migrateLegacyState({ dataRoot, paths, warn = () => {} }) {
+  const legacyKbIndex = path.join(os.homedir(), '.dsh', 'kb-index')
+  const jobs = [
+    { from: path.join(legacyKbIndex, 'queue'), to: paths.queueDir, dir: true },
+    { from: path.join(legacyKbIndex, 'schedule-ledger.json'), to: paths.ledgerFile, dir: false },
+    { from: path.join(os.homedir(), '.dsh', 'kb-alerts.md'), to: paths.alertFile, dir: false },
+  ]
+  const moved = []
+  for (const job of jobs) {
+    try {
+      if (fs.existsSync(job.to)) continue
+      if (!fs.existsSync(job.from)) continue
+      fs.mkdirSync(path.dirname(job.to), { recursive: true })
+      fs.renameSync(job.from, job.to)
+      moved.push(path.basename(job.from))
+    } catch (e) {
+      warn(`[wiki-steward] 遗留状态迁移失败（${job.from}，旧落点留人工处置）：${String(e?.message ?? e)}`)
+    }
+  }
+  try { fs.rmdirSync(legacyKbIndex) } catch { /* 非空（kb-context active.db 在场）= 留给对家迁移 */ }
+  return { moved }
+}
+
+/**
  * 挂载（宿主 apply 面）。
  * @param {object} ctx cordis 上下文（on/tools/logger/get 缝）
  * @param {object} rawConfig 热改配置（每次事件现读）
@@ -409,13 +439,17 @@ export function apply(ctx, rawConfig, opts = {}) {
   // ---- 队列 / 告警 / timer 轻活（T13；delta-spec §2 队列条目/timer 契约）----
   // 三件轻活（Q10 定时分工）：队列补交（T9 enqueue 的治愈面）/ 索引增量刷新（钩子，缺省不归我管）/
   // 告警汇总（buffer 统计聚合+归零）。tick **先查补跑账本**（漏跑补偿 A6）；burst 不重入（LeaseLock）。
-  // 状态落点（缺省）：队列 ~/.dsh/kb-index/queue/、账本 ~/.dsh/kb-index/schedule-ledger.json、
-  // 告警 ~/.dsh/kb-alerts.md（测试经 opts.paths 注入 mkdtemp——绝不碰真 home）。
+  // 状态落点（缺省，2026-09-30 数据面收口→源码位插件目录）：队列 <data>/kb-index/queue/、
+  // 账本 <data>/kb-index/schedule-ledger.json、告警 <data>/kb-alerts.md
+  // （<data> = ~/.dsh/plugins/wiki-steward/data/；旧落点 ~/.dsh/kb-index/、~/.dsh/kb-alerts.md
+  // 由 migrateLegacyState 启动一次性迁移）。测试经 opts.paths 注入 mkdtemp——绝不碰真 home。
+  const dataRoot = path.join(os.homedir(), '.dsh', 'plugins', 'wiki-steward', 'data')
   const paths = {
-    queueDir: opts?.paths?.queueDir ?? path.join(os.homedir(), '.dsh', 'kb-index', 'queue'),
-    ledgerFile: opts?.paths?.ledgerFile ?? path.join(os.homedir(), '.dsh', 'kb-index', 'schedule-ledger.json'),
-    alertFile: opts?.paths?.alertFile ?? path.join(os.homedir(), '.dsh', 'kb-alerts.md'),
+    queueDir: opts?.paths?.queueDir ?? path.join(dataRoot, 'kb-index', 'queue'),
+    ledgerFile: opts?.paths?.ledgerFile ?? path.join(dataRoot, 'kb-index', 'schedule-ledger.json'),
+    alertFile: opts?.paths?.alertFile ?? path.join(dataRoot, 'kb-alerts.md'),
   }
+  if (opts?.paths === undefined) migrateLegacyState({ dataRoot, paths, warn: (line) => warn(ctx, line) })
   const nowMs = typeof opts?.now === 'function' ? opts.now : () => Date.now()
   const tickIntervalMs = Number.isFinite(opts?.tickIntervalMs) && opts.tickIntervalMs > 0 ? opts.tickIntervalMs : 60_000
   const alert = createAlert({ file: paths.alertFile, warn: (line) => warn(ctx, line) })

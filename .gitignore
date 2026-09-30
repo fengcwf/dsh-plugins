@@ -4,3 +4,8 @@ pnpm-lock.yaml
 
 # obsidian-web 测试临时目录（真 fs 测试副本，跑完自动清）
 obsidian-web/test/.tmp-*/
+
+# 插件运行时数据（2026-09-30 数据面收口：源码位 data/ 目录；login-gate 含凭据，绝不入库）
+dsh-login-gate/data/
+kb-context/data/
+wiki-steward/data/

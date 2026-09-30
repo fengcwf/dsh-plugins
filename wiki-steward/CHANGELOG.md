@@ -1,5 +1,14 @@
 # CHANGELOG — wiki-steward
 
+## 0.6.0 — 2026-09-30
+
+数据面收口（~/.dsh 根目录治理）：
+
+- **三件状态落点迁移**：队列 `~/.dsh/kb-index/queue/`、补跑账本 `~/.dsh/kb-index/schedule-ledger.json`、告警账本 `~/.dsh/kb-alerts.md` → 源码位插件数据目录 `~/.dsh/plugins/wiki-steward/data/`（`kb-index/queue/`、`kb-index/schedule-ledger.json`、`kb-alerts.md`）。
+- **遗留迁移**：`migrateLegacyState()` apply 期一次性搬迁（opts.paths 测试缝注入=不迁）——无遗留=零副作用；逐项新家已有不覆盖；旧 `kb-index/` 迁空即删、非空（对家 kb-context active.db 在场）保留；失败逐项留痕不阻塞。
+- **告警账本发现位随迁**：`ingest-log.js` alerts:kb 落点同步。外部配套：`/root/bin/dsh-cron.sh` ALERT_FILE 缺省随迁 + `mkdir -p` 兜底（数据目录未建不丢告警）；`/root/bin/tasks/21-wiki-ingest.md` 开场读取位随迁。
+- **测试**：新增 `test/migrate.test.mjs` 4 项，既有路径断言随迁（391 全绿）。
+
 ## 0.5.0 — 2026-09-29
 
 设置页/ingest 控制面改造批（Phase 8 轮，来源：`changes/2026-09-29-settings-ingest-controls/`，F1 面板搬家 + F2 UI 对齐 + F3 手动 ingest/定时控制 + T-F1/T-F2 收口）：

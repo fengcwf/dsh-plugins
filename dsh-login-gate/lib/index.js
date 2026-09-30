@@ -7,7 +7,7 @@
 //   hongshuxifan321/dsh-mobile-app server/plugin — Cordis 插件生命周期（apply + ctx.effect）、
 //                             Host/Origin loopback 改写、WS 隧道与逐跳头清理
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
@@ -38,11 +38,40 @@ export const Config = z.object({
   usersFile: z.string().optional(),
 })
 
+// 数据面收口（2026-09-30）：门禁数据落源码位插件数据目录（旧落点 $DSH_HOME/login-gate/ 已废弃，
+// 由 migrateLegacyGateData 启动一次性迁移）——~/.dsh 根目录不再产生门禁文件。
 function gateDir() {
-  return join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'login-gate')
+  return join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'plugins', 'dsh-login-gate', 'data')
 }
 function secretFile() {
   return join(gateDir(), 'secret')
+}
+
+/**
+ * 遗留落点一次性迁移（2026-09-30 数据面收口）：旧 `$DSH_HOME/login-gate/*`（secret/accounts.txt/
+ * breakglass.txt/users.json/last-good-plugin.tar.gz 等）→ gateDir()。逐文件「新家已有=不覆盖」；
+ * rename 同盘原子（0600 权限位随 inode 保留）；**无遗留 = 零副作用**（不 mkdir）；迁空后 rmdir。
+ * 失败不阻塞加载——error 由 apply 留痕告警（INV-15 禁静默），旧落点留人工处置。
+ */
+export function migrateLegacyGateData() {
+  const legacyDir = join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'login-gate')
+  const target = gateDir()
+  const moved = []
+  if (!existsSync(legacyDir)) return { moved }
+  try {
+    for (const name of readdirSync(legacyDir)) {
+      const from = join(legacyDir, name)
+      const to = join(target, name)
+      if (existsSync(to)) continue // 新家已有=不覆盖（防旧副本反灌）
+      mkdirSync(target, { recursive: true })
+      renameSync(from, to)
+      moved.push(name)
+    }
+    try { rmdirSync(legacyDir) } catch { /* 残留（非空）= 留人工处置 */ }
+    return { moved }
+  } catch (e) {
+    return { moved, error: String(e?.message ?? e) }
+  }
 }
 
 /** 读取或创建会话签名 secret（0600） */
@@ -82,14 +111,18 @@ function normalize(raw) {
 }
 
 export function apply(ctx, rawConfig) {
-  const cfg = normalize(rawConfig)
-  if (!cfg.enabled) return
-
   const log = (...args) => {
     const line = args.join(' ')
     try { ctx.logger?.info?.(line) } catch { /* logger 不可用时仅控制台 */ }
     console.log('[login-gate] ' + line)
   }
+  // 数据面收口（2026-09-30）：遗留 $DSH_HOME/login-gate/ 一次性迁移（无遗留零副作用；失败留痕不阻塞）
+  const mig = migrateLegacyGateData()
+  if (mig.error) log('⚠️ 遗留门禁数据迁移失败（旧落点留人工处置）：' + mig.error)
+  else if (mig.moved.length) log('遗留门禁数据已迁移至 plugins/dsh-login-gate/data/：' + mig.moved.join(', '))
+
+  const cfg = normalize(rawConfig)
+  if (!cfg.enabled) return
 
   const { users, warnings, usersFile } = loadUsers({ users: cfg.users, usersFile: cfg.usersFile })
   warnings.forEach((w) => log('⚠️ ' + w))
