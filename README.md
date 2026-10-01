@@ -11,6 +11,9 @@
 | [kb-context](kb-context/) | 0.5.0 | 知识库上下文：vault 增量索引（FTS5）+ 检索（BM25/LIKE 兜底+deadline 守卫）+ 会话注入（触发/脱敏/截断）+ wiki_read/wiki_search/kb_diagnose 工具 + 设置菜单配置面（0.3.2=设置面 UI 对齐 dsh token + 填写示例/功能说明文案；0.4.0=数据面收口：索引库迁 `plugins/kb-context/data/kb-index/` + 遗留自动迁移；0.5.0=触发日志：内存环评估记录 + GET logs/POST logs/clear 双端点 + 设置页弹层 + triggerLog.enabled kill switch，脱敏白名单闭集、fail-open） |
 | [wiki-steward](wiki-steward/) | 0.7.0 | wiki 管家：会话捕获入 raw/ + kb_validate 六规则校验 + kb_mark sha256 原子回写 + wiki CRUD（.trash 可逆/journal 事务/wikilink 重写）+ 入队告警 + tools/pre-execute 写入拦截 + 设置菜单配置面 + ingest 控制面（历史记录弹层/手动 ingest/定时执行）（0.5.0=设置页/ingest 控制面改造批：首页侧栏面板行移除入设置页、修裸 import 与 vite define（process.env.NODE_ENV 真浏览器根因）、ingest.schedule 定时执行控制；0.6.0=数据面收口：队列/账本/告警账本迁 `plugins/wiki-steward/data/` + 遗留自动迁移；0.7.0=历史日志视图三能力：默认时间倒序（最新在上）+ since/until 日粒度闭区间时间筛选（翻旧同参联动）+ 三来源类型多选（可与时间叠加、全不选如实空页），测试 391→415） |
 | [obsidian-web](obsidian-web/) | 0.2.3 | Obsidian vault Web 管理：查看/编辑/下载/分享 + 目录维护（T1-T14 全业务面 + 0.1.1 boot fail-open/索引本地化 + 0.2.0 分享面双模式默认挂 webServer + 客户端面板 + 0.2.1 B2 effect 语义修复 + 0.2.2 运行时阻塞根治 + 0.2.3 UI 视觉全量升级 dir-c-light） |
+| [dsh-clsh-search](dsh-clsh-search/) | 0.1.0 | 免 key 多源聚合搜索：DDG/Bing/360/百度四源聚合接管 web_search（patch 指针 + registerSearchProvider 兜底补指，修 `configured web provider "deepseek-official" is not registered`）+ 优先级/失败切换/单源开关 + 设置页（源序/预算/条数/缓存/接管三态）+ 工具调用顺序策略注入（vault+记忆 → web_search → web_fetch → ego-browser 仅兜底）（0.1.0=首发，US-1~US-7 全落点） |
+
+> **dsh-clsh-search 0.1.0 发版证据侧注**：冒烟四关 + US-1 真运行时终判见 `dsh-clsh-search/changes/20260930-phase0/tester-report.md`（RESULT: PASS，`node --test` 171/171）；K-1~K-11 判据矩阵见 `.superpowers/sdd/tasks-20260930-phase0/task-17-report.md`；发版体检输出原文见 `.superpowers/sdd/tasks-20260930-phase0/task-19-report.md`。发版第⑤步（commit + tag `dsh-clsh-search-v0.1.0` + push + `gh release create`）= NEEDS_HUMAN，用户逐次确认后由队长执行（P-8）。
 
 ## 版本纪律（强制，缺一不可）
 

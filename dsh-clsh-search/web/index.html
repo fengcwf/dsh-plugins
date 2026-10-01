@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <!-- web/index.html — vite dev 开发入口（W6-N1：dev 脚本可起）；构建物仍是 lib 形单入口 web/dist。 -->
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>dsh-clsh-search 设置页（dev）</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module">
+      // dev 引导：与宿主挂载契约同形 mount(el, deps) → {unmount()}（Ruling-9）
+      import { mount } from '/src/main.js'
+      mount(document.getElementById('app'))
+    </script>
+  </body>
+</html>

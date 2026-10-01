@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>test query - 360搜索</title>
+</head>
+<body>
+  <div class="search-layout">
+    <ol class="res-list-wrapper">
+      <li class="res-list" res-type="web">
+        <div class="res-ball">
+          <h3 class="res-title"><a href="https://example.edu.cn/360-one" target="_blank" data-url="https://example.edu.cn/360-one">360 Result <em>One</em></a></h3>
+          <p class="res-desc">360 摘要文本带 &amp; 实体与<b>加粗</b>片段。</p>
+          <span class="res-linkinfo">example.edu.cn</span>
+        </div>
+      </li>
+      <li class="res-list">
+        <div class="res-ball">
+          <h3 class="res-title"><a href="//cn.example.cn/path/two" target="_blank">协议相对链接第二条</a></h3>
+          <p class="res-desc">第二条摘要，无站点信息。</p>
+        </div>
+      </li>
+      <li class="res-list">
+        <div class="res-ball">
+          <span>noise block: no h3 title anchor, must be skipped</span>
+        </div>
+      </li>
+    </ol>
+    <div class="res-pager">pagination noise outside res-list blocks</div>
+  </div>
+</body>
+</html>

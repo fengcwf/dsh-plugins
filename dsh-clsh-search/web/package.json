@@ -1,0 +1,17 @@
+{
+  "name": "dsh-clsh-search-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "dsh-clsh-search 设置页（Vue + vite lib 单入口，构建物 web/dist 入库随包；运行时零第三方网络请求）",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "6.0.9",
+    "vite": "8.3.1",
+    "vue": "3.5.43"
+  }
+}

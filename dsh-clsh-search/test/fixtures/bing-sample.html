@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>test query — Bing</title>
+</head>
+<body>
+  <ol id="b_results" class="b_algo">
+    <li class="b_algo">
+      <div class="b_algoheader">
+        <h2><a href="https://example.org/bing-one">Bing Result <strong>One</strong></a></h2>
+      </div>
+      <div class="b_caption">
+        <div class="b_tptn">2025年9月28日</div>
+        <p>Snippet from Bing with <b>highlight</b> &amp; entity decoded.</p>
+      </div>
+    </li>
+    <li class="b_algo">
+      <h2><a href="https://second.example.net/page">Second hit</a></h2>
+      <div class="b_caption">
+        <p>Second snippet without a crawled date.</p>
+      </div>
+    </li>
+    <li class="b_algo">
+      <div class="b_algoheader">
+        <span>noise block: no h2 anchor, must be skipped</span>
+      </div>
+    </li>
+    <li class="b_attribution">
+      <span>pagination and attribution noise outside b_algo blocks</span>
+    </li>
+  </ol>
+</body>
+</html>
