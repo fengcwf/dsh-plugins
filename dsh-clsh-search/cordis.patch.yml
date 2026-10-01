@@ -1,0 +1,43 @@
+# dsh-clsh-search 配置注入
+# 挂载本插件（⚠️ 此 insert 行是插件 apply 的入口——删除则插件不加载，搜索接管静默消失）。
+# ⚠️ config 是整行替换语义（非深度合并）：profile 覆盖者必须在此基础上重述全部键。
+- insert:
+    - id: dsh-clsh-search
+      name: 'dsh-clsh-search'
+      config:
+        # 搜索源开关（默认四源全开）与聚合优先级（失败切换顺序，可重排）
+        sources:
+          ddg: true
+          bing: true
+          so360: true
+          baidu: true
+          priority:
+            - ddg
+            - bing
+            - so360
+            - baidu
+        # 单请求超时（毫秒）
+        timeoutMs: 12000
+        # 单源重试次数（反爬命中不重试）
+        retries: 3
+        # 整链总预算（毫秒）：优先级链串行切换的总时长上限
+        chainBudgetMs: 30000
+        # 单次搜索返回条数（clamp 1-10）
+        maxResults: 8
+        # 查询缓存 TTL（毫秒，10 分钟）
+        cacheTtlMs: 600000
+        # ego-browser 兜底单任务上限（次，熔断守卫）
+        egoBudget: 15
+        # 接管开关：auto=让位优先 | force=强制接管 | off=不接管
+        takeOver: 'auto'
+        # 数据/缓存/日志落点（`~` 按 os.homedir() 展开；只落 ~/.dsh 下插件专属目录，禁写安装位/源码位）
+        dataDir: '~/.dsh/dsh-clsh-search'
+        cacheDir: '~/.dsh/cache/dsh-clsh-search'
+        logDir: '~/.dsh/logs/dsh-clsh-search'
+
+# web provider 指针整行替换（K-2 / INV-2）：本条 id 命中宿主 `web` 行，config 整体替换。
+# 必须同时重述 searchProvider 与 fetchProvider——漏 fetchProvider: http 即 web_fetch 挂掉。
+- id: web
+  config:
+    searchProvider: dsh-clsh-search
+    fetchProvider: http

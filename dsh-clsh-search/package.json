@@ -1,0 +1,52 @@
+{
+  "name": "dsh-clsh-search",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness 的免 key 多源聚合搜索插件：DDG/Bing/360/百度四源聚合接管 web_search（patch 指针 + registerSearchProvider），并注入工具调用顺序策略（vault+记忆 → web_search → web_fetch → ego-browser 仅兜底）",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "web/dist",
+    "cordis.patch.yml",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check lib/index.js && node --test"
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-layout"
+      ]
+    }
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "dsh-clsh-search",
+    "web-search",
+    "multi-source",
+    "search-provider"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fengcwf/dsh-plugins.git",
+    "directory": "dsh-clsh-search"
+  }
+}

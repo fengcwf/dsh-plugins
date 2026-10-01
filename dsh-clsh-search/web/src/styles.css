@@ -1,0 +1,186 @@
+/* 设置页样式（K-11：唯一色板来源 = dsh token，零自造色/零硬编码 hex）。
+ * token 表 = changes/20260930-phase0/DESIGN.md §2-§4；亮/暗由宿主 `body[data-ds-dark-theme]`
+ * 同名 token 自动切换。本文件只消费 var(--dsw-*) / var(--ds-*)，不定义任何颜色常量；
+ * 派生色一律 color-mix(...) 引 token（透明度基只用 `transparent`，DESIGN.md §2 明示）。 */
+:root {
+  --cs-fs-page: 20px;
+  --cs-fs-intro: 13px;
+  --cs-fs-group: 14px;
+  --cs-fs-row: 14px;
+  --cs-fs-desc: 12px;
+  --cs-fs-note: 12px;
+}
+
+.cs-page {
+  box-sizing: border-box;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 28px clamp(24px, 4vw, 48px) 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-base);
+  font-family: var(--dsw-font-family);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 页头（DESIGN.md §1） */
+.cs-page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.cs-page-title { margin: 0; font-size: var(--cs-fs-page); font-weight: 500; line-height: 28px; }
+.cs-page-intro { margin: 4px 0 0; color: var(--dsw-alias-label-secondary); font-size: var(--cs-fs-intro); line-height: 20px; }
+.cs-toolbar { display: flex; align-items: center; gap: 16px; flex: none; }
+.cs-chip {
+  height: 18px; padding: 0 10px; border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-state-success-tertiary);
+  color: var(--dsw-alias-state-success-primary);
+  font-size: var(--cs-fs-note); line-height: 18px;
+}
+.cs-btn-primary {
+  height: 32px; padding: 0 12px; border: 0; border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-foreground);
+  font-family: var(--dsw-font-family); font-size: var(--cs-fs-intro); line-height: 20px; cursor: pointer;
+}
+.cs-btn-primary:hover { background: var(--dsw-alias-button-primary-hover); }
+.cs-btn-primary:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+
+/* 设置卡片（settings-card 令牌对 + radius-xl，DESIGN.md §1） */
+.cs-card {
+  background: var(--dsw-alias-settings-card-fill);
+  border: 0.5px solid var(--dsw-alias-settings-card-stroke);
+  border-radius: var(--dsw-radius-xl);
+  padding: 20px 20px 8px;
+}
+.cs-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.cs-card-title { margin: 0; font-size: var(--cs-fs-group); font-weight: 500; line-height: 22px; }
+.cs-card-desc { margin: 2px 0 8px; color: var(--dsw-alias-label-tertiary); font-size: var(--cs-fs-desc); line-height: 18px; }
+.cs-count { color: var(--dsw-alias-label-caption); font-size: var(--cs-fs-group); font-variant-numeric: tabular-nums; flex: none; }
+
+/* 行式设置（DESIGN.md §1：padding 12px 2px + 0.5px border-l2 分隔） */
+.cs-rows { display: flex; flex-direction: column; }
+.cs-row {
+  display: flex; align-items: center; gap: 16px; min-height: 56px;
+  padding: 12px 2px; border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+.cs-row:last-child { border-bottom: 0; }
+.cs-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.cs-row-label { font-size: var(--cs-fs-row); font-weight: 500; line-height: 20px; }
+.cs-row-desc { color: var(--dsw-alias-label-tertiary); font-size: var(--cs-fs-desc); line-height: 18px; }
+.cs-row-control { display: flex; align-items: center; gap: 8px; flex: none; }
+.cs-row-note { color: var(--dsw-alias-label-caption); font-size: var(--cs-fs-note); line-height: 18px; }
+.cs-hint {
+  display: flex; align-items: center; gap: 6px; margin-top: 4px; padding: 10px 2px 12px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-tertiary); font-size: var(--cs-fs-note); line-height: 18px;
+}
+.cs-error { color: var(--dsw-alias-state-error-primary); }
+
+/* 控件：序号徽章 + 上移/下移（DESIGN.md §5 降级路径：拖拽把手 → 上移/下移按钮） */
+.cs-order {
+  width: 20px; height: 20px; border-radius: 999px; flex: none;
+  background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-secondary);
+  font-size: 11px; font-weight: 500; line-height: 20px; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.cs-step-btn {
+  width: 28px; height: 28px; border: 0; border-radius: var(--dsw-radius-sm);
+  background: transparent; color: var(--dsw-alias-label-caption); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; padding: 0;
+}
+.cs-step-btn:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-secondary); }
+.cs-step-btn:disabled { opacity: 0.5; cursor: default; }
+.cs-step-btn:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+
+/* 控件：自绘 switch（36×20，DESIGN.md §4） */
+.cs-switch {
+  width: 36px; height: 20px; border-radius: 999px; position: relative; flex: none;
+  background: var(--dsw-alias-state-business-primary); cursor: pointer; border: 0; padding: 0;
+}
+.cs-switch .cs-thumb {
+  width: 16px; height: 16px; border-radius: 999px; position: absolute; top: 2px; right: 2px;
+  background: var(--dsw-alias-switch-thumb);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary), transparent 92%);
+  transition: right 0.16s;
+}
+.cs-switch.is-off {
+  background: color-mix(in srgb, var(--dsw-alias-label-secondary), transparent 60%);
+}
+.cs-switch.is-off .cs-thumb { right: auto; left: 2px; }
+.cs-switch:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+
+/* 控件：行内数字输入 + 单位后缀（DESIGN.md §5） */
+.cs-num {
+  min-width: 72px; height: 32px; padding: 0 10px; border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary); font-family: var(--dsw-font-family);
+  font-size: var(--cs-fs-intro); line-height: 32px; font-variant-numeric: tabular-nums;
+}
+.cs-num:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+.cs-unit { color: var(--dsw-alias-label-secondary); font-size: var(--cs-fs-note); }
+
+/* 控件：下拉（缓存 TTL） */
+.cs-select {
+  height: 32px; padding: 0 10px; border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary); font-family: var(--dsw-font-family);
+  font-size: var(--cs-fs-intro); line-height: 32px; cursor: pointer;
+}
+.cs-select:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+
+/* 控件：滑杆（结果条数，原生 range + accent-color 引 token）+ 数字回显 */
+.cs-slider-wrap { gap: 10px; }
+.cs-range {
+  width: 160px; accent-color: var(--dsw-alias-state-business-primary); cursor: pointer;
+}
+.cs-range:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+
+/* 控件：三态 segmented（接管开关） */
+.cs-seg {
+  display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-module-platform);
+}
+.cs-seg-item {
+  height: 28px; padding: 0 12px; border: 0; border-radius: var(--dsw-radius-sm);
+  background: transparent; color: var(--dsw-alias-label-secondary);
+  font-family: var(--dsw-font-family); font-size: var(--cs-fs-note); line-height: 28px; cursor: pointer;
+}
+.cs-seg-item.is-active {
+  background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font-weight: 500;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary), transparent 92%);
+}
+.cs-seg-item:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+
+/* 隐私提示条（warn token 对，DESIGN.md §2） */
+.cs-tip {
+  display: flex; align-items: flex-start; gap: 8px; margin: 12px 0 12px;
+  padding: 10px 12px; border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-state-warn-tertiary); color: var(--dsw-alias-label-secondary);
+  font-size: var(--cs-fs-desc); line-height: 18px;
+}
+.cs-tip-icon { color: var(--dsw-alias-state-warn-primary); flex: none; margin-top: 2px; }
+.cs-tip p { margin: 0; }
+.cs-tip code, .cs-page-foot code { font-family: var(--ds-font-family-code); color: var(--dsw-alias-label-primary); }
+
+/* 页脚（DESIGN.md §1：配置持久化与数据落点说明） */
+.cs-page-foot { margin: -8px 0 0; color: var(--dsw-alias-label-caption); font-size: var(--cs-fs-note); line-height: 18px; }
