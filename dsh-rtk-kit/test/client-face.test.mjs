@@ -17,6 +17,7 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const CLIENT_PATH = fileURLToPath(new URL('../lib/client.js', import.meta.url))
+const CHUNK_PATH = fileURLToPath(new URL('../lib/client.install.js', import.meta.url))
 const source = fs.readFileSync(CLIENT_PATH, 'utf8')
 
 // ── 工厂形加载 + mini React runtime（最小宿主形） ─────────────────────────────
@@ -76,15 +77,27 @@ function loadClientFace() {
       return runtime.hooks[i]
     },
   }
+  const holder = { chunk: null }
   const req = (name) => {
     if (name === 'react') return reactStub
     throw new Error(`unexpected require: ${name}`) // require 白名单断言的执行面：非 react 一律炸
   }
+  // 兄弟 chunk 缝（Task 4）：require.async('./client.install.js') → 真 chunk 模块（宿主 CLIENT_CHUNK 形）
+  req.async = (spec) => (spec === './client.install.js' && holder.chunk
+    ? Promise.resolve(holder.chunk)
+    : Promise.reject(new Error(`unexpected chunk: ${spec}`)))
   const fn = new Function('window', source)
   fn(win)
   assert.equal(loaded.length, 1, 'bundle 必须登记一个模块')
   const mod = loaded[0].factory(req)
-  return { loaded, mod, runtime }
+  // 装载真 client.install.js chunk（同最小宿主形；缺文件=chunk 面缺席，仅 Task 4 前的中间态容忍）
+  const chunkRegs = []
+  if (fs.existsSync(CHUNK_PATH)) {
+    new Function('window', fs.readFileSync(CHUNK_PATH, 'utf8'))({ __ModuleLoader__: { load: (m) => chunkRegs.push(m) } })
+    const reg = chunkRegs.find((r) => r.chunk === 'client.install.js')
+    if (reg) holder.chunk = reg.factory(req)
+  }
+  return { loaded, chunkRegs, mod, chunk: holder.chunk, runtime }
 }
 
 /** 最小 ctx（slots 缝承接注册契约） */
@@ -495,4 +508,21 @@ test('F-01：版本块失败态带「重试」按钮（原操作按钮保留）�
   block = find(runtime.tree, (n) => n.props && n.props['data-rtk-block'] === 'version')
   assert.ok(textOf(block).includes('rtk 0.49.0'), '重试成功后渲染版本行')
   assert.equal(fake.calls.filter((c) => c.url === 'api/rtk-kit/version').length, 2, '重试=重发请求')
+})
+
+// ── Task 4 增：兄弟 chunk 引用形（安装面 client.install.js，require.async 惰性取用） ─────────────
+
+test('兄弟 chunk 引用形（Task 4）：require.async("./client.install.js") 惰性取用安装面；chunk 名过宿主白名单', () => {
+  const { chunk } = loadClientFace()
+  assert.ok(source.includes('require.async('), '壳经 require.async 引用兄弟 chunk（零构建多 chunk 先例形）')
+  assert.ok(source.includes("'./client.install.js'"), 'chunk 引用 ./client.install.js')
+  assert.match('client.install.js', /^client\.[A-Za-z0-9][A-Za-z0-9._-]*\.js$/, 'chunk 名过宿主 CLIENT_CHUNK 白名单')
+  assert.ok(chunk, 'client.install.js chunk 可载入（exports 面在场）')
+  assert.equal(typeof chunk.renderInstallRow, 'function', '安装控件 render 面')
+  assert.equal(typeof chunk.runInstall, 'function', '安装状态机执行面')
+})
+
+test('Task 4 接入缝：URL_INSTALL 常量在场（文档相对；与 doctor-routes 锁等值由 client-install 测试锁定）', () => {
+  assert.ok(source.includes("var URL_INSTALL = 'api/rtk-kit/install'"), 'URL_INSTALL 常量（文档相对无前导斜杠）')
+  assert.ok(!/fetch\(\s*['"`]\//.test(source), '零 fetch 站内绝对 URL（issue 1707）')
 })

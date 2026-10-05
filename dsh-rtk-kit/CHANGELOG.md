@@ -1,5 +1,17 @@
 # Changelog — dsh-rtk-kit
 
+## 0.4.0 — 2026-10-04
+
+rtk 自愈（发现兜底 + 设置页一键重装）+ ⚠️ 行为提示：
+
+- **⚠️ 行为提示：自动改写自此真正生效**——凡 rtk 装在官方落点 `$HOME/.local/bin` 而进程 PATH 不含该目录的机器（dsh 服务进程即此态），0.3.0 及以前自动改写是**恒等放行**（接线在（B2），但解析层只按 PATH 找裸名 `rtk`，找不到就静默失能）；0.4.0 发现兜底补上最后一环，**bash 命令输出自此会被 rtk 压缩**。输出解读见会话 awareness 注入（含逃生舱）；不想要可 `enabled:false`。
+- 修复：rtk 二进制**发现兜底**（`lib/resolve-bin.js` 解析单源：PATH → `~/.local/bin/rtk` → `/usr/local/bin/rtk` → `/opt/homebrew/bin/rtk`，命中即停）——修「rtk 明明已装却报『安装：brew install rtk / curl …』」误诊（官方 install.sh 恰装 `$HOME/.local/bin`）；显式 `rtkBin` 配置零覆盖不兜底；`rtk_doctor` 如实（「安装」提示只在真缺失出现，找到即报解析绝对路径）。
+- 新增：**设置页一键重装（自愈）**——rtk 真缺失/损坏/不可执行时健康面板出故障条+「重新安装」按钮：下载 GitHub Release 官方二进制（60s 超时）→ `checksums.txt` SHA256 校验（**校验失败不落盘**）→ 备份旧版（`rtk.bak.<ts>`）→ 原子落盘 → 自动复检刷新面板；失败态=分类红条（下载/校验/落盘）+「重试」+ 可展开详情；并发单飞（重入 409）；**仅设置页可触发**（会话工具零安装能力，模型永不代装）；仅 Linux x86_64。不执行任何远程脚本（curl|sh 路线否决）。
+- 自愈语义钉死：**装后/外部手装不需重启即恢复**（数据面每请求重发现 + rewrite 缝失能态惰性翻转）；显式 `rtkBin` 指非默认落点且缺失时**不出重装按钮**（改手动安装提示，防"装到 ~/.local/bin 满足不了配置位"误导）。
+- 数据面：GET version 增 `lastInstall`/`installSupported`/`installTargetMatch`；新增 `POST api/rtk-kit/install`（登录鉴权 401/403；错误码族 DOWNLOAD_FAILED/CHECKSUM_MISMATCH/EXTRACT_FAILED/WRITE_FAILED/VERIFY_FAILED/PLATFORM_UNSUPPORTED + reinstall-in-progress→409）；重装记录落 `~/.dsh/dsh-rtk-kit/install-log.json`（字段白名单零凭据，上限 50 条）。
+- 质量链：全套 `node --test` 215/215（新增 install/resolve-bin/client-install 测试族 + seam 级集成用例）；独立验证真机探针（boot 真缺失→一键重装→不重启自愈）+ 整分支终审五轴 + 两轮 fix 闭环（含 F-FINAL-1 种子窗口）。设计/验收/复盘归档 `changes/2026-10-03-rtk-reinstall/`。
+- 文档：README 补 `rtkBin` 发现兜底语义；测试红线增补（一切测试禁对生产 `~/.local/bin` 真装）。
+
 ## 0.3.0 — 2026-09-29
 
 设置页增强（三功能）+ ⚠️ 重大修复：

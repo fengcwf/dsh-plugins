@@ -11,6 +11,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFile as cpExecFile } from 'node:child_process'
 import { decideEligibility, isSafeRewrite, pickRewritten, planRewrite } from './rewrite.js'
+import { findRtkBin } from './resolve-bin.js'
 
 /** 默认执行超时（INV-5：三动作 5s 有界）。 */
 export const DEFAULT_TIMEOUT_MS = 5000
@@ -160,8 +161,22 @@ export function parseGain(text) {
 }
 
 /**
+ * F-02 / INV-9 安装提示门控（与 found 同门；口径单源=lib/resolve-bin.js，A4「找到≠安装提示」）：
+ * 仅真缺失（解析不到二进制，findRtkBin found=false）回 INSTALL_HINT；
+ * 「找到但执行失败」窗口回 null——工具输出 / 版本数据面 / 路由错误面同一门控，禁各表各的口径。
+ * @param {string} [rtkBin] 实际执行的二进制（config 值或 apply 解析后值）
+ * @param {object} [resolveEnv] findRtkBin 注入缝 {path, homedir, isExecutable}（测试 mkdtemp 注入，缺省真实环境）
+ * @returns {string|null} INSTALL_HINT 或 null
+ */
+export function missingInstallHint(rtkBin, resolveEnv) {
+  return findRtkBin(rtkBin, resolveEnv).found ? null : INSTALL_HINT
+}
+
+/**
  * 版本检查：rtk 缺失（spawn 级失败）降级为 available:false + 安装提示（US-1）；
  * 超时如实上抛 RTK_TIMEOUT 供 UI 重试（INV-5）。
+ * F-02（INV-9）：hint 与 found 同门控——仅真缺失带 INSTALL_HINT，「找到但执行失败」窗口 hint:null。
+ * @param {object} [opts] {rtkBin, exec, timeoutMs, resolveEnv}；resolveEnv=findRtkBin 注入缝（hint 门控用）
  * @returns {Promise<{available:boolean, version:string|null, path:string, hint:string|null}>}
  */
 export async function getVersion(opts = {}) {
@@ -172,7 +187,7 @@ export async function getVersion(opts = {}) {
     return { available: true, version: m ? m[1] : null, path: rtkBin, hint: null }
   } catch (err) {
     if (err?.code === 'RTK_UNAVAILABLE') {
-      return { available: false, version: null, path: rtkBin, hint: INSTALL_HINT }
+      return { available: false, version: null, path: rtkBin, hint: missingInstallHint(rtkBin, opts.resolveEnv) }
     }
     throw err
   }
@@ -388,25 +403,34 @@ export async function getHealth(opts = {}) {
  * 输出形：可用性/版本/配置恰三行（US-1：rtk 缺失=可用行 + 安装提示降级显示）；
  * gain 统计段受 `doctorGain && args.gain !== false` 门控，缺省不输出（INV-6 省 350-420 token/次；
  * 完整统计唯一入口=设置页面板）。零 spawnSync（INV-5）：执行全走 execRtk 异步封装修身后的共享函数。
+ * 二进制发现（2026-10-03-rtk-bin-discovery A1/A2/A3/A4/A5）：rtkBin 先经 lib/resolve-bin.js 单源解析
+ * （默认名 'rtk' 先 PATH、后官方落点兜底 ~/.local/bin → /usr/local/bin → /opt/homebrew/bin；
+ * 显式配置不覆盖）；可用行输出解析到的路径；「安装：」只在真缺失（解析未发现任何二进制）时出现——
+ * 找到即用、找到禁「安装：」（A4），真缺失保留安装提示文案。
  * @param {object} [args] - 工具参数 {gain?: boolean}
- * @param {object} [opts] - {rtkBin, exec, timeoutMs, doctorGain, autoRewrite, conservative, awareness}
+ * @param {object} [opts] - {rtkBin, exec, timeoutMs, doctorGain, autoRewrite, conservative, awareness, resolveEnv}
+ *   resolveEnv = 解析注入缝 {path, homedir, isExecutable}（测试 mkdtemp 注入，缺省真实环境）
  * @returns {Promise<{text: string}>}
  */
 export async function runDoctorTool(args = {}, opts = {}) {
   const {
-    rtkBin = 'rtk',
+    rtkBin: configuredBin = 'rtk',
     exec,
     timeoutMs,
     doctorGain = false,
     autoRewrite = false,
     conservative = true,
     awareness = 'default',
+    resolveEnv,
   } = opts
+  // A5 同源：与 probeRtk / runRtkRewrite 走同一解析单源（lib/resolve-bin.js）
+  const { bin: rtkBin, found } = findRtkBin(configuredBin, resolveEnv)
   const lines = []
-  const v = await getVersion({ rtkBin, exec, timeoutMs })
+  const v = await getVersion({ rtkBin, exec, timeoutMs, resolveEnv }) // F-02：resolveEnv 转发，hint 门控与本行 found 同源
   lines.push(`rtk available: ${v.available ? 'yes' : 'no'} (bin: ${v.path})`)
   if (!v.available) {
-    lines.push(INSTALL_HINT)
+    // A4：找到≠安装提示——解析确认在场（found）就不许说「安装」；真缺失才保留安装提示文案
+    if (!found && v.hint) lines.push(v.hint)
     return { text: lines.join('\n') }
   }
   lines.push(`version: ${v.version ?? '(unknown)'}`)

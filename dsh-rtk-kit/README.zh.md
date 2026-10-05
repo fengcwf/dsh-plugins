@@ -34,7 +34,7 @@ dsh plugin --profile web add /root/.dsh/plugins/dsh-rtk-kit
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `enabled` | `true` | 自动改写开关（仅门控 bash 改写缝；rtk_doctor 工具/awareness/设置页面板不受此门控） |
-| `rtkBin` | `rtk` | rtk 可执行文件 |
+| `rtkBin` | `rtk` | rtk 可执行文件。缺省 `rtk`：PATH 解析失败后按 `~/.local/bin/rtk` → `/usr/local/bin/rtk` → `/opt/homebrew/bin/rtk` 兜底发现（命中即停，0.4.0 起）；显式配置（如 `/opt/rtk`）原样使用、不兜底不覆盖，且该路径缺失时设置页不出「重新安装」按钮（改手动安装提示） |
 | `rewriteTimeoutMs` | `150` | `rtk rewrite` 超时；超时 = 原样放行 |
 | `conservative` | `true` | 保守模式（见上表）；想激进省 token 可 `false` |
 | `exclude` | `[]` | 永不改写的命令前缀黑名单（对应 rtk 的 `exclude_commands` 语义） |

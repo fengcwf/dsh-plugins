@@ -20,6 +20,8 @@ import { decideEligibility, isSafeRewrite, pickRewritten } from './rewrite.js'
 import { awarenessText } from './awareness.js'
 import { runDoctorTool } from './doctor.js'
 import { registerDoctorRoutes } from './doctor-routes.js'
+import { DEFAULT_TIMEOUT_MS, defaultLogPath } from './install.js'
+import { findRtkBin, resolveRtkBin } from './resolve-bin.js'
 
 export const name = 'rtk-kit'
 export const inject = ['shell', 'tools']
@@ -40,20 +42,29 @@ export const Config = z.object({
   doctorGain: z.boolean().default(false),
 })
 
-/** 探测 rtk 是否可用；缺失时整个插件退化为恒等（与 DeepTrial 同款 fail-safe）。 */
-export function probeRtk(rtkBin) {
+/**
+ * 探测 rtk 是否可用；缺失时整个插件退化为恒等（与 DeepTrial 同款 fail-safe）。
+ * 二进制发现（resolve-bin 单源）：入参先经 resolveRtkBin 解析——config 原值（F-FINAL-1(i) 调用形）重跑
+ * 发现（PATH → 官方落点兜底），已解析路径形幂等透传（A3）；绝不绕过发现逻辑。
+ * @param {string} rtkBin - config.rtkBin 原值（或已解析结果，A3 透传）
+ * @param {object} [resolveEnv] - 解析注入缝（测试 mkdtemp 注入；缺省真实环境）
+ */
+export function probeRtk(rtkBin, resolveEnv) {
+  const bin = resolveRtkBin(rtkBin, resolveEnv)
   try {
-    const r = spawnSync(rtkBin, ['--version'], { stdio: 'ignore', timeout: 3000 })
+    const r = spawnSync(bin, ['--version'], { stdio: 'ignore', timeout: 3000 })
     return r.status === 0
   } catch {
     return false
   }
 }
 
-/** 调 `rtk rewrite` 拿改写结果。⚠️ 只认非空 stdout（0.49.0 成功码 = 3，见 rewrite.js）。 */
-function runRtkRewrite(rtkBin, command, timeoutMs) {
+/** 调 `rtk rewrite` 拿改写结果。⚠️ 只认非空 stdout（0.49.0 成功码 = 3，见 rewrite.js）。
+ *  二进制发现同 probeRtk（resolve-bin 单源：F-FINAL-1(i) 种子=config 原值每调用重发现，窗口 a 功能恢复面）。 */
+function runRtkRewrite(rtkBin, command, timeoutMs, resolveEnv) {
+  const bin = resolveRtkBin(rtkBin, resolveEnv)
   try {
-    const r = spawnSync(rtkBin, ['rewrite', command], {
+    const r = spawnSync(bin, ['rewrite', command], {
       encoding: 'utf8',
       timeout: timeoutMs,
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -77,6 +88,7 @@ export function buildDoctorTool({
   awareness = 'default',
   exec,
   timeoutMs,
+  resolveEnv,
 } = {}) {
   return defineTool({
     name: 'rtk_doctor',
@@ -97,13 +109,32 @@ export function buildDoctorTool({
       render: (_args, value) => [{ type: 'text', text: value.text }],
     },
     execute: (args) =>
-      runDoctorTool(args ?? {}, { rtkBin, doctorGain, autoRewrite, conservative, awareness, exec, timeoutMs }),
+      runDoctorTool(args ?? {}, { rtkBin, doctorGain, autoRewrite, conservative, awareness, exec, timeoutMs, resolveEnv }),
   })
 }
 
-export function apply(ctx, rawConfig) {
+/**
+ * 插件装载（cordis 入口：apply(ctx, rawConfig)）。
+ * @param {object} ctx 宿主 ctx（shell/tools 缝 + effect/on/logger；webServer/connection 走软依赖子插件）
+ * @param {object} rawConfig 配置（Config 零新键：安装面落点/超时全走代码默认 + deps 注入缝，红线 4）
+ * @param {object} [deps] 安装面引擎注入缝（Task 3；cordis 只传两参 = 零行为差异）：
+ *   {installEngine, installDir, logPath, timeoutMs, tmpdir, verifyTimeoutMs, exec, fetch, now, fs,
+ *    resolveEnv, platform, arch}——exec/fetch/now/fs = 引擎 IO 注入缝（测试用）；
+ *   落点/超时缺省 = 代码默认（~/.local/bin、~/.dsh/dsh-rtk-kit/install-log.json、60000ms）。
+ */
+export function apply(ctx, rawConfig, deps = {}) {
   const config = Config.parse(rawConfig ?? {})
-  const available = config.enabled && probeRtk(config.rtkBin)
+  // 解析布景注入缝（测试用；缺省真实环境）——probe/rewrite/惰性复检/数据面共用（resolve-bin 契约）。
+  const resolveEnv = deps.resolveEnv
+  // F-FINAL-1(i)（Ruling 2026-10-04 种子修正）：**重解析种子=config 原值**（缺省裸名 'rtk'）——probeRtk /
+  // runRtkRewrite / 惰性翻转 / rtk_doctor / 设置页数据面各调用点经 resolve-bin 单源**重发现**（A2 兜底：
+  // PATH → ~/.local/bin → /usr/local/bin → /opt/homebrew/bin），不再「apply 解析一次向下传递」：
+  // 解析后值当种子会把发现钉死到 boot 命中位（该位被删/装落他位即自愈不闭合，终审 F-FINAL-1 根因）。
+  // 显式配置仍 A3 原值透传零覆盖（resolve-bin.js 语义面不动）。
+  const rtkBin = config.rtkBin
+  // F-03（Ruling b 2026-10-04）：available 只在装载期定初值，运行期经① 包壳惰性 stat 复检翻转（自愈不等重启）；
+  // 禁每命令 spawnSync 复检（健康路径零开销）。
+  let available = config.enabled && probeRtk(rtkBin, resolveEnv)
 
   // ── ① 命令改写：包一层 ctx.shell.resolve（与挂载哪个 executor 无关，沙箱语义原样保留）──
   const shell = ctx.shell
@@ -112,10 +143,17 @@ export function apply(ctx, rawConfig) {
     const spec = origResolve(request)
     try {
       // 模型驱动的调用 stdin 恒为空；hook-runner / 进程内插件会带 stdin payload —— 后者永不改写
-      if (!available || request.stdin != null) return spec
+      if (request.stdin != null) return spec
+      if (!available) {
+        // F-03（Ruling b 2026-10-04）：失能态惰性 stat 复检——仅 available=false 时查（stat 级零 spawn，
+        // 健康路径零开销）；装后/外部手装自愈翻转不等重启；enabled:false 总开关语义不变（恒等放行不翻转）。
+        // F-FINAL-1(i)：翻转判据与 runRtkRewrite 同种子=config 原值（findRtkBin(config.rtkBin,…)，窗口 a 功能恢复面）。
+        if (!config.enabled || !findRtkBin(rtkBin, resolveEnv).found) return spec
+        available = true
+      }
       const d = decideEligibility(spec.command, { conservative: config.conservative, exclude: config.exclude })
       if (!d.eligible) return spec
-      const rewritten = runRtkRewrite(config.rtkBin, spec.command, config.rewriteTimeoutMs)
+      const rewritten = runRtkRewrite(rtkBin, spec.command, config.rewriteTimeoutMs, resolveEnv)
       if (!isSafeRewrite(spec.command, rewritten)) return spec
       return { ...spec, command: rewritten }
     } catch {
@@ -150,11 +188,12 @@ export function apply(ctx, rawConfig) {
   if (config.registerDoctorTool) {
     ctx.tools.register(
       buildDoctorTool({
-        rtkBin: config.rtkBin,
+        rtkBin,
         doctorGain: config.doctorGain,
         autoRewrite: available,
         conservative: config.conservative,
         awareness: config.awareness,
+        resolveEnv,
       }),
     )
   }
@@ -191,16 +230,49 @@ export function apply(ctx, rawConfig) {
         apply(c) {
           if (typeof c?.effect !== 'function') return // 缺 effect 缝=无拆除器路径，跳过注册（零残留）
           // 工厂形：注册当场跑、返回函数才是拆除器（registerDoctorRoutes 内部拆除幂等、收敛不抛）
-          c.effect(
-            () =>
-              registerDoctorRoutes(c, {
-                rtkBin: config.rtkBin,
+          c.effect(() => {
+            try {
+              // Task 3：安装面引擎 opts（跨卡契约 installOpts 形）——rtkBin=重解析种子 config 原值（F-FINAL-1(i)；
+              // install 路由每请求 findRtkBin 重发现后作引擎输入）；
+              // 落点/超时走代码默认 + deps 注入缝（红线 4：Config 零新键、cordis.patch.yml 零改动）。
+              // exec/fetch/now/fs=引擎 IO 注入缝（测试用；undefined 时引擎 normalizeOpts 落真实默认）。
+              const installOpts = {
+                rtkBin,
+                installDir: deps.installDir, // 落点单源（NEEDS_CONTEXT ① 方案②）：未注入=lib/install.js normalizeOpts 缺省（官方 install.sh 落点），本文件零落点字面
+                logPath: deps.logPath ?? defaultLogPath(), // 兼作重装记录面落点（INV-10）
+                timeoutMs: deps.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+                tmpdir: deps.tmpdir,
+                verifyTimeoutMs: deps.verifyTimeoutMs,
+                exec: deps.exec,
+                fetch: deps.fetch,
+                now: deps.now,
+                fs: deps.fs,
+              }
+              return registerDoctorRoutes(c, {
+                rtkBin,
+                // 数据面执行缝（fix round 3，F-01 现象根因）：deps.exec 必须穿到 handler —— 此前只进
+                // installOpts（引擎 IO），数据面三动作（version/gain/health）走 doctor.js 缺省真实
+                // execFile；布景注入的假执行器到不了 handler → 布景「boot 真缺失」被真机 PATH 上的
+                // rtk 顶掉（布景泄漏到真机）。生产 deps 缺省 → 仍走真实 execFile（零行为差异）。
+                exec: deps.exec,
+                resolveEnv: deps.resolveEnv,
+                platform: deps.platform,
+                arch: deps.arch,
+                installEngine: deps.installEngine, // undefined = registerDoctorRoutes 缺省 reinstallRtk
+                installOpts,
                 warn: (msg) => ctx.logger?.warn?.(msg),
-              }),
-            'rtk-kit: doctor-routes',
-          )
+              })
+            } catch (err) {
+              // fail-open（INV-4）：引擎装配/注册链路失败（install.js 静态 import 在装载图内，模块级损坏不可 fail-open）只 logger.warn 不炸插件（改写/awareness/工具面照常）
+              ctx.logger?.warn?.(`[rtk-kit] 设置页数据面注册失败（fail-open：改写/awareness/工具面照常）：${String(err?.message ?? err)}`)
+              return () => {} // 注册失败=无拆除器路径（noop 保持 effect 契约、拆除幂等）
+            }
+          }, 'rtk-kit: doctor-routes')
         },
       })
     }
-  } catch { /* ctx.plugin 缺位/异常 fail-open：装载不炸（等价宿主 _reload 兜底语义） */ }
+  } catch (err) {
+    // T3-F-1：外层 catch 必须留痕（与 :209/:249 缺缝/注册失败留痕口径对齐）——静默零留痕=此类故障无迹可查
+    ctx.logger?.warn?.(`[rtk-kit] 数据面子插件装配失败（fail-open：装载不炸，等价宿主 _reload 兜底语义）：${String(err?.message ?? err)}`)
+  }
 }
