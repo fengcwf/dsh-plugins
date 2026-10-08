@@ -21,3 +21,13 @@
         # 脱敏：落盘/注入前哨兵中和开关（INV-11，lib/secrets.js）
         secrets:
           enabled: true
+        # Hindsight 记忆同步（2026-10-07 波 t9，solution-design §5）：L1 启停 + API + 同步对象 + 定时同步
+        #（缺省 enabled:false=零行为变化；四处同步面之一——与 Config/settings-write/client.js 同集）
+        hindsight:
+          enabled: false
+          apiUrl: 'http://127.0.0.1:8888'
+          banks: []
+          sync:
+            schedule:
+              enabled: false
+              time: '03:25'

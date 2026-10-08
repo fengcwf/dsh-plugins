@@ -32,8 +32,10 @@ import { wikiWrite, wikiDelete, wikiRename } from './crud.js'
 import { createWriteGate } from './gate.js'
 import { defaultLogSources } from './ingest-log.js'
 import { createIngestTrigger, DISTILL_TASK_NAME } from './ingest-trigger.js'
-import { createIngestScheduler } from './ingest-schedule.js'
+import { createIngestScheduler, isValidScheduleTime } from './ingest-schedule.js'
 import { registerIngestRoutes } from './ingest-routes.js'
+import { createHindsightSync, syncRanOnStamp } from './hindsight-sync.js'
+import { createHindsightHandlers, createSyncStarter, collectStatus } from './hindsight-routes.js'
 import { createApplyPatch } from './settings-write.js'
 
 export const name = 'wiki-steward'
@@ -77,6 +79,21 @@ export const Config = z.object({
     schedule: z.object({
       enabled: z.boolean().default(false),
       time: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, '时间格式须为 HH:MM').default('00:25'),
+    }).prefault({}),
+  }).prefault({}),
+  // Hindsight 记忆同步（2026-10-07 波 U1-U3，solution-design.md §5）：enabled=L1 启停（同步行为，
+  // 热改立即生效）；apiUrl=记忆库 API（侦察实测零鉴权，默认 127.0.0.1:8888）；banks=同步对象清单
+  //（空=全部 bank，R-4 现阶段只 dsh-plugins 有料）；sync.schedule=定时同步（缺省关=零行为变化）。
+  // ⚠️ 嵌套默认值一律 .prefault({})（zod v4 .default({}) 短路实测坑——本文件头注同款纪律）。
+  hindsight: z.object({
+    enabled: z.boolean().default(false),
+    apiUrl: z.string().default('http://127.0.0.1:8888'),
+    banks: z.array(z.string()).default([]),
+    sync: z.object({
+      schedule: z.object({
+        enabled: z.boolean().default(false),
+        time: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, '时间格式须为 HH:MM').default('03:25'),
+      }).prefault({}),
     }).prefault({}),
   }).prefault({}),
 }).prefault({}) // 顶层同样容忍 undefined（热改路径上 rawConfig 可缺省 → 全默认；非法类型仍拒）
@@ -396,7 +413,9 @@ export function migrateLegacyState({ dataRoot, paths, warn = () => {} }) {
  *   now=假时钟、tickIntervalMs=timer 间隔、indexRefresh=索引增量刷新钩子（本包不持索引，缺省明示不归我管）。
  *   另 opts.web={home,logDir,distDir,trigger,sources}（web 数据面缝）+ opts.ingest={distill,now,logDir,
  *   taskName,runRecordExists,setTimeout,clearTimeout,setInterval,clearInterval,reconcileIntervalMs}
- *   （Task F3 定时调度缝，lib/ingest-schedule.js 同名语义）。
+ *   （Task F3 定时调度缝，lib/ingest-schedule.js 同名语义）+ opts.hindsight={createEngine,now,
+ *   runRecordExists,setTimeout,clearTimeout,setInterval,clearInterval,reconcileIntervalMs}
+ *   （repair-r2 F1 Hindsight 定时同步缝，lib/ingest-schedule.js 同款形；createEngine=引擎工厂注入缝）。
  */
 export function apply(ctx, rawConfig, opts = {}) {
   // 配置防御性校验：非法配置留痕告警后 fail-open（INV-15 禁静默）。只在 apply 期告警一次
@@ -583,6 +602,61 @@ export function apply(ctx, rawConfig, opts = {}) {
     warn(ctx, '[wiki-steward] ingest 定时调度未接线：宿主 ctx.effect 缺失（无拆除器通道；INV-3 零残留纪律不裸起定时器，定时蒸馏本部署不生效）')
   }
 
+  // ---- Hindsight 定时同步调度（2026-10-07 波 repair-r2 F1；U2「同步时间调整」落地）----
+  // 与 ingest 调度器并列（createIngestScheduler 同款形）：消费 hindsight.sync.schedule{enabled,time}
+  // + 过 L1 门禁 hindsight.enabled（关=不触发）；触发缝=createSyncStarter 同一实例（手动/定时同源单飞，
+  // already-running 防重入）；补跑判据=同步日志 jsonl 当日有行（syncRanOnStamp，失败行也计=已跑）；
+  // 生命周期挂 ctx.effect（INV-3 零残留定时器；缺 effect 缝=不裸起定时器+功能启用时留痕如实）。
+  // 默认 03:25=在 wiki-ingest 00:25 之后错峰（Config 默认同源=defaults 取值，禁双处硬编码）。
+  // 注入缝 opts.hindsight={createEngine,now,runRecordExists,setTimeout,clearTimeout,setInterval,
+  // clearInterval,reconcileIntervalMs}（测试假 clock/timer/引擎缝——ingest-schedule 测试同款形）。
+  const hsDataDir = opts?.paths?.dataDir ?? dataRoot
+  const hsSyncLogFile = opts?.paths?.syncLogFile ?? path.join(hsDataDir, 'hindsight-sync-log.jsonl')
+  const hsSchedOpts = opts?.hindsight ?? {}
+  const startSync = createSyncStarter({
+    getConfig: readCfg,
+    createEngine: typeof hsSchedOpts.createEngine === 'function'
+      ? hsSchedOpts.createEngine
+      : (cfg) => createHindsightSync({
+        vaultRoot: cfg.vaultRoot,
+        dataDir: hsDataDir,
+        apiUrl: cfg.hindsight.apiUrl,
+        banks: cfg.hindsight.banks,
+      }),
+    warn: (line) => warn(ctx, `[wiki-steward] ${line}`),
+  })
+  const hsScheduler = createIngestScheduler({
+    getCfg: () => {
+      const c = readCfg()
+      const s = c.hindsight.sync.schedule
+      return {
+        enabled: s.enabled === true && c.hindsight.enabled === true, // L1 门禁：hindsight.enabled 关=不触发
+        time: isValidScheduleTime(s.time) ? s.time : defaults.hindsight.sync.schedule.time,
+      }
+    },
+    distill: () => startSync(),
+    now: typeof hsSchedOpts.now === 'function' ? hsSchedOpts.now : nowMs,
+    logDir: hsDataDir,
+    taskName: 'hindsight-sync',
+    runRecordExists: typeof hsSchedOpts.runRecordExists === 'function'
+      ? hsSchedOpts.runRecordExists
+      : (stamp) => syncRanOnStamp(hsSyncLogFile, stamp),
+    setTimeoutFn: hsSchedOpts.setTimeout,
+    clearTimeoutFn: hsSchedOpts.clearTimeout,
+    setIntervalFn: hsSchedOpts.setInterval,
+    clearIntervalFn: hsSchedOpts.clearInterval,
+    reconcileIntervalMs: hsSchedOpts.reconcileIntervalMs,
+    warn: (line) => warn(ctx, line),
+  })
+  if (effectFn !== null) {
+    effectFn.call(ctx, () => {
+      hsScheduler.start()
+      return () => hsScheduler.stop()
+    }, 'wiki-steward: hindsight-schedule')
+  } else if (readCfg().hindsight.enabled && readCfg().hindsight.sync.schedule.enabled) {
+    warn(ctx, '[wiki-steward] Hindsight 定时同步未接线：宿主 ctx.effect 缺失（无拆除器通道；INV-3 零残留纪律不裸起定时器，定时同步本部署不生效）')
+  }
+
   // ---- 捕获接线（T9；Q7a/Q17 组合裁定）----
   // 三缝：session/event（投影+completed 校验）+ agent/turn-stopping（收口）+ session/disposed（收尾 flush）。
   // 每缝独立 try/catch 吞+留痕——捕获绝不阻塞会话（turn-stopping 是 serial 钩子，上抛=挡收口）。
@@ -711,6 +785,20 @@ export function apply(ctx, rawConfig, opts = {}) {
               const distDir = webOpts.distDir ?? fileURLToPath(new URL('../web/dist', import.meta.url))
               const trigger = webOpts.trigger ?? ingestTrigger // 与定时调度共用同一触发缝实例（Task F3）
               const sources = webOpts.sources ?? defaultLogSources({ home: ingestHome })
+              // Hindsight 数据面（2026-10-07 波 U2/U3，t9 + repair-r2 F1）：4 端点 + L1 门禁 detached
+              // 同步触发器。startSync/hsSyncLogFile 已上提外层（与定时调度同源单飞旗标——F1 合同）。
+              const hindsight = createHindsightHandlers({
+                connection: c.connection,
+                getConfig: readCfg,
+                applyPatch,
+                startSync,
+                statusProbe: async () => {
+                  const cfg = readCfg()
+                  return collectStatus({ fetchImpl: globalThis.fetch, apiUrl: cfg.hindsight.apiUrl, home: ingestHome })
+                },
+                syncLogFile: hsSyncLogFile,
+                warn: (line) => warn(ctx, `[wiki-steward] ${line}`),
+              })
               for (const d of registerIngestRoutes({
                 register,
                 connection: c.connection,
@@ -720,6 +808,7 @@ export function apply(ctx, rawConfig, opts = {}) {
                 distDir,
                 applyPatch, // 设置写缝（缺=null → 写端点 503 如实，展示面照常）
                 warn: (line) => warn(ctx, `[wiki-steward] ${line}`),
+                hindsight, // Hindsight 数据面分发缝（/hindsight/* 内部分发；缺=404 如实）
               })) {
                 if (typeof d === 'function' && !disposers.includes(d)) disposers.push(d) // 双记账去重（register 记账 + 返回值交账）
               }

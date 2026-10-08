@@ -41,6 +41,11 @@ test('Config 全键默认值与契约精确一致（delta-spec §2 整行 + T9 v
     // 契约（当时无新键需求）；本波验收面即含新键，缺省 enabled:false + time:'00:25' = 旧配置
     // （无 ingest 键）parse 后行为零变化（向后兼容），原 5 组键默认值逐条锁定不变。
     ingest: { schedule: { enabled: false, time: '00:25' } },
+    // 断言修订理由（2026-10-07 波 t9，solution-design §5）：新顶层键 hindsight（Hindsight 记忆同步
+    // U1-U3：enabled=L1 启停 / apiUrl / banks / sync.schedule{enabled,time}）——缺省 enabled:false
+    // =旧配置（无 hindsight 键）parse 后行为零变化（向后兼容），原 6 组键默认值逐条锁定不变。
+    // 嵌套默认值 .prefault({})（zod v4 .default({}) 短路坑）由 hindsight-routes.test.mjs 判死探针锁。
+    hindsight: { enabled: false, apiUrl: 'http://127.0.0.1:8888', banks: [], sync: { schedule: { enabled: false, time: '03:25' } } },
   }
   assert.deepEqual(Config.parse({}), expected)
   assert.deepEqual(Config.parse(undefined), expected)

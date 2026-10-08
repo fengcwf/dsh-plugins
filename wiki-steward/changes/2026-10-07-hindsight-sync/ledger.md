@@ -121,3 +121,40 @@
 - t5 复审 **needs_revision**（1 条 medium F-1）：F3 修复语义本身正确、三组变异实证主门禁判别力，但 `LogHistoryView.vue:31-33` finally 的 `if (mine===epoch.value) reloading.value=false` **零测试锁定**（变异 D 删之全量 425 仍全绿）——承重防线无判别力覆盖=回归盲区。
 - 修复环自动化处置（协议：不重建不插手）：系统已建 t6（repair r2→coder，acceptance=F-1.requiredFix：补时序测试锁「重叠 reload 下门禁不被旧响应误清」）+ t7（review r2→integrator）。R-16 记：此为质量回路正常工作实证（IL-2 判别力口径：代码正确≠质量，测试锁定才=质量）。
 - t6 completed（+1 时序测试锁 finally 条件，7→11；426/426）。队长抽验过。**R-17 合同口径教训**：系统自动 repair 卡的 inScope 取自 finding.requiredFix 文件位置，漏验收明文要求的报告路径——成员不越权+报备=正确处置，队长已 evidence_note 追认。**机制改进待办**：自动 repair 环建卡后队长即查 inScope 是否覆盖验收全产物，缺则 edit_plan 补（卡未启动前）或追认（完成后）。
+- t7 **pass**（F-1 闭合：变异 D 从「425 全绿」翻转「恰 1 红」；三处门禁 code→test 全闭合；426/426；sha 恒等零污染）。t7⑤ scope 追认=t6 evidence_note + R-17 + commit body 三处在案，闭环。
+- **竞态收口线封账**：commit e7a6ae7（W1+N2+t2 数据面）+ 000a7d6（F3+F-1）。全部 7 卡终态。
+- 质量回路战绩实证：1 轮 needs_revision（F-1 判别力盲区）→ repair → 复审 pass——IL-2「测试锁定才=质量」的活例。
+
+## R-18 开放项分诊 + 主需求实现卡进队（2026-10-08 17:2x，用户两轮「继续」）
+- 用户连续两轮「继续」未答开放项 → 按「停摆即 bug」分诊：①②降级非阻塞（lint 校验方向=「AGENTS.md 写的路径须存在」，反向不强制）；**③ SCAN_DIRS 本轮动手**（链路硬前置+原始需求授权；untracked 脚本改前备份）；④真阻塞（key 值物理只有用户有；路由声明定位=clsh preset agent.cordis.yml，改=范围外）；⑤⑥不阻塞。
+- 实现卡链（Phase 3 合同形=solution-design §9）：t8 引擎→t9 Config+API→t12 UI（串行契约链）｜t10 SCAN_DIRS 并行｜t11 tester 全链（deps t8/t9/t10/t12，edit_plan 补 t12 依赖边）｜t13 终审 reviewer-pro（deps t11/t12）。
+- 派发过程留痕：UI 卡首建被拒（inScope 与 t8 重叠、缺直接依赖边）→ 补 deps [t8,t9] 重建成功；卡 id 与手工前缀错位（SCAN_DIRS 实为 t10）→ 后续卡去数字前缀。
+- t10 completed（SCAN_DIRS +1 行恰 1 hunk、备份 md5 5330e15b 一致、raw/06-hindsight 空目录零 .md、scan 8 项 rc=0、wiki-lint IDENTICAL 零新增）。队长抽验 4/4 过（diff/落点/备份/scan 命中）。
+- **R-19 双料教训（同族第 2 次）**：①合同 verify 命令「tail -8」截断看不到目标行（在第 2 行）——成员如实报告未越权改输出，正确；**verify 命令写法新规：取行用 grep -n / 带行号 head，禁裸管道切片**。②队长抽验自己又踩同坑（head -3|tail -1 取到第 3 行=0 命中，重查 grep -n 才命中）——**测退出码勿接管道**（t2 时已记）+ **取行勿管道切片**，合并为「验证命令稳定性」条目。成员建议已采纳为规范。
+- t10 A 点（verify 字面会误导复审）已由本条吸收；B 点（wiki-lint 重写 lint-report.md 为工具固有）判正常留痕。
+- t8 completed（引擎 273 行+测试 249 行；433/433；幂等双态以 inode 不变取证=真落盘验证；slug 碰撞边角留痕「provider::repo 形接受」）。队长抽验 4/4（计数/在场/红线关键词 13 处/web 零触碰）。t9 自动接棒。
+- t9 completed（Config+4 端点+四处同步面+双侧一致性补锁=B 卡静默缺陷源收口；440/440）。队长抽验 4/4。**卡号口误两连**（t10 报告写「移交 t10」实为 t12、t9 同款）——卡 subject 数字前缀与系统 id 错位的后遗症；实质无碍（t12 合同自带 dist 判据），N4 类笔误并入 t13 终审校对面。
+
+## R-20 合同自相矛盾裁定（t12 抓出，队长合同 bug 自曝）
+- 现象：t12 objective 写「方案 A 零构建 React 不碰 dist」，inScope/验收却是 Vue+dist 重建（方案 C 纪律）——两套口径打架。
+- 处置：artist 按可执行面（inScope+验收）执行 C 并报备=正确；方案定形 **C+A 混合**（solution-design §10 替代 §4）；R-8「A 不碰 dist」作废。
+- 教训入账：**合同 objective/inScope/acceptance 落笔前必须互相对一遍口径**（本例三处出自不同章节、未做一致性校对）；与 N4/F1-F2「写前实测」同族=文档一致性纪律。
+- 可达性缺口（t12②）成立：六控件无消费方=半成品 → **t14 挂载缝小卡**（deps t12），不入 backlog。t11/t13 依赖图同步补 t14。
+- t12 结算（队长追认 A/C 口径冲突=合同 bug；451/451；六控件 data-hs-role 六键+色值零命中+dist 判据先红后绿）。
+- t14 挂载缝卡已建（mechanic，deps t12）——可达性不入 backlog。依赖图：t13 deps 补 t14 成功；t11 已启动锁死 deps（edit_plan 拒改），改以 send_message 澄清验收口径（「设置节可见」归 t14、tester 按 dist 字面判据）。
+- 派发教训（R-19 同族）：卡建晚于调度节奏时「先建全图再放调度」优于「边建边派」——本波 t11 先于 t14 启动即此因。后续建卡尽量同批补全依赖再等调度。
+- t14 completed（挂载缝 usePanelMount 单一实现+内联 settings 渲染面；455/455=451+4；LRN-045 先红后绿实证（故意改旧字面→红→还原绿）；既有 view:'log' 4 断言一字未改零回退）。队长抽验 4/4——「越界 3 行」核实=t8/t9 未提交遗留（?? 新文件+t9 index.js），非 t14 越界，成员申报准确。t12② 可达性收口。
+- commit 纪律：t8-t14 产物暂不 commit（t11 tester 在跑，防 git diff 面变化干扰其对盘）；t11+t13 波次收口统一 commit（F4 原则）。
+- t11 completed（6/6 验收、84 子断言（e2e 54+API 30）、455/455 零回退、真 vault/home 零写入、幂等三不变取证）。队长抽验 3/3（真 vault 零写入复核/回归/报告在场）。
+- t11 观察项采纳：生产安装位无新 routes（live 404 属无发版预期）→ **发版后补真 HTTP 冒烟**列入发版检查单（随发版五步走）。
+- t11 亮点留档：白名单外 16 tracked 文件逐一核归属（obsidian-web×13=并行会话）而非放过——验证纪律到位。
+- t13 整面终审（reviewer-pro）调度派发中=本波最后一卡。
+
+## R-21 t13 终审 needs_revision（3 findings）+ t15 合同修订（2026-10-08 18:5x）
+- t13 verdict=needs_revision：宪法红线/测试判别力（9 变异实验恰红）/发布物面（隔离重建 md5 与入库一致=src↔dist 字节同源）三项全过；**F1 high=定时触发面死键**（Config schedule.time 无消费方、文案承诺「到点触发」为假）——**根因=我的 t9 合同漏「接调度器」验收**（solution-design §3 有、合同没带）；F2 medium=bankSlug 碰撞跨 bank 互覆写（推翻 t8「接受边角」裁定——终审判超 INV-1 例外语义，正确，防覆写优先）；F3 low=§3「复用 queue.js」字面未兑现。
+- 修法裁定：F1 取 (a) 补调度面（U2 明文「同步时间调整」，摘控件=需求缩水）；F2 取短哈希后缀（标头拒写会丢合法第二 bank）；F3 文档补注。
+- **amend_task 实战首次**（captain-only）：t15 自动卡合同 inScope 只有 web/ 面（按 finding 文件位置生成），修法 (a) 需 lib/ ——「合同使诚实完成不可能」正是 amend 设计场景。修订留痕 1 revision；outOfScope 绝对路径被 scope 模式拒（改发版面相对路径）。已 send_message 通知 artist 重读合同。
+- 教训（R-19 同族第 3 例）：**实现卡合同必须把设计文档的触发/接线面带进验收**——「设计有、合同漏」=死键温床（F1 与 t12 A/C 冲突、t6 scope 漏报同根：合同各段出自不同处未对口径）。
+- t15 completed（F1(a) 调度面+L1 门禁/热改补跑/单飞/effect 零残留 6 测试；F2 短哈希分名——队长 node 直调 bankFileBase 实测三 bank 互异：cc928dc9/a3906a67/ad942f05；F3 文档补注；463/463=455+8）。t16 复审接棒。
+- **R-22 amend 交接缝隙**：amend 后派单提示的 acceptance 仍是旧快照（3 条），成员按旧报被机械拒、改按新 6 条过——**机制待改进：派单提示应随 amend 同步**（插件层面问题，记 U4 候选）；成员踩坑留痕=正确处置。
+- dist 重建时机留痕：t15 的 verify pnpm build 顺带修复了 dist 相对 web/src 的陈旧（含 t14 改动未重建）——t14 声称重建过但 t15 发现仍陈旧，t16 复审以重建后状态为准核 md5。

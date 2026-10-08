@@ -21,6 +21,10 @@
 //      dsh.client.inject 供进 require 表）；自绘布局样式=SETTINGS_CSS 注入（--dsw-alias-*/--dsw-radius-*
 //      token 唯一色板，零硬编码色值/零暗色分支——暗色随宿主别名重定义自动适配）。功能面零行为变化：
 //      {data}/{error} 契约、timer 语义、白名单、历史入口行为面全保持（只动视觉与结构）。
+//   ⑦ Hindsight 六控件可达（t14「设置节挂载缝」）= 设置节渲染面内联挂 web/dist Hindsight 同步面板
+//      （WikiStewardHindsightMount，view:'hindsight'）——web/src/panel.js 视图分叉 'log'|'hindsight'|
+//      'full'，App.vue 收 view prop 只渲染 HindsightSyncPanel（六控件），不与设置节既有内容重叠。
+//      挂载/失败兜底/幂等清理与历史缝同源（usePanelMount(view) 单一实现），历史缝 view:'log' 零回退。
 // 弃自造 `settings.plugins.tab` 页签 + 站内绝对 '/wiki-steward/panel.js' 动态 import（旧 404 面）；
 // panel.js 改由 ctx.webServer prefix /api/wiki-steward 官方路由面静态服务，动态 import 说明符经
 // new URL(url, document.baseURI).href 转真 URL 再 import（与 fetch 同基解析，<base> 有无两口径均正确）。
@@ -70,6 +74,9 @@ window.__ModuleLoader__.load({
       { path: ['secrets', 'enabled'], kind: 'boolean', label: '脱敏开关（落盘/注入前哨兵中和）' },
       { path: ['ingest', 'schedule', 'enabled'], kind: 'boolean', label: '定时蒸馏开关（启用后每日到点触发 headless 蒸馏任务）', note: '开启后若当日无跑记录会补触发一次（重启/启用即按补跑判据收口）；执行改动约 1 分钟内热生效，无需重启。' },
       { path: ['ingest', 'schedule', 'time'], kind: 'time', label: '定时蒸馏执行时间（HH:MM）', note: '系统 cron 仍在 00:25 触发，flock 防重入；如需单一时间源请运维侧停用该行' },
+      { path: ['hindsight', 'enabled'], kind: 'boolean', label: 'Hindsight 记忆同步开关（L1 启停，热改立即生效）', note: '关闭即停同步行为（手动/定时均不跑）；同步=机械转录记忆到 raw/06-hindsight/，不做语义编译。' },
+      { path: ['hindsight', 'sync', 'schedule', 'enabled'], kind: 'boolean', label: 'Hindsight 定时同步开关', note: '开启后每日到点触发记忆机械转录（与定时蒸馏错峰，缺省 03:25）。' },
+      { path: ['hindsight', 'sync', 'schedule', 'time'], kind: 'time', label: 'Hindsight 定时同步时间（HH:MM）', note: '缺省 03:25——在 wiki-ingest 00:25 之后错峰执行。' },
     ]
     var READONLY_FIELDS = [
       { path: ['vaultRoot'], kind: 'string', label: 'vault 根路径（只读展示）' },
@@ -120,6 +127,7 @@ window.__ModuleLoader__.load({
       '.wiki-steward-settings-ok{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-success-primary)}',
       '.wiki-steward-settings-error{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary)}',
       '.wiki-steward-history-mount{min-height:120px}',
+      '.wiki-steward-hindsight-mount{min-height:160px;margin:12px 0 0}',
     ].join('')
 
     /** 样式注入（幂等 + document 守卫）：Node/测试环境无 document 直接跳过，绝不炸模块加载。 */
@@ -359,6 +367,9 @@ window.__ModuleLoader__.load({
       return react.createElement('div', { className: 'wiki-steward-settings', 'data-dsh-plugin': 'wiki-steward' },
         react.createElement('h3', { className: 'wiki-steward-settings-title' }, 'wiki-steward · 设置'),
         react.createElement('p', { className: 'wiki-steward-settings-intro' }, '可改项即时热生效（写路径=官方路由面 api/wiki-steward/settings → configEditor 持久化缝）；只读项语义勿动。'),
+        // t14 六控件可达性收口：Hindsight 同步面板（状态/同步/日历/时间/L1/L2 六控件）直接
+        // 挂在设置节渲染面（非弹层），挂载缝 view:'hindsight' → web/dist Hindsight-only 面。
+        react.createElement(WikiStewardHindsightMount, null),
         react.createElement(WikiStewardHistoryEntry, { open: state.historyOpen === true, onToggle: toggleHistory }),
         react.createElement(WikiStewardManualActions, {
           scan: state.actions.scan,
@@ -451,12 +462,13 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 历史弹层挂载缝：web/dist 日志视图挂进容器。
-     * 挂载契约：mount(el, {apiBase, view:'log'}) → {unmount()}；清理=unmount+容器清空，幂等。
+     * 面板挂载钩子（view 参数化——t14：历史日志面与 Hindsight 面共用同一挂载/清理语义，
+     * 分叉只在 view 值与容器标识，避免两处各写一份挂载/失败兜底/幂等清理逻辑）。
+     * 挂载契约：mount(el, {apiBase, view}) → {unmount()}；清理=unmount+容器清空，幂等。
      * panel.js 走文档相对路径（api/wiki-steward/panel.js，官方 prefix 路由面服务）；
      * 加载失败=容器内如实报错（不白屏不吞不留裸文本）。
      */
-    function WikiStewardHistoryMount() {
+    function usePanelMount(view) {
       var elRef = react.useRef(null)
       react.useEffect(function effect() {
         var el = elRef.current
@@ -467,13 +479,13 @@ window.__ModuleLoader__.load({
           .then(function load() { return exports.__panelLoader(PANEL_URL) })
           .then(function mount(mod) {
             if (!alive) return
-            if (!mod || typeof mod.mount !== 'function') throw new Error('日志视图模块缺 mount 导出')
-            handle = mod.mount(el, { apiBase: API_BASE, view: 'log' })
+            if (!mod || typeof mod.mount !== 'function') throw new Error('面板视图模块缺 mount 导出')
+            handle = mod.mount(el, { apiBase: API_BASE, view: view })
           })
           .catch(function onFail(e) {
             if (!alive) return
             try {
-              el.textContent = 'wiki-steward 历史记录加载失败：' + ((e && e.message) || e)
+              el.textContent = 'wiki-steward ' + (view === 'log' ? '历史记录' : 'Hindsight 同步') + '加载失败：' + ((e && e.message) || e)
             } catch { /* 容器失效不抛 */ }
           })
         return function cleanup() {
@@ -484,12 +496,36 @@ window.__ModuleLoader__.load({
           handle = null
           try { el.textContent = '' } catch { /* 同上 */ }
         }
-      }, [])
+      }, [view])
+      return elRef
+    }
+
+    /**
+     * 历史弹层挂载缝：web/dist 日志视图挂进容器（view:'log'，Task F1 历史入口语义不变）。
+     */
+    function WikiStewardHistoryMount() {
+      var elRef = usePanelMount('log')
       return react.createElement('div', {
         ref: elRef,
         className: 'wiki-steward-history-mount',
         'data-dsh-plugin': 'wiki-steward',
         'data-dsh-wiki-steward-view': 'history',
+      })
+    }
+
+    /**
+     * Hindsight 挂载缝（t14 可达性收口）：web/dist Hindsight 同步面板挂进设置节渲染面，
+     * view:'hindsight' → panel.js 分叉到 App 的 Hindsight-only 面（六控件：状态/同步/日历/
+     * 时间/L1 启停/L2 徽标）。与历史缝同形（同 __panelLoader / 同面板 URL / 同幂等清理），
+     * 分叉只在 view 值——历史缝 view:'log' 行为零回退由 test/client-face.test.mjs 既有断言钉住。
+     */
+    function WikiStewardHindsightMount() {
+      var elRef = usePanelMount('hindsight')
+      return react.createElement('div', {
+        ref: elRef,
+        className: 'wiki-steward-hindsight-mount',
+        'data-dsh-plugin': 'wiki-steward',
+        'data-dsh-wiki-steward-view': 'hindsight',
       })
     }
 

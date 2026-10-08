@@ -30,5 +30,30 @@ export function createApi(base) {
     },
     scan: () => requestJson(`${base}/ingest/scan`, { method: 'POST' }),
     distill: () => requestJson(`${base}/ingest/distill`, { method: 'POST' }),
+    // ── Hindsight 同步面（2026-10-07 波 t12）：端点=文档相对 api/wiki-steward/hindsight/*——
+    //    无前导斜杠（B 卡实测坑：前导斜杠绕文档基址 404）。base 由挂载缝注入 'api/wiki-steward'
+    //    （lib/client.js API_BASE 同值）；口径=lib/hindsight-routes.js 4 端点 + settings 写面（时间热改）。
+    fetchHindsightStatus: () => requestJson(`${base}/hindsight/status`),
+    fetchHindsightSyncLog: (since, until) => {
+      const q = new URLSearchParams()
+      if (since) q.set('since', String(since))
+      if (until) q.set('until', String(until))
+      const qs = q.toString()
+      return requestJson(`${base}/hindsight/sync-log${qs === '' ? '' : `?${qs}`}`)
+    },
+    syncHindsight: () => requestJson(`${base}/hindsight/sync`, { method: 'POST' }),
+    toggleHindsight: (enabled) =>
+      requestJson(`${base}/hindsight/toggle`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: Boolean(enabled) }),
+      }),
+    // 同步时间热改走 settings 四处同步面（hindsight.sync.schedule.time=可改白名单叶子）
+    saveSettings: (patch) =>
+      requestJson(`${base}/settings`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ patch }),
+      }),
   }
 }

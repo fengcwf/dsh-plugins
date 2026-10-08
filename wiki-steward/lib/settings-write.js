@@ -16,6 +16,11 @@ export const EDITABLE_PATHS = Object.freeze([
   Object.freeze(['secrets', 'enabled']),
   Object.freeze(['ingest', 'schedule', 'enabled']),
   Object.freeze(['ingest', 'schedule', 'time']),
+  // 2026-10-07 波（t9，solution-design §5 四处同步面）：Hindsight 同步可热改三项——
+  // L1 启停 + 定时同步开关/时间；与 Config/cordis.patch.yml/client.js EDITABLE_FIELDS 四处同集（一致性测试钉住）。
+  Object.freeze(['hindsight', 'enabled']),
+  Object.freeze(['hindsight', 'sync', 'schedule', 'enabled']),
+  Object.freeze(['hindsight', 'sync', 'schedule', 'time']),
 ])
 
 function isPlainObject(value) {

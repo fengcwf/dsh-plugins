@@ -23,8 +23,13 @@ function ensureStyles(doc) {
 export function mount(el, deps = {}) {
   ensureStyles(el.ownerDocument ?? document)
   const api = createApi(deps.apiBase ?? '/wiki-steward/api')
-  const view = resolveView(deps.view) === 'log' ? LogHistoryView : App
-  const app = createApp(view, { api })
+  const resolved = resolveView(deps.view)
+  // view 分叉：'log'=日志视图（历史入口）；'hindsight'/'full'=App——App 按 view prop 决定
+  // 是否只渲染 Hindsight 同步节（六控件），LogHistoryView 不接 view prop（避免属性透传落 DOM）。
+  const isLog = resolved === 'log'
+  const app = isLog
+    ? createApp(LogHistoryView, { api })
+    : createApp(App, { api, view: resolved })
   app.mount(el)
   return {
     unmount() {

@@ -33,31 +33,31 @@ const MIME = {
   '.woff2': 'font/woff2',
 }
 
-function sendJson(res, status, body) {
+export function sendJson(res, status, body) {
   res.writeHead(status, { 'content-type': JSON_TYPE, 'cache-control': 'no-store' })
   res.end(JSON.stringify(body))
 }
 
-function fail(res, status, code, message) {
+export function fail(res, status, code, message) {
   sendJson(res, status, { error: { code, message } })
 }
 
 /** OW-INV-8 同款鉴权缝：过缝失败直接回拒（形 {error:{code}}），绝不进业务 handler */
-function authGate(connection, req, res) {
+export function authGate(connection, req, res) {
   const rejection = connection.requestRejection({ headers: req.headers })
   if (rejection === undefined) return true
   fail(res, rejection, rejection === 401 ? 'unauthorized' : 'forbidden', '未通过请求鉴权')
   return false
 }
 
-function methodGuard(req, res, allowed) {
+export function methodGuard(req, res, allowed) {
   if (allowed.includes(req.method)) return true
   res.setHeader('allow', allowed.join(', '))
   fail(res, 405, 'method_not_allowed', `不支持 ${req.method}`)
   return false
 }
 
-function queryOf(req) {
+export function queryOf(req) {
   try {
     return new URL(req.url, 'http://dsh.invalid').searchParams
   } catch {
@@ -65,7 +65,7 @@ function queryOf(req) {
   }
 }
 
-function pathnameOf(req) {
+export function pathnameOf(req) {
   try {
     return new URL(req.url, 'http://dsh.invalid').pathname
   } catch {
@@ -74,7 +74,7 @@ function pathnameOf(req) {
 }
 
 /** 读 JSON 请求体（有界；畸形=bad_request，绝不静默当空） */
-async function readJsonBody(req) {
+export async function readJsonBody(req) {
   const chunks = []
   let total = 0
   for await (const chunk of req) {
@@ -144,9 +144,10 @@ function staticHandler(distDir, basePrefix = API_PREFIX) {
  * @param {string} deps.distDir web/dist 构建物目录
  * @param {(patch:object)=>Promise<object>} [deps.applyPatch] 设置写缝（settings-write createApplyPatch 形；缺=写端点 503 如实）
  * @param {(line:string)=>void} [deps.warn]
+ * @param {(req:object,res:object)=>Promise<boolean>} [deps.hindsight] Hindsight 数据面分发缝（lib/hindsight-routes.js 形；缺=hindsight/* 走静态面 404）
  * @returns {Function[]} dispose 列表（交 ctx.effect 收敛）
  */
-export function registerIngestRoutes({ register, connection, getConfig, trigger, sources, distDir, applyPatch = null, warn = () => {} }) {
+export function registerIngestRoutes({ register, connection, getConfig, trigger, sources, distDir, applyPatch = null, warn = () => {}, hindsight = null }) {
   const disposers = []
   const statics = staticHandler(distDir, API_PREFIX)
 
@@ -283,6 +284,10 @@ export function registerIngestRoutes({ register, connection, getConfig, trigger,
     if (p === `${API_PREFIX}/ingest/settings`) return ingestSettingsGet(req, res)
     if (p === `${API_PREFIX}/ingest/scan`) return scanPost(req, res)
     if (p === `${API_PREFIX}/ingest/distill`) return distillPost(req, res)
+    if (typeof hindsight === 'function') {
+      const handled = await hindsight(req, res)
+      if (handled) return
+    }
     return statics(req, res)
   }
   disposers.push(register({ kind: 'prefix', path: API_PREFIX, handler }))

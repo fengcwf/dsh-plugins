@@ -207,3 +207,97 @@
   box-shadow: 0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline: none;
 }
+
+/* Hindsight 同步节（2026-10-07 波 t12 六控件）：色板唯一来源=--dsw-alias-* / --dsw-radius-* token
+   （零硬编码色值/零暗色分支——web-panel.test.mjs 色值锁同口径）；计数条长度=内联宽度百分比（数据形，非样式色）。 */
+.ws-hs-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+}
+.ws-hs-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+.ws-hs-badge-ok {
+  border-color: transparent;
+  background: var(--dsw-alias-state-success-primary);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+.ws-hs-badge-warn {
+  border-color: transparent;
+  background: var(--dsw-alias-state-warning-primary);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+.ws-hs-badge-busy {
+  border-color: transparent;
+  background: var(--dsw-alias-state-business-primary);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+.ws-hs-badge-off {
+  opacity: 0.7;
+}
+.ws-hs-calendar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ws-hs-day {
+  display: grid;
+  grid-template-columns: minmax(84px, 96px) minmax(0, 1fr) minmax(56px, auto);
+  gap: 8px;
+  align-items: center;
+  font-family: var(--ds-font-family-code, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 18px;
+}
+.ws-hs-day-key {
+  color: var(--dsw-alias-label-secondary);
+}
+.ws-hs-bar-track {
+  height: 8px;
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-2);
+  overflow: hidden;
+}
+.ws-hs-bar {
+  height: 100%;
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-state-business-primary);
+}
+.ws-hs-day-count {
+  color: var(--dsw-alias-label-tertiary);
+  text-align: right;
+}
+.ws-hs-time-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.ws-hs-switch-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.ws-hs-switch {
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--dsw-alias-state-business-primary);
+}
+.ws-hs-l2 {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  align-items: center;
+}

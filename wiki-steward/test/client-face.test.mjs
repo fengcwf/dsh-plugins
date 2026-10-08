@@ -389,6 +389,79 @@ test('历史弹层：日志视图加载失败 = 容器内如实报错（不白�
   cleanup() // 幂等：双清理不炸
 })
 
+// ── t14 设置节挂载缝：Hindsight 六控件可达（view:'hindsight'）＋历史缝零回退 ──
+test('设置节挂载缝（t14）：渲染面内联挂 Hindsight 面板 → mount(el,{apiBase, view:"hindsight"})；卸载=unmount 消费+容器清空（幂等双清理）', async () => {
+  const { mod, effects } = loadClientFace()
+  mod.__fetch = async () => ({ json: async () => ({ data: { config: {}, writable: true, editable: [] } }) })
+  const { tree } = await readySection(mod, effects)
+  // 探针判据①：settings.section 挂载路径上必须存在 Hindsight 挂载缝（可达性前置）
+  const mountComp = findComp(tree, 'WikiStewardHindsightMount')
+  assert.ok(mountComp, 'settings.section 渲染面必须含 WikiStewardHindsightMount（六控件可达性最后一公里）')
+
+  const mounts = []
+  const unmounts = []
+  mod.__panelLoader = async () => ({
+    mount: (el, deps) => {
+      mounts.push({ el, deps })
+      return { unmount: () => { unmounts.push(1) } }
+    },
+  })
+
+  effects.length = 0
+  const mountTree = mountComp.type(mountComp.props)
+  assert.equal(mountTree.type, 'div', '挂载容器=单 div（Hindsight 面板挂进 ref 节点）')
+  const el = { textContent: '' }
+  mountTree.props.ref.current = el
+  const cleanup = effects[0]()
+  await tick()
+  // 探针判据②：mount 被调用且 view 语义含 Hindsight 面
+  assert.equal(mounts.length, 1)
+  assert.equal(mounts[0].el, el)
+  assert.equal(mounts[0].deps.apiBase, 'api/wiki-steward', 'apiBase 文档相对（与日志/设置请求同基）')
+  assert.equal(mounts[0].deps.view, 'hindsight', '设置节缝必须挂 Hindsight 面（view 语义含 Hindsight）')
+  cleanup()
+  cleanup() // 幂等：双清理只 unmount 一次、不抛
+  await tick()
+  assert.equal(unmounts.length, 1, '卸载干净：handle.unmount 被消费且幂等')
+  assert.equal(el.textContent, '', '清理=unmount+容器清空（无残影）')
+})
+
+test('t14 双缝并存零回退：同一设置节树内历史缝仍挂 view:"log"、Hindsight 缝挂 view:"hindsight"（同 __panelLoader 同面板 URL，只在 view 分叉）', async () => {
+  const { mod, effects } = loadClientFace()
+  mod.__fetch = async () => ({ json: async () => ({ data: { config: {}, writable: true, editable: [] } }) })
+  const { tree } = await readySection(mod, effects)
+
+  // settings 路径可达六控件语义（Hindsight 缝在渲染面）
+  const hindsightComp = findComp(tree, 'WikiStewardHindsightMount')
+  assert.ok(hindsightComp, 'settings 路径：Hindsight 挂载缝在设置节渲染面')
+  // log 路径零回退（历史入口与历史缝原样在位）
+  const entry = findComp(tree, 'WikiStewardHistoryEntry')
+  assert.ok(entry, 'log 路径零回退：历史入口仍在设置节')
+  const historyComp = findComp(entry.type({ ...entry.props, open: true }), 'WikiStewardHistoryMount')
+  assert.ok(historyComp, 'log 路径零回退：历史弹层仍渲染到日志挂载缝')
+
+  const seen = []
+  const mounts = []
+  mod.__panelLoader = async (url) => {
+    seen.push(url)
+    return { mount: (el, deps) => { mounts.push(deps); return { unmount: () => {} } } }
+  }
+
+  effects.length = 0
+  const hTree = hindsightComp.type(hindsightComp.props)
+  hTree.props.ref.current = { textContent: '' }
+  const histTree = historyComp.type(historyComp.props)
+  histTree.props.ref.current = { textContent: '' }
+  const cleanups = effects.map((fn) => fn())
+  await tick()
+
+  assert.deepEqual(seen, ['api/wiki-steward/panel.js', 'api/wiki-steward/panel.js'], '两缝同面板说明符（文档相对，无前导斜杠）')
+  assert.equal(mounts[0].view, 'hindsight', 'Hindsight 缝=view hindsight（首个渲染的缝）')
+  assert.equal(mounts[1].view, 'log', '历史缝=view log（既有行为零回退——断言面不变）')
+  cleanups.forEach((fn) => fn())
+  await tick()
+})
+
 // ── 说明符解析语义回归锁（真 ESM 动态 import 真验——补诊断 §1.2 测试盲区）─────
 test('面板加载缝真浏览器语义：默认 __panelLoader 按 document.baseURI 真 ESM 解析（等价可解析形，非 bare specifier）', async () => {
   const { mod } = loadClientFace()

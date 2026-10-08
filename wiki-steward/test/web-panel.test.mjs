@@ -273,3 +273,27 @@ test('F2 styles.css：§3.2 几何逐项——按钮 36px/radius-md/0 14px/14px 
   assert.match(root, /line-height:\s*22px/, '视图根 22px 行高')
   assert.match(root, /gap:\s*12px/, '视图根 gap 12px（§3.2 节容器）')
 })
+
+// ── t14 设置节挂载缝：view 三分叉（log|hindsight|full）+ dist 字面判据（LRN-045 防假绿）────
+test('t14 resolveView："hindsight"=Hindsight-only 面（设置节挂载缝消费）；log/缺省/未知=既有语义零回退', () => {
+  assert.equal(resolveView('hindsight'), 'hindsight', 'view 语义含 Hindsight → 分叉到 Hindsight 同步面板（六控件）')
+  assert.equal(resolveView('log'), 'log', '历史入口日志面零回退（既有断言面不变）')
+  assert.equal(resolveView(undefined), 'full', '缺省仍=全量面板（mount(el,{apiBase}) 契约向后兼容）')
+  assert.equal(resolveView('x'), 'full', '未知 view 仍=全量面板（绝不抛）')
+  assert.equal(resolveView(null), 'full', 'null 同上')
+})
+
+test('t14 挂载缝源面 + dist 字面判据（LRN-045 防假绿）：App.vue 接 view prop 并按 view 门控其余三节；web/dist/panel.js 含 Hindsight 分叉字面（pnpm build 后非陈旧）', () => {
+  const app = fs.readFileSync(new URL('../web/src/App.vue', import.meta.url), 'utf8')
+  assert.match(app, /view:\s*\{\s*type:\s*String,\s*default:\s*'full'\s*\}/, 'App.vue 必须接 view prop（缺省 full=既有契约向后兼容）')
+  assert.match(app, /v-if="!onlyHindsight\(\)"/, 'App.vue 必须按 view 门控触发/日志/配置三节（Hindsight-only 面不与设置节重叠）')
+
+  const js = fs.readFileSync(new URL('../web/dist/panel.js', import.meta.url), 'utf8')
+  // 判据字面=只在新增 view 分叉代码里出现的独有串（dist 陈旧即红，先跑 pnpm build）
+  assert.ok(js.includes('ws-root--hindsight'), 'dist 缺 Hindsight-only 根类字面——web/dist 陈旧，先跑 pnpm build（LRN-045）')
+  assert.ok(js.includes('data-ws-panel-view'), 'dist 缺视图标识属性字面——web/dist 陈旧，先跑 pnpm build（LRN-045）')
+  // 既有面不断：六控件语义键仍入构建物（t12 dist 判据同源，此处交叉钉住——字面存在性即判据）
+  for (const role of ['status-bar', 'sync-button', 'sync-calendar', 'sync-time', 'l1-toggle', 'l2-badges']) {
+    assert.ok(js.includes(role), `dist 缺六控件语义键 ${role}——构建物丢了 Hindsight 面`)
+  }
+})

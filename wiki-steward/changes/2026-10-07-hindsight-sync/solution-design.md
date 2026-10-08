@@ -28,7 +28,7 @@ lib/hindsight-sync.js（机械转录，绝不 LLM 语义编译——宪法红线
   │ 过滤门禁：text 空/低质跳过留痕（防 05-holographic 式垃圾）
   │ 脱敏：落盘前过 lib/secrets.js（宪法红线：vault 侧写必过脱敏）
   ▼
-raw/06-hindsight/<bank-slug>-<YYYY-MM>.md   （稳定 ID 命名，禁日期前缀文件名——防每夜新文件→wiki 重复页爆炸）
+raw/06-hindsight/<bank-slug>-<hash8>-<YYYY-MM>.md   （稳定 ID 命名，禁日期前缀文件名——防每夜新文件→wiki 重复页爆炸；hash8=sha256(bank_id) 前 8 位确定性后缀，repair-r2 F2 碰撞角分名：同 slug 异 bank（如 `coding-agent` 与 `coding-agent::公共`）绝不互覆）
   │ frontmatter: title/date/tags/source: hindsight/fact_count/sha256/…
   │ ⚠️ 易变字段（timestamp/is_stale）只进 frontmatter，绝不进 body（否则每夜 re_ingest）
   ▼
@@ -40,9 +40,9 @@ raw/06-hindsight/<bank-slug>-<YYYY-MM>.md   （稳定 ID 命名，禁日期前�
 ## 3. 同步引擎契约（lib/hindsight-sync.js）
 
 - **API 客户端**：fetch 直连 `apiUrl`（默认 http://127.0.0.1:8888，Config 可配）；**超时 ≥30s**（侦察 A 卡实测 recall 首调 HTTP:000，客户端 fetch 必须 ≥30s）；`bank_id` 含 `::` 必须 URL 编码（实测坑）
-- **触发面**：①手动（UI 按钮→POST 端点）②定时（复用 `lib/ingest-schedule.js` 现成调度器形，Config `hindsight.sync.schedule{enabled,time}`）
+- **触发面**：①手动（UI 按钮→POST 端点）②定时（复用 `lib/ingest-schedule.js` 现成调度器形，Config `hindsight.sync.schedule{enabled,time}`）——**repair-r2 F1 已落地**：`lib/index.js` 与 ingest 调度器并列挂 `wiki-steward: hindsight-schedule` effect（补跑判据=同步日志当日有行；L1 门禁 `hindsight.enabled` 关=不触发；手动/定时共用同一 createSyncStarter 单飞旗标）
 - **同步日志**：落 `~/.dsh/plugins/wiki-steward/data/hindsight-sync-log.jsonl`（每次同步一行：时间/bank/条数/写入文件/跳过数/sha256 前后值）——「同步日历查看」的数据源
-- **失败语义**：fail-open + 告警进 kb-alerts.md（INV-15 禁静默）；队列幂等复用 `lib/queue.js`
+- **失败语义**：fail-open + 告警进 kb-alerts.md（INV-15 禁静默）。**裁定（repair-r2 F3，消除字面歧义）：同步幂等走 sha256 三态（created/updated/skipped）+ 同步单飞旗标（createSyncStarter `running` 旗，手动/定时同源共用），不复用 `lib/queue.js`**。理由：queue=失败幂等**补交**面（T13 重试上限/TTL 逐条账本），同步是幂等**重写**语义——同 bank 同月重复同步=同文件 sha256 比对 skip 零写盘，失败由下一次同步/手动触发自然重跑（月桶级，非逐条）；引入 queue 会让 TTL/逐条重试与月桶重写语义打架，且 queue 补交与单飞旗标双账并存=静默双跑风险源。
 
 ## 4. UI 面（R-8 方案 A：扩 settings.section，零构建 React）
 
@@ -112,3 +112,28 @@ API（单 prefix `/api/wiki-steward` 内部分发，鉴权缝同款）：
 | ④ | 凭据 ①credentials service / ②cron env 注入 + DEEPSEek_API_KEY | 安全敏感，须授权 |
 | ⑤ | L2 写 `~/.hindsight/coding-agent.json` 是否授权 | 改非本插件配置 |
 | ⑥ | 12 条告警 3 选 1 | 归位/入白名单/维持 |
+
+---
+
+## 9. Phase 3 任务切分（2026-10-08 追加；开放项分诊后）
+
+**开放项分诊（R-18，用户两轮「继续」=停止等答、按停摆即 bug 推进）**：
+| 开放项 | 分诊 | 依据 |
+|---|---|---|
+| ① vault AGENTS.md 记载 | 降级非阻塞 | lint 校验方向=「AGENTS.md 写的路径须存在」（反向不强制）——实现先行，文档补全待点头 |
+| ② 工作区 AGENTS.md 条款 | 降级非阻塞（红线不擅改） | 规范注记非链路依赖；04/05 自动写入先例已足 |
+| ③ SCAN_DIRS | **本轮动手** | 链路硬前置（不改=扫不到）；用户原始需求「同步到 raw 然后 ingest 到 wiki」=链路必要授权；1 行白名单+改前备份（untracked 不可 git 回滚）+scan 验收 |
+| ④ 凭据 key | **真阻塞（物理）** | key 值只有用户有；路由声明定位=clsh preset agent.cordis.yml（改=范围外+editing-cordis-compositions）|
+| ⑤ L2 写 coding-agent.json | UI 只读展示先行，写按钮后置 | 不阻塞 |
+| ⑥ 12 条告警 | backlog 不变 | R-13 |
+
+**卡链**：t8 同步引擎 → t9 Config+API → t10 UI（串行契约链）；t11 SCAN_DIRS 并行独立；t12 tester 全链验证（deps t8-t11）；t13 整面终审（reviewer-pro）。
+**测试红线（全卡通用）**：绝不写真 vault/真 home（vaultRoot 注入 mkdtemp）；真 Hindsight API 只打只读 GET；发布物面必验（LRN-045）。
+
+## 10. 方案定形修正（2026-10-08，R-20——替代 §4 的「方案 A」口径）
+
+**§4 原「方案 A（扩 settings.section 零构建 React，不碰 dist）」作废**，定形为 **C+A 混合**：
+- **C 面（已落，t12）**：`web/src/components/HindsightSyncPanel.vue`（六控件 129 行）+ `web/src/lib/hindsight-model.js` 纯模块 + dist 重建入库——与 AGENTS.md UI 约定及 0.5.0/0.7.0 波先例同载体。
+- **A 面（t14 补）**：`lib/client.js` settings.section 内挂载缝（历史弹层 `mod.mount(el,{apiBase,view})` 同款形），使六控件在「wiki-steward · 设置」可见可达；既有 `view:'log'` 行为零回退。
+- 修正原因：§4 与 §9 合同的验收纪律自相矛盾（A「不碰 dist」 vs Vue/dist 重建），t12 按可执行面（inScope+验收）落地 C 并报备。裁定原则：合同自相矛盾时以可执行面为准，事后校准文档而非否定执行。
+- 控件清单（§4 表）与 UI 约束（色值 token/组件 ≤300 行/文档相对 fetch）**全部继续有效**，仅载体口径改判。
