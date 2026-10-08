@@ -1,5 +1,17 @@
 # CHANGELOG — wiki-steward
 
+## 0.8.0 — 2026-10-08
+
+Hindsight 记忆同步面 + 0.7.0 遗留竞态收口（来源：`changes/2026-10-07-hindsight-sync/`，t1-t16 全链质量闭环）：
+
+- **Hindsight 记忆 → raw → wiki 同步（U1）**：`lib/hindsight-sync.js` 机械转录引擎（memories/list 全量分页、`%3A%3A` 编码、30s 超时下限；bank+月聚合落 `raw/06-hindsight/<bank-slug>-<bankHash8>-<YYYY-MM>.md` 稳定 ID 命名禁日期前缀；易变字段只进 frontmatter；secrets 落盘前脱敏 + 原子写；sha256 三态幂等；短哈希分名防跨 bank 互覆写）；**定时触发面**（`hindsight.sync.schedule{enabled,time}` 真消费：createIngestScheduler 同款形 + L1 门禁 + 手动/定时同源单飞 + syncRanOnStamp 补跑 + ctx.effect 零残留）；低质条目门禁跳过留痕。
+- **手动同步 / 同步日历 / 时间调整（U2）**：设置节六控件（状态条/立即同步/按日计数日历/HH:MM 时间/L1 启停/L2 徽标）+ 同步日志 jsonl 数据源；`lib/hindsight-routes.js` 4 端点（status 官方 diagnose/sync_status 口径、sync detached 单飞、sync-log 时间窗、toggle）。
+- **启停 L1（U3）**：`hindsight.enabled` 热改开关（停同步行为立即生效）；L2 记忆插件启停仅只读状态展示 + ⏳待重启徽标（写配置后置）。
+- **0.7.0 遗留收口**：W1 `reload`×在途 `loadOlder` 竞态——epoch 请求序号守卫（响应不匹配整份丢弃，`meta.cursor` 不跨筛选集）+ F3 窄缝（reload 在途禁翻旧）+ N2 区间倒置双文案互斥；数据面收口尾项（旧落点归档 `_archive-20261007/` + 双清单摘除）。
+- **契约面**：Config 顶层新增 `hindsight` 键组（四处同步：Config/EDITABLE_PATHS/cordis.patch.yml/EDITABLE_FIELDS + 双侧一致性测试补锁）；`ingest-pipeline.py` SCAN_DIRS +`06-hindsight`（monorepo 外配套，备份在案）。
+- **测试 415→463**（+48 零回退零 mock）；终审 20+ 变异实验恰红实证；src↔dist md5 两轮恒等（防假绿）；真 vault 零写入（探针全走 mkdtemp）。
+- **已知 backlog**：F4（schedule 单飞测试被 firedKey 遮蔽，守卫另有覆盖）/O1 skip 态 frontmatter 滞后/O2 同步日志无轮转/O4 发版后真 HTTP 冒烟/O5 旧名文件孤儿提示。
+
 ## 0.7.0 — 2026-09-30
 
 历史日志视图三能力改造（Phase 8 反馈轮④，来源：`changes/2026-09-30-logview-filters/`，设置页历史记录弹层）：
