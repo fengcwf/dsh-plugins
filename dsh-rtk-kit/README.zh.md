@@ -9,7 +9,7 @@
 |---|---|
 | 自动改写 | 模型驱动的 shell 命令在 `resolve()` 缝交给 `rtk rewrite` 改写（`git status` → `rtk git status`），输出压缩 60–90% |
 | 递归防护 | 已含 `rtk` 前缀 / `RTK_DISABLED=1` / 含凭据替换（`$(gh auth token)` 等）的命令永不改写 |
-| 保守模式 | 管道/重定向/命令替换/分号链不改写（它们的输出会被下游消费）；`&&`/`||` 链照改（`rtk rewrite` 链式感知） |
+| 保守模式 | 管道/重定向/命令替换/分号链不改写（它们的输出会被下游消费）；`&&` 链照改（`rtk rewrite` 链式感知）；`||` 含竖杠、与单竖杠同属拦下 |
 | hook 安全 | 带 `stdin` 的 shell 调用（hook-runner 等宿主内部用途）永不改写——否则 hook 的 JSON stdout 会被压缩破坏 |
 | fail-open | rtk 缺失 → 恒等放行；`rtk rewrite` 超时/异常/无输出 → 原样放行；绝不阻塞命令执行 |
 | awareness | 会话启动注入输出契约（default/high/full 三档），随插件装卸，不污染 `AGENTS.md`；文案零统计数字（统计只走设置页面板） |
@@ -57,7 +57,10 @@ dsh plugin --profile web add /root/.dsh/plugins/dsh-rtk-kit
 - **异步 + 5 秒超时**：三动作异步执行；超时/失败如实回显 + 重试按钮，不阻塞 dsh 宿主。
 - **健康检查零污染**：压缩生效检查只读既有历史统计，**不跑 rtk 样本命令**（样本执行会写统计库、污染口径）。
 - **健康项语义（0.4.1 起）**：「rewrite 能力可用」只证 rtk 二进制能改写（不证生产缝已挂载）；「自动改写缝已挂载」读**进程内包壳命中计数**（与日志「包壳首次命中」同源）——`>0` = 缝已挂载并被真实调用，`=0` 如实红（不给误导绿灯）。
-- **改写缝抗重载 + 装载留痕**：包壳挂载在 `shell.resolve` 的**原型级**（宿主 executor 重载/配置 reconcile 重挂产生的新实例天然继承），teardown 身份校验还原（不误伤后挂）。日志锚 `[rtk-kit]` 三条可检索留痕：`apply 装载完成` / `rewrite-seam 包壳已安装` / `rewrite-seam 包壳首次命中`——无「装载完成」=没装；有装载无「包壳已安装」=包壳未挂；有挂载无「首次命中」=装了没被调用或被覆盖。真机生效判据：会话内跑 `git status --short` 后 `sqlite3 /root/.local/share/rtk/history.db "select count(*) from commands;"` 数值 +1。
+- **纠偏（保守模式拦下的命令：缝在工作，但统计不动）**：`history.db` 的 commands count **只在「改写成功且 rtk 真被执行」时 +1**——命令必须经 `rtk rewrite` 换成 `rtk <cmd>` 前缀、再由宿主真正跑掉。保守模式拦下的命令（管道 `|` / 重定向 `>` `<` / 命令替换 `$(...)` `` `...` `` / 分号链 `;`）**不改写、也不 +1**——它们只是恒等放行（缝本身已上线并在护这些路径，日志「包壳首次命中」照常计数，但 `history.db` 的结构不走改写链）。所以复验 `history.db` +1 判据时**必须用无管道的简单命令**（如 `git status` / `ls -la`），用 `cat x | head` 这类命令会得到 delta=0——那是判据用错，不是缝失效（缝是否在由「包壳首次命中」留痕/「自动改写缝已挂载」健康项判定）。`&&` 链不受此限（`rtk rewrite` 链式感知，照改照 +1）；`||` 链含竖杠、与单竖杠同属保守拦下，不改写也不 +1（判「拦没拦」以 `decideEligibility` 的 shell-metachar 为准）。
+- **改写缝抗重载 + 装载留痕**：包壳挂载在 `shell.resolve` 的**原型级**（宿主 executor 重载/配置 reconcile 重挂产生的新实例天然继承），teardown 身份校验还原（不误伤后挂）。日志锚 `[rtk-kit]` 三条可检索留痕：`apply 装载完成` / `rewrite-seam 包壳已安装` / `rewrite-seam 包壳首次命中`——无「装载完成」=没装；有装载无「包壳已安装」=包壳未挂；有挂载无「首次命中」=装了没被调用或被覆盖。真机生效判据：会话内跑 `git status --short` 后 `sqlite3 /root/.local/share/rtk/history.db "select count(*) from commands;"` 数值 +1。**复验须用无管道简单命令**（判据边界见上条纠偏）。
+ - **自动改写缝覆盖边界（埋点/排障须知）**：自动改写缝只覆盖走 `ctx.shell.resolve` 的工具（即 `tool-bash` 一系）；带 **persistent-shell** 的 preset（`persistent-bash` / `persistent-pwsh`）走 `ctx.terminals` 旁路（spawn / startSend / read 直连 PTY），**不经此缝、不改写、不计 `history.db`**——上游命令的输出不压缩，这是**产品层边界，不是缺陷**；埋点或排障「某命令改写了另一条没有」时，先看它落在哪个执行路径上（工具名 `bash` vs `persistent bash`）。
+ - **留痕出口（fix round 2 实测修正）**：宿主 cordis 在 web profile 下只注册 buffer exporter（`levels.default=1`，仅内存环无人消费）+ app-boot diagnostics（`{default:2}`=warn/error），**`ctx.logger.info` 在生产 `dsh-web.log` 零出口**（0 条 info 实证；334 行 `[login-gate]` 全走 `console.log`）。因此三条锚除 `logger.info` 外**同文走 `console`**（stdout，被 `start-dsh.sh` 的 `>>$LOG 2>&1` 收进 `dsh-web.log`）。检索：`grep '\[rtk-kit\]' /root/.dsh/dsh-web.log`。
 - **缺缝行为**：设置页数据面走 `webServer`/`connection` 软依赖接线；该面缺席（未注册）时跳过并留痕，插件其余功能不受影响。
 - **rtk 缺失降级**：版本区块显示安装提示、健康检查对应项红叉；bash 改写缝保持 fail-open 恒等放行。
 

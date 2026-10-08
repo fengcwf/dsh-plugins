@@ -304,7 +304,16 @@ export function apply(ctx, rawConfig, deps = {}) {
   // ── 装载完成留痕（FINDINGS-4 / Round 3）：成功路径不再零日志——version / available / 包壳状态一行可查。
   //    判读（配合 ① 的「包壳已安装」「包壳首次命中」两条留痕）：
   //    无本行=压根没装载；有本行无「包壳已安装」=包壳未挂；有挂载无「首次命中」=装了没被调用/被覆盖。
-  ctx.logger?.info?.(
-    `${SEAM_LOG_ANCHOR} apply 装载完成（loaded v${pluginVersion()}）：available=${available} seam=${seam.level} rewriteTimeoutMs=${config.rewriteTimeoutMs} enabled=${config.enabled}`,
-  )
+  // Round 4（fix round 2 判定 A=观测失效）：宿主 web profile 的 cordis 只注册 buffer exporter
+  //   （levels.default=1，仅内存环无人消费）+ app-boot diagnostics（default=2=warn/error 全不收 info）
+  //   ⇒ logger.info 在生产 dsh-web.log **零出口**（0 条 [info] 实证）。三锚同文走 console——
+  //   start-dsh.sh `nohup dsh web … >>$LOG 2>&1` 使 stdout 必然进 dsh-web.log（login-gate 334 行
+  //   `console.log` 同址实证）。console 失败静默，绝不因留痕炸装载。
+  const loadedMsg = `${SEAM_LOG_ANCHOR} apply 装载完成（loaded v${pluginVersion()}）：available=${available} seam=${seam.level} rewriteTimeoutMs=${config.rewriteTimeoutMs} enabled=${config.enabled}`
+  ctx.logger?.info?.(loadedMsg)
+  try {
+    console.log(loadedMsg)
+  } catch {
+    /* 留痕出口失败绝不影响装载 */
+  }
 }

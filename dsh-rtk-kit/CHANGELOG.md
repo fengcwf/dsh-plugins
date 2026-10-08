@@ -48,3 +48,12 @@ rtk 自愈（发现兜底 + 设置页一键重装）+ ⚠️ 行为提示：
 
 ## 0.1.0 — 2026-09-23
 - 首版：`lib/rewrite.js` 纯改写决策（`rtk rewrite` 缝、fail-open、元字符/凭据防护、排除清单）、3 级会话 awareness 注入、`rtk_doctor` 诊断工具。
+## 0.4.2 — 2026-10-09
+
+观测出口修复 + 判据/边界成文（功能面声明见末条）：
+
+- **修复：三锚留痕补 console 出口** —— 三锚（`apply 装载完成` / `rewrite-seam 包壳已安装（level=prototype）` / `rewrite-seam 包壳首次命中`）此前只走 `ctx.logger.info`，而宿主 web profile 下 **info 级无出口**（cordis 内建 buffer exporter 无 levels 判 silence；app-boot diagnostics 只收 warn/error 且随 diagnostics.fiber dispose 释放；dsh-web.log 实测 0 条 info）→ 「grep 三锚零命中」不可用作「缝未挂载」判据（前两轮误诊根因）。现三锚除 logger.info 外**同文走 console**（stdout/stderr 被 start-dsh.sh 收进 dsh-web.log，与 login-gate 同出口），console 写失败静默不炸装载/包壳热路径。
+- **新增测试（227/227，226+1）**：① console 恒抛（EPIPE）时 apply 不抛、缝照挂、resolve 照改写（含"恒抛 sink 确被触达"计数断言，防空转假绿）；② console 必写 + 首命中后不刷洪水；③ hitCount 作为 history.db +1 判据的进程内同源物；④ 命中链把「工具注册了」与「缝挂了」拆成两个独立断言（防再被 apply 跑过误导）。
+- **文档（判据与边界，用户可凭）**：history.db +1 只在「rtk rewrite 成功且 rtk 真执行」时成立——conservative 拦下的命令（管道/重定向/命令替换/分号链）不改写也不 +1 但**缝在工作**，复验须用无管道简单命令；自动改写缝只覆盖走 `ctx.shell.resolve` 的工具（tool-bash 一系），带 persistent-shell 的 preset 走 `ctx.terminals` 旁路，不经此缝（产品层边界，非缺陷）。
+- **校正**：`cordis.patch.yml` 的 conservative 注释与 lib `UNSAFE_METACHAR` 事实对齐（`&&` 链照改；`||` 含竖杠同被保守拦下——`a || b` 的 b 分支输出被压缩会改语义）；字节锁基线随本变更重钉（f5f738e2…）。
+- ⚠️ **功能声明**：0.4.0/0.4.1 的自动改写功能**实际一直在工作**（0.4.1 原型级挂载在生产真机实测生效：`git status --short` → `rtk git status --short` 持续写库）；本变更修的是**可观测性与判据成文**，前两轮"未生效"为观测误判 + 复验命令不当，非挂载缺陷。

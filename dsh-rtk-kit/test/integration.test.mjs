@@ -1007,9 +1007,9 @@ test('Task 3 真实宿主接缝：apply() 注册/鉴权调用形与 registerDoct
 test('Task 3 红线：零 defineTool 新增、零 spawnSync 新增、cordis.patch.yml 字节零改动、package.json 依赖面零新增、Config 零新键、URL/错误码契约', () => {
   assert.equal(INDEX_SOURCE.match(/\bdefineTool\s*\(/g)?.length ?? 0, 1, 'defineTool 全库恰一处（零新增会话工具，INV-1）')
   assert.equal(INDEX_SOURCE.match(/\bspawnSync\s*\(/g)?.length ?? 0, 2, 'spawnSync 调用点零新增（仍恰 probeRtk/runRtkRewrite 两处）')
-  // 字节锁（Task 3 基线 2026-10-04）：cordis.patch.yml 本变更期间字节零改动（红线 4）——永不动。
+  // 字节锁（0.4.2 发版窗口重钉 2026-10-09：|| 注释对齐 lib 事实；此后冻结）
   const fileSha = (rel) => sha256Hex(fs.readFileSync(new URL(rel, import.meta.url)))
-  assert.equal(fileSha('../cordis.patch.yml'), '38a6127ad02e7800dd53b3428401af110d5f0c41c55813b4cd6032d87863cf94', 'cordis.patch.yml 字节零改动')
+  assert.equal(fileSha('../cordis.patch.yml'), 'f5f738e2c2c8110e13e3ad6b9e43c4c128e6d11f14dc81656ca7d3543b8c009f', 'cordis.patch.yml 字节零改动')
   // package.json 语义锁（concern ① 裁决 2026-10-04）：version 属发版簿记面，故锁依赖面不锁字节——
   // dependencies/peerDependencies/devDependencies 三面 deepEqual 基线（=零新依赖）。
   const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'))

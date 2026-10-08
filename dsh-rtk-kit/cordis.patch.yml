@@ -10,7 +10,7 @@
         # `rtk rewrite` 超时（毫秒）。超时/异常一律原样放行（fail-open）
         rewriteTimeoutMs: 150
         # 保守模式：管道/重定向/命令替换/分号链不改写（它们的输出会被下游消费，压缩会改变语义）；
-        # `&&`/`||` 链不受影响（rtk rewrite 链式感知）。想激进省 token 可改 false
+        # `&&` 链不受影响（rtk rewrite 链式感知）；`||` 含竖杠同被保守拦下（`a || b` 的 b 分支输出被压缩会改语义）——想激进省 token 可改 false
         conservative: true
         # 永不改写的命令前缀黑名单
         exclude: []

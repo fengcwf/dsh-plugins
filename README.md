@@ -5,12 +5,12 @@
 
 | 插件 | 版本 | 职责 |
 |---|---|---|
-| [dsh-rtk-kit](dsh-rtk-kit/) | 0.4.1 | RTK 集成：bash 命令自动改写走 rtk 压缩（resolve 缝、fail-open）+ 会话 awareness + rtk_doctor 诊断 + **设置页「RTK Kit」**（版本检查/节省统计 0 token/健康八项）；0.3.0=⚠️修复自动改写接线从未生效（B2 effect 工厂形）+ doctor 瘦身；0.4.0=⚠️ 发现兜底（PATH→~/.local/bin 修「报安装」误诊）+ **设置页一键重装自愈**（检测→Release 下载+SHA256 校验→原子落盘→自动复检，装后不重启恢复功能）；0.4.1=**⚠️ 修复自动改写缝在生产从未挂载**（宿主重载 shell 执行器不继承实例级覆写 → 挂载面升级为原型级 + 三锚留痕 + 健康项新增「自动改写缝已挂载」） —— 0.4.1 起自动改写才真正兑现 |
+| [dsh-rtk-kit](dsh-rtk-kit/) | 0.4.2 | RTK 集成：bash 命令自动改写走 rtk 压缩（resolve 缝、fail-open）+ 会话 awareness + rtk_doctor 诊断 + **设置页「RTK Kit」**（版本检查/节省统计 0 token/健康八项）；0.3.0=⚠️修复自动改写接线从未生效（B2 effect 工厂形）+ doctor 瘦身；0.4.0=⚠️ 发现兜底（PATH→~/.local/bin 修「报安装」误诊）+ **设置页一键重装自愈**（检测→Release 下载+SHA256 校验→原子落盘→自动复检，装后不重启恢复功能）；0.4.1=⚠️ 挂载面升级原型级（抗宿主重载）+ 三锚留痕 + 健康八项含「自动改写缝已挂载」；0.4.2=观测出口修复（三锚同文走 console——宿主 info 级无出口曾致两轮误诊）+ 判据/边界成文（+1 判据须无管道简单命令；persistent-shell 走 terminals 旁路不经此缝）；**0.4.0 起自动改写实际一直在工作** |
 | [dsh-github-ops](dsh-github-ops/) | 0.3.0 | GitHub 集成：GitHub 命令强制 token 模式（0.3.0 修复接线死锁）+ web_fetch 匿名 API 门禁 + 11 个仓库管理工具（gh 后端）+ 数据面 `/api/github-ops/*` 8 端点（0.3.0=设置菜单「GitHub 集成」栏目 + 数据面 + 层①命令强制层接线死锁修复；**待发版**：发版五步⑤ tag/push 未执行，待用户确认） |
 | [dsh-login-gate](dsh-login-gate/) | 0.4.0 | 登录门禁：表单登录（scrypt + HMAC 会话）+ 认证反代 + 原生 DSH 会话 + WS tunnel 修复 + 设置菜单配置面（端口维护/参数可配/账号 CRUD/超时说明，保存语义=即时生效+事前警示 R-16）（0.3.0=设置面与认证优化；0.4.0=数据面收口：门禁数据迁 `plugins/dsh-login-gate/data/` + 遗留自动迁移保 0600 权限） |
 | [kb-context](kb-context/) | 0.5.0 | 知识库上下文：vault 增量索引（FTS5）+ 检索（BM25/LIKE 兜底+deadline 守卫）+ 会话注入（触发/脱敏/截断）+ wiki_read/wiki_search/kb_diagnose 工具 + 设置菜单配置面（0.3.2=设置面 UI 对齐 dsh token + 填写示例/功能说明文案；0.4.0=数据面收口：索引库迁 `plugins/kb-context/data/kb-index/` + 遗留自动迁移；0.5.0=触发日志：内存环评估记录 + GET logs/POST logs/clear 双端点 + 设置页弹层 + triggerLog.enabled kill switch，脱敏白名单闭集、fail-open） |
 | [wiki-steward](wiki-steward/) | 0.8.0 | wiki 管家：会话捕获入 raw/ + kb_validate 六规则校验 + kb_mark sha256 原子回写 + wiki CRUD（.trash 可逆/journal 事务/wikilink 重写）+ 入队告警 + tools/pre-execute 写入拦截 + 设置菜单配置面 + ingest 控制面（历史记录弹层/手动 ingest/定时执行）（0.5.0=设置页/ingest 控制面改造批：首页侧栏面板行移除入设置页、修裸 import 与 vite define（process.env.NODE_ENV 真浏览器根因）、ingest.schedule 定时执行控制；0.6.0=数据面收口：队列/账本/告警账本迁 `plugins/wiki-steward/data/` + 遗留自动迁移；0.7.0=历史日志视图三能力：默认时间倒序（最新在上）+ since/until 日粒度闭区间时间筛选（翻旧同参联动）+ 三来源类型多选（可与时间叠加、全不选如实空页），测试 391→415；0.8.0=Hindsight 记忆同步面：机械转录引擎（raw/06-hindsight 聚合落盘/脱敏/原子写/sha256 幂等/短哈希防覆写）+ 定时触发面（schedule 真消费+L1 门禁+单飞+补跑）+ 4 端点 + 设置节六控件 + W1/F3 竞态收口，测试 415→463） |
-| [obsidian-web](obsidian-web/) | 0.2.3 | Obsidian vault Web 管理：查看/编辑/下载/分享 + 目录维护（T1-T14 全业务面 + 0.1.1 boot fail-open/索引本地化 + 0.2.0 分享面双模式默认挂 webServer + 客户端面板 + 0.2.1 B2 effect 语义修复 + 0.2.2 运行时阻塞根治 + 0.2.3 UI 视觉全量升级 dir-c-light） |
+| [obsidian-web](obsidian-web/) | 0.2.4 | Obsidian vault Web 管理：查看/编辑/下载/分享 + 目录维护（T1-T14 全业务面 + 0.1.1 boot fail-open/索引本地化 + 0.2.0 分享面双模式默认挂 webServer + 客户端面板 + 0.2.1 B2 effect 语义修复 + 0.2.2 运行时阻塞根治 + 0.2.4 UI 回切 dir-a + 自适应缺口修复 + 分享链接口径与承载改道） |
 
 ## 版本纪律（强制，缺一不可）
 

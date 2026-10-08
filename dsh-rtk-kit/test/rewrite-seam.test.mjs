@@ -12,6 +12,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { Config, apply } from '../lib/index.js'
 import { HEALTH_ITEMS, getHealth } from '../lib/doctor.js'
+import { snapshotRewriteSeamState } from '../lib/rewrite-seam.js'
 
 // ───────────────────────── fixtures ─────────────────────────
 
@@ -68,13 +69,14 @@ function makeCtx({ shell, logger } = {}) {
 /** 标准装载（显式 rtkBin=A3 透传；零真机 PATH 耦合）。 */
 function load(root, { shell, logger, config = {}, binPath } = {}) {
   const bin = binPath ?? fakeRtk(root)
-  const ctx = makeCtx({ shell, logger })
+  const shellObj = shell ?? new FakeShell()
+  const ctx = makeCtx({ shell: shellObj, logger })
   apply(
     ctx,
     { enabled: true, registerDoctorTool: false, awareness: 'off', rtkBin: bin, ...config },
     { resolveEnv: { path: '', homedir: '' } },
   )
-  return { ctx, binPath: bin }
+  return { ctx, shell: shellObj, binPath: bin }
 }
 
 const REQ = { command: 'git status', stdin: null }
@@ -124,6 +126,55 @@ test('观测锚点：apply 装载 info + 包壳挂载 info + 首次命中 info �
   assert.match(hits[0], /\[rtk-kit\]/, '首命中留痕带 rtk-kit 锚')
 })
 
+// ───────────────────────── ⑤ Round 4：宿主 info 无出口 → console 必然可见 ─────────────────────────
+
+/**
+ * 捕获 console.log 输出（Round 4 断言面：三锚必须同文走 console）。
+ * @param {() => void} fn - 受测动作
+ * @returns {string[]} 捕获到的 console.log 行
+ */
+function captureConsole(fn) {
+  const out = []
+  const orig = console.log
+  console.log = (...args) => out.push(args.map(String).join(' '))
+  try {
+    fn()
+  } finally {
+    console.log = orig
+  }
+  return out
+}
+
+test('Round 4 观测出口：三锚（装载/挂载/首命中）必须同文走 console——宿主 info 在生产零出口', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rtk-seam-console-'))
+  const logger = makeLogger()
+  const shell = new FakeShell()
+  // 装载期（apply 内同步跑 mountRewriteSeam）：捕获装载 + 挂载两条
+  const loadLines = captureConsole(() => {
+    load(root, { logger, shell })
+  })
+  const anchors = loadLines.filter((m) => /\[rtk-kit\]/.test(m))
+  assert.equal(anchors.length, 2, '装载期恰两条 console 留痕（apply 装载 + 包壳已安装）')
+  assert.ok(
+    anchors.some((m) => /装载完成/.test(m)),
+    'apply 装载完成锚必须走 console（dsh-web.log 可见）',
+  )
+  assert.ok(
+    anchors.some((m) => /包壳已安装/.test(m)),
+    '包壳挂载锚必须走 console（dsh-web.log 可见）',
+  )
+  // 首命中（resolve 时）：恰一次 console 留痕
+  const hitLines = captureConsole(() => {
+    shell.resolve(REQ)
+    shell.resolve(REQ)
+  }).filter((m) => /\[rtk-kit\]/.test(m))
+  assert.equal(hitLines.length, 1, '首命中 console 留痕恰一次（同 info 锚同文）')
+  assert.match(hitLines[0], /首次命中/, '首命中锚文本一致（console/info 同文）')
+  // 常量次数：后续 resolve 不得再刷 console（防日志洪水）
+  const more = captureConsole(() => shell.resolve(REQ)).filter((m) => /\[rtk-kit\]/.test(m))
+  assert.equal(more.length, 0, '二次起不再刷 console（留痕恰一次不变式）')
+})
+
 // ───────────────────────── ③ 健康项（真实挂载项 + 改名） ─────────────────────────
 
 test('健康项：rewrite-seam 改名「rewrite 能力可用」+ 新增「自动改写缝已挂载」（零命中如实红）', async () => {
@@ -159,6 +210,32 @@ test('rewriteTimeoutMs 默认 400（150ms 余量过薄：p95 占 81%，FINDINGS-
   assert.equal(Config.parse({}).rewriteTimeoutMs, 400)
 })
 
+test('hitCount 是 history.db +1 判据的进程内对应物（真机复验之外必须有测试级对应物）', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rtk-seam-hitcount-'))
+  const { ctx } = load(root)
+  const before = snapshotRewriteSeamState().hitCount
+  ctx.shell.resolve(REQ) // 一次模型驱动调用（stdin:null）
+  const after = snapshotRewriteSeamState()
+  assert.equal(after.hitCount, before + 1, '每经包壳一次 hitCount +1（= history.db commands +1 的进程内对应物）')
+  assert.equal(after.rewriteCount >= 1, true, '假 rtk 改写生效时 rewriteCount 同步累计（同源计数）')
+  ctx.shell.resolve({ command: 'git status', stdin: null })
+  ctx.shell.resolve({ command: 'git status', stdin: Buffer.from('x') }) // stdin 非空=hook 调用，恒等放行
+  const s = snapshotRewriteSeamState()
+  assert.equal(s.hitCount, before + 3, '包壳被调用即 +1（stdin 守卫只影响改写决策、不影响命中计数）')
+  assert.ok(s.lastHitAt != null, '末次命中时间戳在场（可观测性）')
+})
+
+test('正修命中链：缝挂载后真实 resolve 必命中且命令被换成 rtk 前缀（防「注册了」误导）', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rtk-seam-chain-'))
+  const { ctx, shell } = load(root)
+  // 「工具注册」与「缝挂了」是两个独立断言——只测前者曾把 0.4.0 缺陷误判为通过
+  assert.equal(typeof ctx.shell.resolve, 'function', 'resolve 在场')
+  const out = ctx.shell.resolve(REQ)
+  assert.equal(out.command, 'rtk git status', '命中链末端：命令必须被改写为 rtk 前缀（否则历史库 +1 判据不成立）')
+  assert.equal(snapshotRewriteSeamState().hitCount > 0, true, '挂载≠命中——必须实测 resolve 才转绿')
+  assert.ok(shell.resolve[Symbol.for('rtk-kit:rewrite-seam.wrapper')] !== undefined, '包壳标记在场（幂等判重）')
+})
+
 test('超时 fail-open 补 debug 留痕（静默降级可观测，FINDINGS-3）', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rtk-seam-timeout-'))
   const logger = makeLogger()
@@ -170,4 +247,75 @@ test('超时 fail-open 补 debug 留痕（静默降级可观测，FINDINGS-3）'
     logger.lines.debug.some((m) => /\[rtk-kit\]/.test(m) && /超时/i.test(m)),
     '超时必须留 debug 留痕（当前静默 fail-open=红态）',
   )
+})
+
+// ───────────── fix5 随带项（F-4）：留痕出口恒抛（EPIPE 语义）不得炸装载/挂载/改写 ─────────────
+
+/**
+ * 注入**恒抛** console.log（EPIPE 语义：stdout 断开 / 管道读端退出时 console 写必抛）。
+ * 先把本次触达的文本记录进 calls、再抛——既保「恒抛」语义，也让「留痕路径确被真实触达」
+ * 可断言（零触达 = 压根没走到出口，后面的 fail-open 断言会是假绿）。
+ * @param {() => T} fn - 受测动作
+ * @returns {{calls: string[], result: T}} 触达文本 + fn 返回值；fn 抛则先逆放 console 再原样抛
+ * @template T
+ */
+function withThrowingConsole(fn) {
+  const calls = []
+  const orig = console.log
+  console.log = (...args) => {
+    calls.push(args.map(String).join(' '))
+    const err = new Error('write EPIPE')
+    err.code = 'EPIPE'
+    throw err
+  }
+  try {
+    return { calls, result: fn() }
+  } finally {
+    console.log = orig
+  }
+}
+
+test('fix5 F-4：console.log 恒抛（EPIPE 语义）时 apply 不抛、缝照挂、resolve 照改写', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rtk-seam-epipe-'))
+  const logger = makeLogger()
+  const shell = new FakeShell()
+  const before = snapshotRewriteSeamState()
+  // (a) 恒抛 sink 下装载链不炸（emitSeamLog 的 try/catch fail-open 必须成立——
+  //     生产 EPIPE 若炸装载，插件直接 boot 失败，故这是 availability 级不变式）
+  let loaded
+  assert.doesNotThrow(
+    () => {
+      loaded = withThrowingConsole(() => load(root, { logger, shell }))
+    },
+    'F-4(a)：console.log 恒抛（EPIPE）不得炸 apply 装载链',
+  )
+  const { ctx } = loaded.result
+  const loadCalls = loaded.calls
+  assert.ok(
+    loadCalls.length >= 2,
+    '恒抛 sink 确被留痕路径真实触达（装载 + 挂载两锚；零触达=没走到出口，后续断言无意义）',
+  )
+  assert.ok(loadCalls.some((m) => /装载完成/.test(m)), '装载锚在恒抛前已触达出口')
+  assert.ok(loadCalls.some((m) => /包壳已安装/.test(m)), '挂载锚（mount 内）同样触达恒抛 sink')
+  // 同文双写的另一侧不受影响：console 死掉 ≠ logger.info 死
+  assert.ok(logger.lines.info.some((m) => /装载完成/.test(m)), 'console 恒抛时 logger.info 侧仍留痕（双写非单点）')
+  // (b) mount 成功：返回对象的 level 在场且类型正确 + 计数累计 + 包壳真在 resolve 上（三重可验）
+  const after = snapshotRewriteSeamState()
+  assert.equal(typeof after.mountLevel, 'string', 'F-4(b)：seam.level 在场且为字符串（返回对象契约面）')
+  assert.equal(after.mountLevel, 'prototype', 'F-4(b)：seam.level 值正确（原型级包壳，抗宿主重载）')
+  assert.equal(after.mountCount, before.mountCount + 1, 'F-4(b)：mountCount +1（本次装载真挂载成功）')
+  assert.match(
+    loadCalls.find((m) => /包壳已安装/.test(m)) ?? '',
+    /level=prototype/,
+    'F-4(b)：挂载锚回显返回对象 level（mount 成功的可读证据）',
+  )
+  assert.ok(
+    shell.resolve[Symbol.for('rtk-kit:rewrite-seam.wrapper')] !== undefined,
+    'F-4(b)：包壳标记真在 shell.resolve 上（挂载非仅计数）',
+  )
+  // (c) 恒抛 sink 下走真 ctx 一次 resolve：首命中锚**也**走恒抛 console（先于决策体），不得炸命中/改写链
+  const hit = withThrowingConsole(() => ctx.shell.resolve(REQ))
+  assert.equal(hit.result.command, 'rtk git status', 'F-4(c)：恒抛 console 下 resolve 仍返回改写后 spec')
+  assert.equal(hit.result.resolved, true, 'F-4(c)：改写挂在宿主原始 spec 上（包壳透传其余字段不变）')
+  assert.ok(hit.calls.some((m) => /首次命中/.test(m)), 'F-4(c)：首命中留痕触达恒抛 sink 仍未炸链')
 })

@@ -16,6 +16,26 @@
 /** 日志锚（可检索；与 index.js 装载行同前缀）。 */
 export const SEAM_LOG_ANCHOR = '[rtk-kit]'
 
+/**
+ * 包壳留痕出口（Round 4，fix round 2 判定 (A) 观测失效）：
+ * 三锚（apply 装载 / 包壳已安装 / 包壳首次命中）此前只走 `ctx.logger.info`，而宿主 cordis
+ * 在 web profile 下**只注册了两个 exporter**——内建 buffer（levels.default 缺省=1=silence，
+ * 仅进内存环形缓冲，无人消费）+ app-boot 的 diagnostics（levels {default:2}=warn/error）。
+ * 生产 dsh-web.log 全程 0 条 `[info]`、0 条其他插件的 info（334 行 `[login-gate]` 全部是
+ * `console.log`，不是 logger）⇒ **三锚在宿主 info 出口上必然不可见**，观测链断在第一跳。
+ * 修法：三锚除 logger.info 外**同文走 console**（stdout，被 start-dsh.sh 的 `>>$LOG 2>&1`
+ * 重定向进 dsh-web.log —— login-gate 334 行实证该出口必然可见）。console 失败静默（绝不因
+ * 留痕炸装载/命中路径）。
+ * @param {string} msg - 已含 SEAM_LOG_ANCHOR 前缀的留痕文本
+ */
+function emitSeamLog(msg) {
+  try {
+    console.log(msg)
+  } catch {
+    /* 留痕出口失败绝不影响包壳路径 */
+  }
+}
+
 /** 包壳标记（跨模块幂等判重 + teardown 身份校验；Symbol.for = 跨 realm 同一符号）。 */
 const WRAP_MARK = Symbol.for('rtk-kit:rewrite-seam.wrapper')
 
@@ -86,9 +106,9 @@ export function mountRewriteSeam({ shell, handle, logger } = {}) {
     rewriteSeamState.lastHitAt = new Date().toISOString()
     if (firstHit) {
       firstHit = false
-      logger?.info?.(
-        `${SEAM_LOG_ANCHOR} rewrite-seam 包壳首次命中（seam first hit, mount#${rewriteSeamState.mountCount} hit=${rewriteSeamState.hitCount}）`,
-      )
+      const hitMsg = `${SEAM_LOG_ANCHOR} rewrite-seam 包壳首次命中（seam first hit, mount#${rewriteSeamState.mountCount} hit=${rewriteSeamState.hitCount}）`
+      logger?.info?.(hitMsg)
+      emitSeamLog(hitMsg) // Round 4：宿主 info 无出口 → 同文走 console（dsh-web.log 必然可见）
     }
     let out
     try {
@@ -107,7 +127,9 @@ export function mountRewriteSeam({ shell, handle, logger } = {}) {
   rewriteSeamState.mountCount += 1
   rewriteSeamState.mountLevel = level
   rewriteSeamState.lastMountAt = new Date().toISOString()
-  logger?.info?.(`${SEAM_LOG_ANCHOR} rewrite-seam 包壳已安装（seam mounted, level=${level}）`)
+  const mountMsg = `${SEAM_LOG_ANCHOR} rewrite-seam 包壳已安装（seam mounted, level=${level}）`
+  logger?.info?.(mountMsg)
+  emitSeamLog(mountMsg) // Round 4：宿主 info 无出口 → 同文走 console（dsh-web.log 必然可见）
   return {
     level,
     owner,
