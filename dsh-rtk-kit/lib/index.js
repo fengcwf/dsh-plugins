@@ -13,10 +13,12 @@
 //   4. 修正 `rtk rewrite` 0.49.0 成功码 = 3 的判定坑（只认非空 stdout）。
 // ================================================================================
 import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { z } from 'zod'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { decideEligibility, isSafeRewrite, pickRewritten } from './rewrite.js'
+import { SEAM_LOG_ANCHOR, mountRewriteSeam } from './rewrite-seam.js'
 import { awarenessText } from './awareness.js'
 import { runDoctorTool } from './doctor.js'
 import { registerDoctorRoutes } from './doctor-routes.js'
@@ -32,7 +34,10 @@ export const inject = ['shell', 'tools']
 export const Config = z.object({
   enabled: z.boolean().default(true),
   rtkBin: z.string().default('rtk'),
-  rewriteTimeoutMs: z.number().min(10).max(5000).default(150),
+  // Round 3（FINDINGS-3）：默认 150ms 余量过薄（生产宿主 RSS 规模实测 p95=121ms 占 81%）→ 400ms。
+  // ⚠️ 配置显式值优先（本仓库 cordis.patch.yml 键面冻结）：显式写 150 的部署仍是 150，需在
+  //    profile 覆盖层调大（README 配置表已同步）。
+  rewriteTimeoutMs: z.number().min(10).max(5000).default(400),
   conservative: z.boolean().default(true),
   exclude: z.array(z.string()).default([]),
   awareness: z.enum(['default', 'high', 'full', 'off']).default('default'),
@@ -60,8 +65,9 @@ export function probeRtk(rtkBin, resolveEnv) {
 }
 
 /** 调 `rtk rewrite` 拿改写结果。⚠️ 只认非空 stdout（0.49.0 成功码 = 3，见 rewrite.js）。
- *  二进制发现同 probeRtk（resolve-bin 单源：F-FINAL-1(i) 种子=config 原值每调用重发现，窗口 a 功能恢复面）。 */
-function runRtkRewrite(rtkBin, command, timeoutMs, resolveEnv) {
+ *  二进制发现同 probeRtk（resolve-bin 单源：F-FINAL-1(i) 种子=config 原值每调用重发现，窗口 a 功能恢复面）。
+ *  Round 3（FINDINGS-3）：超时/异常 fail-open 必留 debug 留痕——静默降级可观测（debug 形，健康路径零噪声）。 */
+function runRtkRewrite(rtkBin, command, timeoutMs, resolveEnv, debug) {
   const bin = resolveRtkBin(rtkBin, resolveEnv)
   try {
     const r = spawnSync(bin, ['rewrite', command], {
@@ -69,9 +75,26 @@ function runRtkRewrite(rtkBin, command, timeoutMs, resolveEnv) {
       timeout: timeoutMs,
       stdio: ['ignore', 'pipe', 'ignore'],
     })
+    if (r?.error) {
+      // spawnSync 超时不抛错：error=ETIMEDOUT + stdout=null（旧形静默 fail-open，无任何留痕）
+      debug?.(
+        `${SEAM_LOG_ANCHOR} rewrite-seam rewrite 超时/异常恒等放行（fail-open, timeoutMs=${timeoutMs}）：${String(r.error.code ?? r.error.message ?? r.error)}`,
+      )
+      return undefined
+    }
     return pickRewritten(r.stdout)
-  } catch {
+  } catch (err) {
+    debug?.(`${SEAM_LOG_ANCHOR} rewrite-seam rewrite 抛错恒等放行（fail-open, timeoutMs=${timeoutMs}）：${String(err?.message ?? err)}`)
     return undefined // fail-open：任何异常都原样放行
+  }
+}
+
+/** 插件自身版本（装载留痕用，FINDINGS-4）：读失败回 '(unknown)'，绝不炸装载。 */
+function pluginVersion() {
+  try {
+    return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version ?? '(unknown)'
+  } catch {
+    return '(unknown)'
   }
 }
 
@@ -137,11 +160,14 @@ export function apply(ctx, rawConfig, deps = {}) {
   let available = config.enabled && probeRtk(rtkBin, resolveEnv)
 
   // ── ① 命令改写：包一层 ctx.shell.resolve（与挂载哪个 executor 无关，沙箱语义原样保留）──
-  const shell = ctx.shell
-  const origResolve = shell.resolve.bind(shell)
-  shell.resolve = (request) => {
-    const spec = origResolve(request)
-    try {
+  // Round 3（A2 生产缺陷修复，production-verify-report FINDINGS-1）：挂载面升级为**原型级**
+  //（lib/rewrite-seam.js 单源）——宿主在包壳之后重载/重挂 shell 服务（executor 重载、配置
+  //  reconcile、service 重提供）会产生新实例，旧的实例级覆写不存活（生产实测缝未挂载）；
+  //  原型级包壳经新实例原型链天然继承，跨重载存活。决策体仍是本文件单源 handle（零第二套逻辑）。
+  const seam = mountRewriteSeam({
+    shell: ctx.shell,
+    logger: ctx.logger,
+    handle: (request, spec) => {
       // 模型驱动的调用 stdin 恒为空；hook-runner / 进程内插件会带 stdin payload —— 后者永不改写
       if (request.stdin != null) return spec
       if (!available) {
@@ -153,18 +179,17 @@ export function apply(ctx, rawConfig, deps = {}) {
       }
       const d = decideEligibility(spec.command, { conservative: config.conservative, exclude: config.exclude })
       if (!d.eligible) return spec
-      const rewritten = runRtkRewrite(rtkBin, spec.command, config.rewriteTimeoutMs, resolveEnv)
+      const rewritten = runRtkRewrite(rtkBin, spec.command, config.rewriteTimeoutMs, resolveEnv, (m) => ctx.logger?.debug?.(m))
       if (!isSafeRewrite(spec.command, rewritten)) return spec
       return { ...spec, command: rewritten }
-    } catch {
-      return spec // fail-open
-    }
-  }
+    },
+  })
   // 工厂形 effect（cordis 0.2.0-rc.1 实测：execute 当场跑、返回函数才是拆除器）：拆除时还原 resolve。
   // ⚠️ 勿写成 ctx.effect(() => { shell.resolve = origResolve }) 拆除器形——工厂语义下它当场还原、包壳即死
   //（2026-09-29 e2e 实锤：拆除器形 apply 后包壳存活=false，改写缝从未生效；工厂形存活=true、teardown 还原=true）
+  // Round 3：teardown 走 seam.unmount()（身份校验还原——只还原仍是自己的包壳，不误伤后挂者）。
   ctx.effect(() => () => {
-    shell.resolve = origResolve
+    seam.unmount()
   }, 'rtk-kit: resolve-rewrite')
 
   // ── ② 会话启动注入 awareness（随插件装卸，不污染 AGENTS.md）──
@@ -275,4 +300,11 @@ export function apply(ctx, rawConfig, deps = {}) {
     // T3-F-1：外层 catch 必须留痕（与 :209/:249 缺缝/注册失败留痕口径对齐）——静默零留痕=此类故障无迹可查
     ctx.logger?.warn?.(`[rtk-kit] 数据面子插件装配失败（fail-open：装载不炸，等价宿主 _reload 兜底语义）：${String(err?.message ?? err)}`)
   }
+
+  // ── 装载完成留痕（FINDINGS-4 / Round 3）：成功路径不再零日志——version / available / 包壳状态一行可查。
+  //    判读（配合 ① 的「包壳已安装」「包壳首次命中」两条留痕）：
+  //    无本行=压根没装载；有本行无「包壳已安装」=包壳未挂；有挂载无「首次命中」=装了没被调用/被覆盖。
+  ctx.logger?.info?.(
+    `${SEAM_LOG_ANCHOR} apply 装载完成（loaded v${pluginVersion()}）：available=${available} seam=${seam.level} rewriteTimeoutMs=${config.rewriteTimeoutMs} enabled=${config.enabled}`,
+  )
 }

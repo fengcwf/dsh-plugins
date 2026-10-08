@@ -156,7 +156,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'rtk-row rtk-action-row' }, h('div', { className: 'rtk-seg' }, segs),
           h('span', { className: 'rtk-note' }, '自动加载 · 不消耗 LLM token')))
     }
-    // ── 区块 3 · 功能健康（按钮触发七项；失败如实红不藏，detail 次行小字） ──
+    // ── 区块 3 · 功能健康（按钮触发八项；失败如实红不藏，detail 次行小字） ──
     function healthBlock(st, onRun, busy) {
       var items = st.status === 'ok' && Array.isArray(st.data) ? st.data : []
       var meta = '未检查', pass = 0

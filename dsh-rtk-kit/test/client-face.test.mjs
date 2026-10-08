@@ -193,7 +193,8 @@ const HEALTH_OK = {
   data: [
     { id: 'binary-exec', label: '二进制可执行', status: 'pass', detail: 'rtk 可执行' },
     { id: 'version-parse', label: '版本可解析', status: 'pass', detail: 'rtk 0.49.0' },
-    { id: 'rewrite-seam', label: 'rewrite 缝生效', status: 'pass', detail: '^rtk 改写缝在位' },
+    { id: 'rewrite-seam', label: 'rewrite 能力可用', status: 'pass', detail: '改写输出有效：「rtk git status」' },
+    { id: 'rewrite-mounted', label: '自动改写缝已挂载', status: 'pass', detail: '包壳命中 12 次（挂载 1 次 / prototype，改写 9 次）' },
     { id: 'guard-matrix', label: '守卫矩阵健全', status: 'pass', detail: '8 测试' },
     { id: 'fail-open', label: 'fail-open 链路', status: 'pass', detail: '降级不炸' },
     { id: 'gain-source', label: '统计源可用', status: 'pass', detail: 'gain -a -f json 可解析' },
@@ -399,15 +400,17 @@ test('版本缺失态（Ruling A）：available:false → data.hint 安装提示
   assert.ok(findAll(block, (n) => /rtk-warn/.test(n.props.className ?? '')).length > 0, '--warning 着色接线')
 })
 
-test('健康检查：七项行 + meta 统计 + 检查行形（名称左/状态右 + 失败原因次行，不藏失败）', async () => {
+test('健康检查：八项行 + meta 统计 + 检查行形（名称左/状态右 + 失败原因次行，不藏失败）', async () => {
   const { runtime } = mountSection({ 'api/rtk-kit/gain': GAIN_OK, 'api/rtk-kit/health': HEALTH_OK })
   await settle()
   button(runtime.tree, 'run-health').props.onClick()
   await settle()
   const block = find(runtime.tree, (n) => n.props && n.props['data-rtk-block'] === 'health')
   const text = textOf(block)
-  assert.ok(text.includes('7 项 · 6 通过 / 1 失败'), 'meta 统计形（定稿）')
+  assert.ok(text.includes('8 项 · 7 通过 / 1 失败'), 'meta 统计形（定稿，Round 3 八项）')
   for (const item of HEALTH_OK.data) assert.ok(checkRow(block, item.id), `检查行缺 ${item.id}`)
+  const mountedRow = checkRow(block, 'rewrite-mounted')
+  assert.ok(texts(mountedRow).join(' ').includes('自动改写缝已挂载'), '真实挂载项行（Round 3）')
   const failRow = checkRow(block, 'compression-effective')
   assert.ok(texts(failRow).join(' ').includes('✗ 失败'), '失败行状态右置')
   assert.ok(texts(failRow).join(' ').includes('近 30 天无压缩记录'), '失败原因次行（detail 如实展示）')

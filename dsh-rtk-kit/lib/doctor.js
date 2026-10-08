@@ -1,7 +1,7 @@
 // dsh-rtk-kit/lib/doctor.js —— 健康检查共享引擎（纯函数 + 异步 execFile 封装）
 // 依据：changes/20260929-phase0/TECH.md ADR-003（零污染法）/ ADR-004（异步 execFile 5s 超时）；
 //      数据形照 changes/20260929-phase0/proposal.md §4（版本=版本号+路径+可参性；
-//      统计=summary 指标对象 + daily/weekly/monthly 周期序列；健康=七项 {id,label,status,detail}）。
+//      统计=summary 指标对象 + daily/weekly/monthly 周期序列；健康=八项 {id,label,status,detail}，Round 3 +rewrite-mounted）。
 // 供 lib/doctor-routes.js（Task 6）与 rtk_doctor 工具（Task 8）单源复用；逻辑与展示分离、逐函数可单测。
 // 安全红线（INV-7）：argv 只经 buildArgv 白名单构造——零 --reset、零 rtk run、零用户输入拼接；
 // 健康检查零污染（INV-4）：不跑样本命令（rtk 透传执行会写统计库 +1），压缩生效走 history.db 只读查询。
@@ -12,6 +12,7 @@ import path from 'node:path'
 import { execFile as cpExecFile } from 'node:child_process'
 import { decideEligibility, isSafeRewrite, pickRewritten, planRewrite } from './rewrite.js'
 import { findRtkBin } from './resolve-bin.js'
+import { snapshotRewriteSeamState } from './rewrite-seam.js'
 
 /** 默认执行超时（INV-5：三动作 5s 有界）。 */
 export const DEFAULT_TIMEOUT_MS = 5000
@@ -203,13 +204,16 @@ export async function getGain(opts = {}) {
   return parseGain(r.stdout)
 }
 
-// ───────────────────────── 健康七项（INV-4 零污染法） ─────────────────────────
+// ───────────────────────── 健康八项（INV-4 零污染法） ─────────────────────────
 
-/** 七项检查定义（顺序即展示顺序，照 INV-4 名单）。 */
+/** 八项检查定义（顺序即展示顺序，照 INV-4 名单 + Round 3 FINDINGS-2 真实挂载项）。 */
 export const HEALTH_ITEMS = Object.freeze([
   Object.freeze({ id: 'binary-exec', label: '二进制可执行' }),
   Object.freeze({ id: 'version-parse', label: '版本可解析' }),
-  Object.freeze({ id: 'rewrite-seam', label: 'rewrite 缝生效' }),
+  // Round 3（FINDINGS-2）：原「rewrite 缝生效」只测 rtk 二进制改写能力、不测生产缝挂载（缝未挂仍绿=误导项）→ 改名对齐真实检查面
+  Object.freeze({ id: 'rewrite-seam', label: 'rewrite 能力可用' }),
+  // 真实挂载项（与 rewrite-seam.js 首命中留痕同源计数，禁第二套逻辑）：>0=缝已挂载并命中；=0=未挂载/未命中
+  Object.freeze({ id: 'rewrite-mounted', label: '自动改写缝已挂载' }),
   Object.freeze({ id: 'guard-matrix', label: '守卫矩阵健全' }),
   Object.freeze({ id: 'fail-open', label: 'fail-open 链路' }),
   Object.freeze({ id: 'gain-source', label: '统计源可用' }),
@@ -266,8 +270,10 @@ export async function checkVersionParse(opts = {}) {
 }
 
 /**
- * ③ rewrite 缝生效：`rtk rewrite` 固定探针（非透传，不执行样本命令），
+ * ③ rewrite 能力可用（Round 3 改名）：`rtk rewrite` 固定探针（非透传，不执行样本命令），
  * 只认「非空 stdout 且 ^rtk 前缀」，不信 rc（0.49.0 成功码=3）。
+ * ⚠️ 语义边界（FINDINGS-2）：本项只证 rtk 二进制能改写，**不证生产 resolve 缝已挂载**——
+ *    真实挂载状态看 ④ rewrite-mounted（进程内命中计数）。
  */
 export async function checkRewriteSeam(opts = {}) {
   const meta = HEALTH_BY_ID.get('rewrite-seam')
@@ -283,7 +289,25 @@ export async function checkRewriteSeam(opts = {}) {
   }
 }
 
-/** ④ 守卫矩阵健全：rewrite.js 三重守卫纯函数判定（零执行）。 */
+/**
+ * ④ 自动改写缝已挂载（Round 3 新增，FINDINGS-2 真实挂载项）：读 lib/rewrite-seam.js 进程内
+ * 命中计数——与包壳「首次命中」留痕**同源**（禁第二套逻辑）：
+ *   hitCount > 0 = 缝已挂载并被真实调用；= 0 = 未挂载/未命中（如实红，不给误导绿灯）。
+ * 零执行零 spawn（INV-4/INV-5）：纯读进程内计数。
+ */
+export function checkRewriteMounted() {
+  const meta = HEALTH_BY_ID.get('rewrite-mounted')
+  const s = snapshotRewriteSeamState()
+  if (s.hitCount > 0) {
+    return item(meta, 'pass', `包壳命中 ${s.hitCount} 次（挂载 ${s.mountCount} 次 / ${s.mountLevel ?? '-'}，改写 ${s.rewriteCount} 次）`)
+  }
+  if (s.mountCount > 0) {
+    return item(meta, 'fail', `缝已挂载但零命中（宿主未走 ctx.shell.resolve 或缝已被覆盖）：挂载 ${s.mountCount} 次、命中 0`)
+  }
+  return item(meta, 'fail', '缝未挂载（apply 未装载包壳或包壳已拆除）：挂载 0 次、命中 0')
+}
+
+/** ⑤ 守卫矩阵健全：rewrite.js 三重守卫纯函数判定（零执行）。 */
 const GUARD_CASES = [
   ['简单命令放行', () => decideEligibility('git status').eligible === true],
   ['保守模式拦截 shell 元字符', () => decideEligibility('git log | head').reason === 'shell-metachar'],
@@ -297,7 +321,7 @@ export function checkGuardMatrix() {
   return runPureCases(HEALTH_BY_ID.get('guard-matrix'), GUARD_CASES, '守卫用例通过')
 }
 
-/** ⑤ fail-open 链路：任何失败（空输出/不安全/不合格）都恒等放行，正常改写才生效（零执行）。 */
+/** ⑥ fail-open 链路：任何失败（空输出/不安全/不合格）都恒等放行，正常改写才生效（零执行）。 */
 const FAIL_OPEN_CASES = [
   ['空输出恒等放行', () => planRewrite('git status', '').action === 'passthrough'],
   ['无输出恒等放行', () => planRewrite('git status', undefined).action === 'passthrough'],
@@ -309,7 +333,7 @@ export function checkFailOpen() {
   return runPureCases(HEALTH_BY_ID.get('fail-open'), FAIL_OPEN_CASES, 'fail-open 用例通过')
 }
 
-/** ⑥ 统计源可用：`rtk gain -a -f json` 可解析且 summary 指标在场（gain 不写库，零污染）。 */
+/** ⑦ 统计源可用：`rtk gain -a -f json` 可解析且 summary 指标在场（gain 不写库，零污染）。 */
 export async function checkGainSource(opts = {}) {
   const meta = HEALTH_BY_ID.get('gain-source')
   try {
@@ -353,7 +377,7 @@ export function defaultHistoryReader(opts = {}) {
   }
 }
 
-/** ⑦ 压缩生效（零污染法，scout-1 §任务4 检查点7）：近 30 天 AVG(savings_pct)>0 且 COUNT>0。 */
+/** ⑧ 压缩生效（零污染法，scout-1 §任务4 检查点7）：近 30 天 AVG(savings_pct)>0 且 COUNT>0。 */
 export async function checkCompressionEffective(opts = {}) {
   const meta = HEALTH_BY_ID.get('compression-effective')
   const now = typeof opts.now === 'function' ? opts.now : () => new Date()
@@ -374,6 +398,7 @@ const HEALTH_RUNNERS = {
   'binary-exec': checkBinaryExec,
   'version-parse': checkVersionParse,
   'rewrite-seam': checkRewriteSeam,
+  'rewrite-mounted': checkRewriteMounted,
   'guard-matrix': checkGuardMatrix,
   'fail-open': checkFailOpen,
   'gain-source': checkGainSource,
@@ -381,7 +406,7 @@ const HEALTH_RUNNERS = {
 }
 
 /**
- * 健康检查：七项结果数组（定序），逐项 {id,label,status:pass|fail,detail}；
+ * 健康检查：八项结果数组（定序），逐项 {id,label,status:pass|fail,detail}；
  * fail-open——任何一项异常都回 fail 如实回显，绝不抛错。
  */
 export async function getHealth(opts = {}) {

@@ -1,5 +1,17 @@
 # Changelog — dsh-rtk-kit
 
+## 0.4.1 — 2026-10-08
+
+⚠️ **修复：自动改写缝在生产从未挂载**（0.4.0 装上、重启后仍无效果——会话内命令输出不走 rtk 压缩，`history.db` 零增长，而显式 `rtk <cmd>` 正常写库）。
+
+- 根因（A2）：宿主在插件包壳**之后**会 dispose + 重挂 shell 执行器（`Fiber.restart()` / 配置热载 `root.update()` / profile reconcile），新实例**不继承实例级** `ctx.shell.resolve` 覆写 → 缝不存活。0.4.0 的"自动改写自此生效"因此在本机未兑现。
+- 修法：挂载面升级为**原型级**（`lib/rewrite-seam.js`：包壳挂 `resolve` 属主=类原型，重载后的新实例沿原型链天然继承）+ teardown 身份校验（只还原仍是自己的包壳，不误伤后挂者）+ 幂等重挂（不叠娃）；**决策体逐字保留**（stdin 跳过/惰性自愈翻转/守卫矩阵/`isSafeRewrite`/fail-open 恒等放行），生产行为零差异。
+- 观测：`[rtk-kit]` 三锚留痕 —— `apply 装载完成` / `rewrite-seam 包壳已安装（level=prototype）` / `rewrite-seam 包壳首次命中`（可按"有装载无包壳""有挂载无命中"直接分诊）；超时/异常补 debug 留痕。
+- 健康面：八项——原「rewrite 缝生效」改名「rewrite 能力 available」（只证二进制能力，不作缝判据），**新增「自动改写缝已挂载」**（读进程内真实命中计数，与首命中留痕同源）。
+- 默认值：`rewriteTimeoutMs` 代码默认 150 → 400ms（实测 p95=121ms，原预算余量过薄易静默 fail-open）。⚠️ 随包 `cordis.patch.yml` 仍显式写 `150`（配置显式值优先），想用 400ms 预算需在 profile 覆盖层调大或删除该显式键。
+- 质量：node --test 223/223（216+7）；新增 7 条红态实证 7/7 红→绿；审查变异测试 2/2 被捕获（原型级→实例级转红、去身份校验转红）。真机判据：会话内 `git status --short` → `history.db` `commands` 计数 +1。
+- 文档：活跃代码/测试面的「七项」口径全部同步为八项（`lib/{doctor,doctor-routes,client}.js`、`test/{doctor,integration,client-face}.test.mjs`）；**历史文档（0.4.0 及以前条目、changes/ 归档、ledger）保留"七项"原样**——那是当时事实，不改写记录。
+
 ## 0.4.0 — 2026-10-04
 
 rtk 自愈（发现兜底 + 设置页一键重装）+ ⚠️ 行为提示：

@@ -5,7 +5,7 @@
 
 | 插件 | 版本 | 职责 |
 |---|---|---|
-| [dsh-rtk-kit](dsh-rtk-kit/) | 0.4.0 | RTK 集成：bash 命令自动改写走 rtk 压缩（resolve 缝、fail-open）+ 会话 awareness + rtk_doctor 诊断 + **设置页「RTK Kit」**（版本检查/节省统计 0 token/健康七项）；0.3.0=⚠️修复自动改写接线从未生效（B2 effect 工厂形）+ doctor 瘦身；0.4.0=**⚠️ 自动改写自此真正生效**（发现兜底 PATH→~/.local/bin 修「报安装」误诊）+ **设置页一键重装自愈**（检测→Release 下载+SHA256 校验→原子落盘→自动复检，装后不重启恢复功能） |
+| [dsh-rtk-kit](dsh-rtk-kit/) | 0.4.1 | RTK 集成：bash 命令自动改写走 rtk 压缩（resolve 缝、fail-open）+ 会话 awareness + rtk_doctor 诊断 + **设置页「RTK Kit」**（版本检查/节省统计 0 token/健康八项）；0.3.0=⚠️修复自动改写接线从未生效（B2 effect 工厂形）+ doctor 瘦身；0.4.0=⚠️ 发现兜底（PATH→~/.local/bin 修「报安装」误诊）+ **设置页一键重装自愈**（检测→Release 下载+SHA256 校验→原子落盘→自动复检，装后不重启恢复功能）；0.4.1=**⚠️ 修复自动改写缝在生产从未挂载**（宿主重载 shell 执行器不继承实例级覆写 → 挂载面升级为原型级 + 三锚留痕 + 健康项新增「自动改写缝已挂载」） —— 0.4.1 起自动改写才真正兑现 |
 | [dsh-github-ops](dsh-github-ops/) | 0.3.0 | GitHub 集成：GitHub 命令强制 token 模式（0.3.0 修复接线死锁）+ web_fetch 匿名 API 门禁 + 11 个仓库管理工具（gh 后端）+ 数据面 `/api/github-ops/*` 8 端点（0.3.0=设置菜单「GitHub 集成」栏目 + 数据面 + 层①命令强制层接线死锁修复；**待发版**：发版五步⑤ tag/push 未执行，待用户确认） |
 | [dsh-login-gate](dsh-login-gate/) | 0.4.0 | 登录门禁：表单登录（scrypt + HMAC 会话）+ 认证反代 + 原生 DSH 会话 + WS tunnel 修复 + 设置菜单配置面（端口维护/参数可配/账号 CRUD/超时说明，保存语义=即时生效+事前警示 R-16）（0.3.0=设置面与认证优化；0.4.0=数据面收口：门禁数据迁 `plugins/dsh-login-gate/data/` + 遗留自动迁移保 0600 权限） |
 | [kb-context](kb-context/) | 0.5.0 | 知识库上下文：vault 增量索引（FTS5）+ 检索（BM25/LIKE 兜底+deadline 守卫）+ 会话注入（触发/脱敏/截断）+ wiki_read/wiki_search/kb_diagnose 工具 + 设置菜单配置面（0.3.2=设置面 UI 对齐 dsh token + 填写示例/功能说明文案；0.4.0=数据面收口：索引库迁 `plugins/kb-context/data/kb-index/` + 遗留自动迁移；0.5.0=触发日志：内存环评估记录 + GET logs/POST logs/clear 双端点 + 设置页弹层 + triggerLog.enabled kill switch，脱敏白名单闭集、fail-open） |

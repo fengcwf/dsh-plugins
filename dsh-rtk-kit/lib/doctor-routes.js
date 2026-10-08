@@ -6,7 +6,7 @@
 //   GET  /api/rtk-kit/version   版本面（版本号 + 路径 + 可用性 + lastInstall/installSupported/installTargetMatch；
 //        重解析种子=config 原值（F-FINAL-1(i)）、每请求 lib/resolve-bin.js 重发现后回显实际执行值（Task 6 F-01 自愈，单源））
 //   GET  /api/rtk-kit/gain      统计面（summary + 日/周/月周期序列；gain -a 一次取全量、客户端切片，INV-3）
-//   POST /api/rtk-kit/health    健康面（七项定序结果数组；POST body 不读不进 argv，INV-7）
+//   POST /api/rtk-kit/health    健康面（八项定序结果数组；POST body 不读不进 argv，INV-7）
 //   POST /api/rtk-kit/install   安装面（一键重装；INV-1 安装能力唯一入口=登录面后；POST body 不读不解析，INV-7）
 //        客户端取 URL 一律用文档相对常量 INSTALL_URL（无前导斜杠，issue #1707 教训）
 // API 形：成功 {data}；失败 {error:{code,message[,hint]}}；错误码族收口
@@ -21,7 +21,7 @@
 //   读写失败回 null 不炸（fail-open）——记录面异常绝不影响安装结果与既有面（INV-4）。
 // fail-open（TECH.md 错误处理策略）：rtk 缺失不抛 500 不炸装载——版本面软回 available:false + 安装提示（数据态）；
 //   统计面回 RTK_UNAVAILABLE + hint 字段（F-02/INV-9：hint 与 found 同门控，真缺失才带安装提示）；
-//   健康面七项如实红叉（getHealth 永不抛）。
+//   健康面八项如实红叉（getHealth 永不抛）。
 //   webServer / connection 缺缝由 Task 8 接线层探测处理；本模块假定两缝在场。
 import os from 'node:os'
 import path from 'node:path'
@@ -288,7 +288,7 @@ export function createDoctorHandlers({
     if (!authGate(connection, req, res)) return
     if (!methodGuard(req, res, METHODS.health)) return
     try {
-      // INV-7：POST body 不读不解析——七项只走固定白名单动作，请求内容永无路径进入 argv
+      // INV-7：POST body 不读不解析——八项只走固定白名单动作，请求内容永无路径进入 argv
       const items = await getHealth({ ...actionNow(), readHistory: readHistory ?? historyReader, historyDb, now })
       sendJson(res, 200, { data: items })
     } catch (err) {

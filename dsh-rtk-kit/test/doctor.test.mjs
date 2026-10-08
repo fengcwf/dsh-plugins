@@ -234,7 +234,7 @@ test('getGain：JSON 解析失败 → RTK_ERROR；rtk 缺失 → RTK_UNAVAILABLE
   await assert.rejects(getGain({ exec: missing.exec }), (err) => err.code === 'RTK_UNAVAILABLE')
 })
 
-// ───────────────────────── 健康七项（INV-4 零污染法） ─────────────────────────
+// ───────────────────────── 健康八项（INV-4 零污染法，Round 3 +rewrite-mounted） ─────────────────────────
 
 const NOW = new Date('2026-09-29T12:00:00.000Z')
 const FIXED_NOW = () => NOW
@@ -385,7 +385,7 @@ test('checkCompressionEffective：注入读取器收到 30 天窗口 since', asy
   assert.equal(seen.since, new Date(NOW.getTime() - 30 * 24 * 3600 * 1000).toISOString())
 })
 
-test('getHealth：七项结果数组定序 {id,label,status,detail}，exec 面零样本命令执行', async () => {
+test('getHealth：八项结果数组定序 {id,label,status,detail}，exec 面零样本命令执行', async () => {
   const dbPath = makeFixtureDb([{ timestamp: '2026-09-28T00:00:00+00:00', savings_pct: 33 }])
   const { exec, calls } = fakeExec(async (file, args) => {
     if (args[0] === 'gain') {
@@ -394,13 +394,13 @@ test('getHealth：七项结果数组定序 {id,label,status,detail}，exec 面�
     return { code: 0, stdout: 'rtk 0.49.0', stderr: '' }
   })
   const items = await getHealth({ exec, rtkBin: 'rtk', historyDb: dbPath, now: FIXED_NOW })
-  assert.equal(items.length, 7)
+  assert.equal(items.length, 8)
   assert.deepEqual(
     items.map((it) => it.id),
     HEALTH_ITEMS.map((it) => it.id),
   )
   assert.deepEqual(items.map((it) => it.id), [
-    'binary-exec', 'version-parse', 'rewrite-seam', 'guard-matrix',
+    'binary-exec', 'version-parse', 'rewrite-seam', 'rewrite-mounted', 'guard-matrix',
     'fail-open', 'gain-source', 'compression-effective',
   ])
   for (const it of items) assert.ok(it.status === 'pass' || it.status === 'fail', it.id)
@@ -430,12 +430,13 @@ test('getHealth：rtk 全缺失也绝不抛错，exec 面项如实 fail（fail-o
       throw new Error('db missing')
     },
   })
-  assert.equal(items.length, 7)
+  assert.equal(items.length, 8)
   for (const it of items) assertItemShape(it, it.id)
   assert.equal(items.find((it) => it.id === 'binary-exec').status, 'fail')
   assert.equal(items.find((it) => it.id === 'gain-source').status, 'fail')
   assert.equal(items.find((it) => it.id === 'compression-effective').status, 'fail')
   assert.equal(items.find((it) => it.id === 'guard-matrix').status, 'pass')
+  assert.equal(items.find((it) => it.id === 'rewrite-mounted').status, 'fail', '零挂载零命中=如实 fail（禁误导绿灯，Round 3）')
 })
 
 // ───────────────────────── rtk_doctor 轻诊断执行体（Task 8 瘦身 / INV-6） ─────────────────────────

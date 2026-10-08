@@ -9,6 +9,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { Config, apply, buildDoctorTool } from '../lib/index.js'
+import { resetRewriteSeamState } from '../lib/rewrite-seam.js'
 import { API_PREFIX, INSTALL_ERROR_STATUS, INSTALL_URL, registerDoctorRoutes } from '../lib/doctor-routes.js'
 import { HEALTH_ITEMS, INSTALL_HINT } from '../lib/doctor.js'
 import { CHECKSUMS_ASSET, RTK_ASSET, defaultFs, releaseAssetUrl } from '../lib/install.js'
@@ -322,7 +323,17 @@ test('超时（INV-5/US-4）：version/gain 超时 reject → {error:{code:"RTK_
 
 // ───────────────────────── 健康面（INV-4 零污染 / fail-open） ─────────────────────────
 
-test('POST health：{data} 七项定序 {id,label,status,detail}（proposal §4 健康=七项结果数组）', async () => {
+test('POST health：{data} 八项定序 {id,label,status,detail}（Round 3 +真实挂载项 rewrite-mounted）', async () => {
+  // Round 3（FINDINGS-2）：rewrite-mounted 读进程内命中计数——真 apply 包壳 + 真调用驱动（与首命中留痕同源，禁第二套逻辑）
+  resetRewriteSeamState()
+  const seamRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rtk-health-seam-'))
+  const seamBin = path.join(seamRoot, 'bin', 'rtk')
+  fs.mkdirSync(path.dirname(seamBin), { recursive: true })
+  fs.writeFileSync(seamBin, Buffer.from(DUAL_SCRIPT))
+  fs.chmodSync(seamBin, 0o755)
+  const seamCtx = makeCtx()
+  apply(seamCtx, { enabled: true, registerDoctorTool: false, awareness: 'off', rtkBin: seamBin }, { resolveEnv: { path: '', homedir: '' } })
+  seamCtx.shell.resolve({ command: 'git status', stdin: null }) // 命中一次（真实包壳路径）
   const { exec, calls } = fakeExec(async (file, args) => {
     const key = args.join(',')
     if (key === '--version') return { code: 0, stdout: 'rtk 0.49.0\n', stderr: '' }
@@ -337,18 +348,19 @@ test('POST health：{data} 七项定序 {id,label,status,detail}（proposal §4 
   const res = await r.call(makeReq({ url: `${API_PREFIX}/health`, method: 'POST', body: '{}' }))
   assert.equal(res.status, 200)
   assert.ok(Array.isArray(res.body.data))
-  assert.equal(res.body.data.length, 7)
+  assert.equal(res.body.data.length, 8)
   assert.deepEqual(res.body.data.map((i) => i.id), HEALTH_ITEMS.map((i) => i.id)) // 定序
   for (const [i, item] of res.body.data.entries()) {
     assert.equal(item.label, HEALTH_ITEMS[i].label)
     assert.ok(item.status === 'pass' || item.status === 'fail')
     assert.equal(typeof item.detail, 'string')
   }
-  assert.ok(res.body.data.every((i) => i.status === 'pass'), '全通路径七项应全 pass')
+  assert.ok(res.body.data.every((i) => i.status === 'pass'), '全通路径八项应全 pass（含真实挂载项）')
   assertSafeArgv(calls)
 })
 
-test('POST health：rtk 全挂也 fail-open 回七项（不抛 500、不炸装载）', async () => {
+test('POST health：rtk 全挂也 fail-open 回八项（不抛 500、不炸装载）', async () => {
+  resetRewriteSeamState() // 零挂载零命中 → rewrite-mounted 如实 fail（禁误导绿灯）
   const { exec } = fakeExec(async () => {
     throw enoentError()
   })
@@ -358,8 +370,8 @@ test('POST health：rtk 全挂也 fail-open 回七项（不抛 500、不炸装�
   const r = routesWith({ exec, historyReader }, { rejection: undefined })
   const res = await r.call(makeReq({ url: `${API_PREFIX}/health`, method: 'POST', body: '{}' }))
   assert.equal(res.status, 200)
-  assert.equal(res.body.data.length, 7)
-  assert.deepEqual(res.body.data.map((i) => i.status), ['fail', 'fail', 'fail', 'pass', 'pass', 'fail', 'fail'])
+  assert.equal(res.body.data.length, 8)
+  assert.deepEqual(res.body.data.map((i) => i.status), ['fail', 'fail', 'fail', 'fail', 'pass', 'pass', 'fail', 'fail'])
 })
 
 // ───────────────────────── 安全红线（INV-7 / INV-2） ─────────────────────────

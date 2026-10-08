@@ -35,7 +35,7 @@ dsh plugin --profile web add /root/.dsh/plugins/dsh-rtk-kit
 |---|---|---|
 | `enabled` | `true` | 自动改写开关（仅门控 bash 改写缝；rtk_doctor 工具/awareness/设置页面板不受此门控） |
 | `rtkBin` | `rtk` | rtk 可执行文件。缺省 `rtk`：PATH 解析失败后按 `~/.local/bin/rtk` → `/usr/local/bin/rtk` → `/opt/homebrew/bin/rtk` 兜底发现（命中即停，0.4.0 起）；显式配置（如 `/opt/rtk`）原样使用、不兜底不覆盖，且该路径缺失时设置页不出「重新安装」按钮（改手动安装提示） |
-| `rewriteTimeoutMs` | `150` | `rtk rewrite` 超时；超时 = 原样放行 |
+| `rewriteTimeoutMs` | `400` | `rtk rewrite` 超时；超时 = 原样放行（fail-open，留 debug 留痕）。0.4.x 默认 150ms 在生产宿主内存规模下 p95 已占 81% 余量过薄（实测 p95=121ms），0.4.1 起代码默认提至 400ms。⚠️ **配置显式值优先**：`cordis.patch.yml` 里显式写了 `150` 的部署仍是 150（本仓库配置键面冻结不改），要吃到新默认需删掉显式键或在 profile 覆盖层调大 |
 | `conservative` | `true` | 保守模式（见上表）；想激进省 token 可 `false` |
 | `exclude` | `[]` | 永不改写的命令前缀黑名单（对应 rtk 的 `exclude_commands` 语义） |
 | `awareness` | `default` | `default`/`high`/`full`/`off`（推荐 `high`：带逃生舱说明） |
@@ -51,11 +51,13 @@ dsh plugin --profile web add /root/.dsh/plugins/dsh-rtk-kit
 |---|---|---|
 | RTK 版本 | rtk 二进制可用性 / 版本 / 安装提示（rtk 缺失时降级显示安装提示） | 手动点按钮 |
 | 节省统计 | 指标卡（总命令数 / 输入 / 输出 / 节省量 / 节省率）+ 日 / 周 / 月 / 全周期切换，全局口径（数据源 `rtk gain -a -f json`，不直读 history.db 内部 schema） | **进设置页自动拉取**（轻查询，恰一次） |
-| 功能健康 | 七项检查逐项绿勾红叉 + 失败原因：二进制可执行 / 版本可解析 / rewrite 缝生效 / 守卫矩阵健全 / fail-open 链路 / 统计源可用 / 压缩生效 | **手动点按钮**（版本检查随健康手动） |
+| 功能健康 | 八项检查逐项绿勾红叉 + 失败原因：二进制可执行 / 版本可解析 / rewrite 能力可用 / **自动改写缝已挂载** / 守卫矩阵健全 / fail-open 链路 / 统计源可用 / 压缩生效 | **手动点按钮**（版本检查随健康手动） |
 
 - **零 token**：统计与健康只经设置页 HTTP + 浏览器回显承载，0 LLM token 消耗——不新增会话内统计工具、不做统计注入；**完整统计唯一入口 = 设置页面板**（`rtk_doctor` 的 gain 统计段默认关，见配置表 `doctorGain`）。
 - **异步 + 5 秒超时**：三动作异步执行；超时/失败如实回显 + 重试按钮，不阻塞 dsh 宿主。
 - **健康检查零污染**：压缩生效检查只读既有历史统计，**不跑 rtk 样本命令**（样本执行会写统计库、污染口径）。
+- **健康项语义（0.4.1 起）**：「rewrite 能力可用」只证 rtk 二进制能改写（不证生产缝已挂载）；「自动改写缝已挂载」读**进程内包壳命中计数**（与日志「包壳首次命中」同源）——`>0` = 缝已挂载并被真实调用，`=0` 如实红（不给误导绿灯）。
+- **改写缝抗重载 + 装载留痕**：包壳挂载在 `shell.resolve` 的**原型级**（宿主 executor 重载/配置 reconcile 重挂产生的新实例天然继承），teardown 身份校验还原（不误伤后挂）。日志锚 `[rtk-kit]` 三条可检索留痕：`apply 装载完成` / `rewrite-seam 包壳已安装` / `rewrite-seam 包壳首次命中`——无「装载完成」=没装；有装载无「包壳已安装」=包壳未挂；有挂载无「首次命中」=装了没被调用或被覆盖。真机生效判据：会话内跑 `git status --short` 后 `sqlite3 /root/.local/share/rtk/history.db "select count(*) from commands;"` 数值 +1。
 - **缺缝行为**：设置页数据面走 `webServer`/`connection` 软依赖接线；该面缺席（未注册）时跳过并留痕，插件其余功能不受影响。
 - **rtk 缺失降级**：版本区块显示安装提示、健康检查对应项红叉；bash 改写缝保持 fail-open 恒等放行。
 
