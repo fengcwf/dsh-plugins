@@ -114,3 +114,10 @@
 - 主需求（Hindsight 4 条）Phase 2 方案设计本轮由队长推进（IL-9：用户「继续」=放行信号，非队长催进）。
 - t1 attempt 2 completed（核验补交形，队长指令有效）。队长冒烟抽验：dist 字面 epoch=1/N2 双文案各 1、422/422、lib/ 零改动=inScope 守住。质量终判移交 t3 复审（IL-2）。
 - Phase 2 方案设计已落 `solution-design.md`（数据流/引擎契约/UI 面/Config+API/测试必红清单/U4 发散/开放项 6 条）。
+- t3 复审 **pass**（4/4、blocker=none；5 组 /tmp 变异实验实证判别力 M1-M5；独立复跑 422/422+415 基线）。留痕 F1-F4。
+- **F4 已处置**：commit e7a6ae7（19 文件 +3805/-102，含门禁文件全量；不 push 不 tag——发版五步留用户确认）。
+- **R-15 F3 裁定**：不 defer，建 t4（repair r1，coder）+ t5（review，integrator 换人）收口。理由：本波=竞态收口波，同族残余再 defer 就是「W1 怎么欠出来的」重演（0.7.0 裁定原文「随下个反馈轮顺手收口」——现在就是下轮）；代价若错：多一轮卡的成本。F1/F2（报告笔误，N4 类复发）并入 t4 顺手修。
+- t4 completed（F3=reloading 标记+请求级门禁+按钮 disabled 三层；7→10 测试；F1/F2 修正带依据=落笔前实测纪律）。队长抽验：425/425、dist 字面 epoch=1/loadOlderDisabled=2/N2 各 1、lib/ 零改动、F1/F2 对盘一致。移交 t5 复审（重点：reloading 标记 finally 清理条件的竞态正确性）。
+- t5 复审 **needs_revision**（1 条 medium F-1）：F3 修复语义本身正确、三组变异实证主门禁判别力，但 `LogHistoryView.vue:31-33` finally 的 `if (mine===epoch.value) reloading.value=false` **零测试锁定**（变异 D 删之全量 425 仍全绿）——承重防线无判别力覆盖=回归盲区。
+- 修复环自动化处置（协议：不重建不插手）：系统已建 t6（repair r2→coder，acceptance=F-1.requiredFix：补时序测试锁「重叠 reload 下门禁不被旧响应误清」）+ t7（review r2→integrator）。R-16 记：此为质量回路正常工作实证（IL-2 判别力口径：代码正确≠质量，测试锁定才=质量）。
+- t6 completed（+1 时序测试锁 finally 条件，7→11；426/426）。队长抽验过。**R-17 合同口径教训**：系统自动 repair 卡的 inScope 取自 finding.requiredFix 文件位置，漏验收明文要求的报告路径——成员不越权+报备=正确处置，队长已 evidence_note 追认。**机制改进待办**：自动 repair 环建卡后队长即查 inScope 是否覆盖验收全产物，缺则 edit_plan 补（卡未启动前）或追认（完成后）。

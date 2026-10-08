@@ -12,6 +12,8 @@ const props = defineProps({
   meta: { type: Object, required: true },
   error: { type: String, default: '' },
   filters: { type: Object, required: true },
+  // F3 门禁：reload 在途禁用「加载更早」入口（翻旧只能在稳定视图上发生；请求级语义门禁在容器）
+  loadOlderDisabled: { type: Boolean, default: false },
 })
 const emit = defineEmits(['load-older', 'reload', 'filter-change'])
 
@@ -91,6 +93,7 @@ function onToggle(id) {
         v-if="meta.hasMore"
         class="ws-btn"
         type="button"
+        :disabled="loadOlderDisabled"
         @click="emit('load-older')"
       >加载更早</button>
     </div>

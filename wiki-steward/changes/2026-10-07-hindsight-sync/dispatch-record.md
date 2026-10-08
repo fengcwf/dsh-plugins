@@ -10,7 +10,11 @@
 |----|------|------|------|------|------|---------|
 | t1 W1 epoch 守卫+N2 互斥 | implementation | coder | — | mimo-v2.6-pro | ✅ attempt 2 completed（attempt 1 产物+核验补交；422/422；队长冒烟抽验 dist 字面 1/1/1、lib/ 零改动；报告 w1-epoch-guard-report.md） |
 | t2 数据面收口尾项（归档+清单摘除） | work | mechanic | — | mimo-v2.6-flash | staged 待批 | 待 |
-| t3 复审 t1 | review | reviewer | t1 | mimo-v2.6-flash | 🔄 调度器派发中（t1 依赖已满足） | 待 |
+| t3 复审 t1 | review | reviewer | t1 | mimo-v2.6-flash | ✅ verdict=pass（4/4、blocker=none、5 组变异实验实证；留痕 F1-F4；reports/w1-epoch-guard-review.md） |
+| t4 F3 窄缝收口+F1/F2 笔误 | repair r1 | coder | — | mimo-v2.6-pro | ✅ attempt 1 completed（425/425=422+3；dist loadOlderDisabled=2；F1/F2 修正带依据；队长抽验过） |
+| t5 复审 t4 | review | integrator | t4 | mimo-v2.6-flash | ❌ needs_revision（F-1 medium：finally epoch 条件零测试锁定——变异 D 实证删之 425 仍全绿；reports/f3-closeout-review.md） | 自动环 |
+| t6 repair r2（补时序测试锁 finally 条件） | repair r2 | coder | t4 | mimo-v2.6-pro | ✅ 426/426（+1 时序测试）；scope 报告路径队长追认（R-17） |
+| t7 复审 t6 | review r2 | integrator | t6 | mimo-v2.6-flash | 🔄 调度器派发中 | 待 |
 | （预留）凭据修复 | 待定 | 待定 | 用户 ①/② 裁定 + key | — | 未建（NEEDS_HUMAN） | — |
 | （预留）Hindsight 功能卡（同步/日历/状态/启停 L1） | implementation 等 | 待定 | Phase 1-3 裁定 | — | 未建 | — |
 

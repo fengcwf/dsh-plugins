@@ -2877,7 +2877,7 @@ var bo = {
 }, zo = {
 	key: 0,
 	class: "ws-note"
-}, Bo = { class: "ws-actions" }, Vo = {
+}, Bo = { class: "ws-actions" }, Vo = ["disabled"], Ho = {
 	__name: "IngestLogPanel",
 	props: {
 		lines: {
@@ -2895,6 +2895,10 @@ var bo = {
 		filters: {
 			type: Object,
 			required: !0
+		},
+		loadOlderDisabled: {
+			type: Boolean,
+			default: !1
 		}
 	},
 	emits: [
@@ -2961,14 +2965,15 @@ var bo = {
 				key: 0,
 				class: "ws-btn",
 				type: "button",
+				disabled: e.loadOlderDisabled,
 				onClick: n[3] ||= (e) => r("load-older")
-			}, "加载更早")) : Q("", !0)])
+			}, "加载更早", 8, Vo)) : Q("", !0)])
 		]));
 	}
 };
 //#endregion
 //#region web/src/lib/log-history.js
-function Ho() {
+function Uo() {
 	return {
 		lines: [],
 		meta: {
@@ -2980,7 +2985,7 @@ function Ho() {
 		error: ""
 	};
 }
-function Uo(e, t) {
+function Wo(e, t) {
 	return {
 		lines: Array.isArray(t.lines) ? t.lines : [],
 		meta: {
@@ -2992,7 +2997,7 @@ function Uo(e, t) {
 		error: ""
 	};
 }
-function Wo(e, t) {
+function Go(e, t) {
 	return {
 		lines: lo(e.lines, Array.isArray(t.lines) ? t.lines : []),
 		meta: {
@@ -3004,74 +3009,79 @@ function Wo(e, t) {
 		error: ""
 	};
 }
-function Go(e, t) {
+function Ko(e, t) {
 	return {
 		lines: e.lines,
 		meta: e.meta,
 		error: String(t && t.message || t)
 	};
 }
-function Ko(e) {
+function qo(e) {
 	return e.meta.hasMore === !0;
 }
 //#endregion
 //#region web/src/components/LogHistoryView.vue
-var qo = {
+var Jo = {
 	__name: "LogHistoryView",
 	props: { api: {
 		type: Object,
 		required: !0
 	} },
 	setup(e, { expose: t }) {
-		let n = e, r = /* @__PURE__ */ Ht(Ho()), i = /* @__PURE__ */ Ht(po()), a = /* @__PURE__ */ Ht(0);
-		async function o() {
+		let n = e, r = /* @__PURE__ */ Ht(Uo()), i = /* @__PURE__ */ Ht(po()), a = /* @__PURE__ */ Ht(0), o = /* @__PURE__ */ Ht(!1);
+		async function s() {
 			let e = ++a.value;
+			o.value = !0;
 			try {
 				let t = await n.api.fetchLogs(200, void 0, _o(i.value));
-				if (e !== a.value) return;
-				r.value = Uo(r.value, t);
-			} catch (t) {
-				if (e !== a.value) return;
-				r.value = Go(r.value, t);
-			}
-		}
-		async function s() {
-			if (!Ko(r.value)) return;
-			let e = a.value;
-			try {
-				let t = await n.api.fetchLogs(200, r.value.meta.cursor, _o(i.value));
 				if (e !== a.value) return;
 				r.value = Wo(r.value, t);
 			} catch (t) {
 				if (e !== a.value) return;
-				r.value = Go(r.value, t);
+				r.value = Ko(r.value, t);
+			} finally {
+				e === a.value && (o.value = !1);
 			}
 		}
-		function c(e) {
-			i.value = e, o();
+		async function c() {
+			if (!qo(r.value) || o.value) return;
+			let e = a.value;
+			try {
+				let t = await n.api.fetchLogs(200, r.value.meta.cursor, _o(i.value));
+				if (e !== a.value) return;
+				r.value = Go(r.value, t);
+			} catch (t) {
+				if (e !== a.value) return;
+				r.value = Ko(r.value, t);
+			}
 		}
-		return Qn(o), t({
-			reload: o,
+		function l(e) {
+			i.value = e, s();
+		}
+		return Qn(s), t({
+			reload: s,
 			epoch: a
-		}), (e, t) => (J(), Oi(Vo, {
+		}), (e, t) => (J(), Oi(Ho, {
 			lines: r.value.lines,
 			meta: r.value.meta,
 			error: r.value.error,
 			filters: i.value,
-			onLoadOlder: s,
-			onReload: o,
-			onFilterChange: c
+			"load-older-disabled": o.value,
+			onLoadOlder: c,
+			onReload: s,
+			onFilterChange: l
 		}, null, 8, [
 			"lines",
 			"meta",
 			"error",
-			"filters"
+			"filters",
+			"load-older-disabled"
 		]));
 	}
 };
 //#endregion
 //#region web/src/lib/settings-model.js
-function Jo(e) {
+function Yo(e) {
 	let t = e?.config ?? {}, n = e?.channel ?? {}, r = e?.sources ?? [], i = (e) => e === !0 ? "true" : e === !1 ? "false" : String(e ?? ""), a = n.available ? n.running ? "可用（任务执行中）" : "可用" : "不可用", o = n.available ? "蒸馏由任务执行（headless 任务 dsh-cron wiki-ingest）：面板只负责触发，不做 LLM 蒸馏" : "通道不可用：蒸馏走夜间任务（00:25 cron）或手动会话执行 wiki-ingest skill";
 	return [{
 		title: "wiki-steward Config（只读展示，可改项=∅）",
@@ -3147,16 +3157,16 @@ function Jo(e) {
 }
 //#endregion
 //#region web/src/components/IngestSettingsPanel.vue
-var Yo = {
+var Xo = {
 	class: "ws-block",
 	"aria-label": "相关设置"
-}, Xo = {
+}, Zo = {
 	key: 0,
 	class: "ws-error"
-}, Zo = {
+}, Qo = {
 	key: 1,
 	class: "ws-note"
-}, Qo = { class: "ws-subtitle" }, $o = { class: "ws-rows" }, es = { class: "ws-row-key" }, ts = { class: "ws-row-val" }, ns = { class: "ws-row-value" }, rs = { class: "ws-row-note" }, is = {
+}, $o = { class: "ws-subtitle" }, es = { class: "ws-rows" }, ts = { class: "ws-row-key" }, ns = { class: "ws-row-val" }, rs = { class: "ws-row-value" }, is = { class: "ws-row-note" }, as = {
 	__name: "IngestSettingsPanel",
 	props: {
 		settings: {
@@ -3169,18 +3179,18 @@ var Yo = {
 		}
 	},
 	setup(e) {
-		let t = e, n = oa(() => t.settings === null ? [] : Jo(t.settings));
-		return (t, r) => (J(), Y("section", Yo, [
+		let t = e, n = oa(() => t.settings === null ? [] : Yo(t.settings));
+		return (t, r) => (J(), Y("section", Xo, [
 			r[0] ||= X("h3", { class: "ws-title" }, "相关设置（只读展示）", -1),
-			e.error ? (J(), Y("p", Xo, A(e.error), 1)) : Q("", !0),
-			e.settings === null && !e.error ? (J(), Y("p", Zo, "设置加载中…")) : Q("", !0),
-			(J(!0), Y(K, null, cr(n.value, (e) => (J(), Y(K, { key: e.title }, [X("h4", Qo, A(e.title), 1), X("dl", $o, [(J(!0), Y(K, null, cr(e.rows, (e) => (J(), Y(K, { key: e.key }, [X("dt", es, A(e.key), 1), X("dd", ts, [X("span", ns, A(e.value), 1), X("span", rs, A(e.note), 1)])], 64))), 128))])], 64))), 128))
+			e.error ? (J(), Y("p", Zo, A(e.error), 1)) : Q("", !0),
+			e.settings === null && !e.error ? (J(), Y("p", Qo, "设置加载中…")) : Q("", !0),
+			(J(!0), Y(K, null, cr(n.value, (e) => (J(), Y(K, { key: e.title }, [X("h4", $o, A(e.title), 1), X("dl", es, [(J(!0), Y(K, null, cr(e.rows, (e) => (J(), Y(K, { key: e.key }, [X("dt", ts, A(e.key), 1), X("dd", ns, [X("span", rs, A(e.value), 1), X("span", is, A(e.note), 1)])], 64))), 128))])], 64))), 128))
 		]));
 	}
 };
 //#endregion
 //#region web/src/lib/trigger-model.js
-function as() {
+function os() {
 	return {
 		status: "idle",
 		message: "",
@@ -3188,13 +3198,13 @@ function as() {
 		result: null
 	};
 }
-function os() {
+function ss() {
 	return {
-		scan: as(),
-		distill: as()
+		scan: os(),
+		distill: os()
 	};
 }
-function ss(e, t) {
+function cs(e, t) {
 	return {
 		...e,
 		[t]: {
@@ -3204,7 +3214,7 @@ function ss(e, t) {
 		}
 	};
 }
-function cs(e) {
+function ls(e) {
 	let t = e.summary ?? {};
 	if (!e.ok) return `扫描失败（exit ${e.exitCode}）：${String(e.output ?? "").split("\n")[0] || "无输出"}`;
 	if (t.unknown === !0) return "扫描完成（输出未能机械解析，原文见日志）";
@@ -3212,15 +3222,15 @@ function cs(e) {
 	let n = (t.pendingFiles ?? []).filter((e) => e.status === "ingest").length, r = (t.pendingFiles ?? []).filter((e) => e.status === "re_ingest").length;
 	return `扫描完成：待编译 ${t.pending} 条（新增 ${n} / 更新 ${r}），增量清单见日志`;
 }
-function ls(e) {
+function us(e) {
 	return String(e.note ?? "");
 }
-function us(e, t, n) {
+function ds(e, t, n) {
 	if (t === "scan") return {
 		...e,
 		scan: {
 			status: n.ok ? "done" : "error",
-			message: cs(n),
+			message: ls(n),
 			logFile: n.logFile ?? null,
 			result: n
 		}
@@ -3230,7 +3240,7 @@ function us(e, t, n) {
 		...e,
 		distill: {
 			status: r,
-			message: ls(n),
+			message: us(n),
 			logFile: n.logFile ?? null,
 			result: n
 		}
@@ -3238,14 +3248,14 @@ function us(e, t, n) {
 }
 //#endregion
 //#region web/src/App.vue
-var ds = { class: "ws-root" }, fs = {
+var fs = { class: "ws-root" }, ps = {
 	__name: "App",
 	props: { api: {
 		type: Object,
 		required: !0
 	} },
 	setup(e) {
-		let t = e, n = /* @__PURE__ */ Ht(null), r = /* @__PURE__ */ Ht(""), i = /* @__PURE__ */ Ht(os()), a = /* @__PURE__ */ Ht(null);
+		let t = e, n = /* @__PURE__ */ Ht(null), r = /* @__PURE__ */ Ht(""), i = /* @__PURE__ */ Ht(ss()), a = /* @__PURE__ */ Ht(null);
 		async function o() {
 			try {
 				n.value = await t.api.fetchSettings(), r.value = "";
@@ -3254,12 +3264,12 @@ var ds = { class: "ws-root" }, fs = {
 			}
 		}
 		async function s() {
-			i.value = ss(i.value, "scan");
+			i.value = cs(i.value, "scan");
 			try {
 				let e = await t.api.scan();
-				i.value = us(i.value, "scan", e), await a.value?.reload();
+				i.value = ds(i.value, "scan", e), await a.value?.reload();
 			} catch (e) {
-				i.value = us(i.value, "scan", {
+				i.value = ds(i.value, "scan", {
 					ok: !1,
 					exitCode: null,
 					summary: {},
@@ -3269,12 +3279,12 @@ var ds = { class: "ws-root" }, fs = {
 			}
 		}
 		async function c() {
-			i.value = ss(i.value, "distill");
+			i.value = cs(i.value, "distill");
 			try {
 				let e = await t.api.distill();
-				i.value = us(i.value, "distill", e);
+				i.value = ds(i.value, "distill", e);
 			} catch (e) {
-				i.value = us(i.value, "distill", {
+				i.value = ds(i.value, "distill", {
 					started: !1,
 					reason: "request-failed",
 					note: `触发失败：${String(e?.message ?? e)}`,
@@ -3282,19 +3292,19 @@ var ds = { class: "ws-root" }, fs = {
 				});
 			}
 		}
-		return Qn(o), (e, o) => (J(), Y("div", ds, [
+		return Qn(o), (e, o) => (J(), Y("div", fs, [
 			Z(oo, {
 				state: i.value,
 				channel: n.value?.channel ?? null,
 				onScan: s,
 				onDistill: c
 			}, null, 8, ["state", "channel"]),
-			Z(qo, {
+			Z(Jo, {
 				ref_key: "logView",
 				ref: a,
 				api: t.api
 			}, null, 8, ["api"]),
-			Z(is, {
+			Z(as, {
 				settings: n.value,
 				error: r.value
 			}, null, 8, ["settings", "error"])
@@ -3303,7 +3313,7 @@ var ds = { class: "ws-root" }, fs = {
 };
 //#endregion
 //#region web/src/api.js
-async function ps(e, t = {}) {
+async function ms(e, t = {}) {
 	let n = await fetch(e, {
 		...t,
 		headers: {
@@ -3314,36 +3324,36 @@ async function ps(e, t = {}) {
 	if (!n.ok) throw Error(r?.error?.message ?? `请求失败（HTTP ${n.status}）`);
 	return r.data;
 }
-function ms(e) {
+function hs(e) {
 	return {
-		fetchSettings: () => ps(`${e}/ingest/settings`),
+		fetchSettings: () => ms(`${e}/ingest/settings`),
 		fetchLogs: (t, n, r) => {
 			let i = new URLSearchParams();
 			t != null && i.set("limit", String(t)), n != null && i.set("cursor", String(n));
 			for (let [e, t] of Object.entries(r ?? {})) t != null && i.set(e, String(t));
 			let a = i.toString();
-			return ps(`${e}/ingest/logs${a === "" ? "" : `?${a}`}`);
+			return ms(`${e}/ingest/logs${a === "" ? "" : `?${a}`}`);
 		},
-		scan: () => ps(`${e}/ingest/scan`, { method: "POST" }),
-		distill: () => ps(`${e}/ingest/distill`, { method: "POST" })
+		scan: () => ms(`${e}/ingest/scan`, { method: "POST" }),
+		distill: () => ms(`${e}/ingest/distill`, { method: "POST" })
 	};
 }
 //#endregion
 //#region web/src/lib/view-model.js
-function hs(e) {
+function gs(e) {
 	return e === "log" ? "log" : "full";
 }
 //#endregion
 //#region web/src/panel.js
-var gs = "data-wiki-steward-panel-style";
-function _s(e) {
-	if (e.querySelector(`link[${gs}]`)) return;
+var _s = "data-wiki-steward-panel-style";
+function vs(e) {
+	if (e.querySelector(`link[${_s}]`)) return;
 	let t = e.createElement("link");
-	t.rel = "stylesheet", t.href = new URL("./style.css", "" + import.meta.url).href, t.setAttribute(gs, ""), e.head.appendChild(t);
+	t.rel = "stylesheet", t.href = new URL("./style.css", "" + import.meta.url).href, t.setAttribute(_s, ""), e.head.appendChild(t);
 }
-function vs(e, t = {}) {
-	_s(e.ownerDocument ?? document);
-	let n = ms(t.apiBase ?? "/wiki-steward/api"), r = Xa(hs(t.view) === "log" ? qo : fs, { api: n });
+function ys(e, t = {}) {
+	vs(e.ownerDocument ?? document);
+	let n = hs(t.apiBase ?? "/wiki-steward/api"), r = Xa(gs(t.view) === "log" ? Jo : ps, { api: n });
 	return r.mount(e), { unmount() {
 		try {
 			r.unmount();
@@ -3354,4 +3364,4 @@ function vs(e, t = {}) {
 	} };
 }
 //#endregion
-export { vs as mount };
+export { ys as mount };

@@ -12,9 +12,11 @@
 | 位置 | 语义 |
 |---|---|
 | `LogHistoryView.vue:14-16` | 守卫说明 + `const epoch = ref(0)` |
-| `LogHistoryView.vue:17-29` | `reload()`：`const mine = ++epoch.value`（**filter-change 与 reload 均递增**——`onFilterChange`→`reload`、刷新按钮、`defineExpose` 外部刷新三入口同路）；响应后 `if (mine !== epoch.value) return`，**既不 applyLatest 也不 applyError**（错误同样不落当前视图） |
+| `LogHistoryView.vue:18-28`（t1 落盘态实测） | `reload()`：`const mine = ++epoch.value`（**filter-change 与 reload 均递增**——`onFilterChange`→`reload`、刷新按钮、`defineExpose` 外部刷新三入口同路）；响应后 `if (mine !== epoch.value) return`，**既不 applyLatest 也不 applyError**（错误同样不落当前视图）。**F2 修正**：原写 `:17-29` 系笔误（N4 类复发）；修正依据=复审实测 18-28 且本波落笔前 `grep -n` 实测核对一致（`async function reload() {` 在 18、闭括号在 28） |
 | `LogHistoryView.vue:30-41` | `loadOlder()`：`const mine = epoch.value`（沿用当前序号，不递增）；响应 epoch 不匹配即整份丢弃，**既不 applyOlder 也不替换当前页** |
 | `LogHistoryView.vue:49-50` | `defineExpose({ reload, epoch })`：epoch 暴露供真实现测试直读序号契约（与既有 `reload` 暴露同款测试缝） |
+
+> 行号基准：上表行号 = **t1 落盘态（commit `e7a6ae7`）实测**；F3 收口后行号漂移对照见 §八（`reload` 等随 F3 门禁新增行位移）。
 
 语义保证：**旧筛选响应（loadOlder 页或 reload 页）无论早到晚到，永不落进新筛选视图**；`meta.cursor` 不跨筛选集（丢弃零副作用，下一次翻旧仍取新筛选集游标+同参查询）。与复审建议方案（「加 epoch/seq，filter-change/reload 递增，响应 epoch 不匹配即丢弃」）同构，落地为成功/失败双路守卫（约 15 行）。
 
@@ -46,7 +48,7 @@
 
 ## 四、发布物面（LRN-045，防假绿）
 
-- `pnpm build` 重建 `web/dist`（`panel.js` 102.49 kB / `style.css` 3.63 kB）并随本波入库（`git diff --numstat`：`web/dist/panel.js` +15/-3 量级字节变更与 src 同波）。
+- `pnpm build` 重建 `web/dist`（`panel.js` 102.49 kB / `style.css` 3.63 kB）并随本波入库（`git show --numstat e7a6ae7` 实测：`web/dist/panel.js` **110/95** 量级字节变更与 src 同波。**F1 修正**：原写「+15/-3」系笔误——那是同 commit `LogHistoryView.vue` 的 numstat（15/3）被误抄为 dist 的数；修正依据=复审实测 110/95 且本波落笔前 `git show --numstat e7a6ae7 -- wiki-steward/web/dist/panel.js` 复测一致）。
 - **dist 字面判据**（实测 grep `web/dist/panel.js`）：`epoch` = **1 命中**（重建前 0）；`当前时间区间为空` = 1；`所选筛选条件下无日志条目` = 1。
   缩编事实说明（本波实测）：esbuild 缩编剥离标识符与注释（`applyLatest`/`emptyStateMessage`/`rangeEmpty` 等源码名在 dist 零命中），存活形仅**属性键与字符串**；故 W1 发布物判据取 `defineExpose({ reload, epoch })` 的 `epoch` 属性键——既是缩编下唯一存活形，也是真实现测试的直读缝（一举两得，非为判据造字面）。
 - `node --test test/dist-browser-load.test.mjs` **4/4 绿**（字节残留锁 + 无 process 真 ESM 加载锁，构建物真浏览器可加载语义零回退）。
@@ -107,3 +109,145 @@ epoch                        1
 - `wiki-steward/changes/2026-10-07-hindsight-sync/reports/w1-epoch-guard-report.md`（本报告）
 
 **越界申报：无。** `lib/`（服务端）零改动、`/root/.dsh/` 零触碰、无 bump/CHANGELOG/tag/push/release；组件行数合规（LogHistoryView 63 行、IngestLogPanel 98 行，均 ≤300）。
+
+---
+
+## 八、F1/F2/F3 收口（t4 repair round 1，来源 t3 复审 `reports/w1-epoch-guard-review.md` 留痕）
+
+### F3（主项）：reload 在途禁翻旧 —— 「旧游标+新参」请求构造窄缝消灭
+
+现象（复审留痕）：filter-change 后、reload 响应前点「加载更早」→ 发出「旧游标+新参」请求且同 epoch 不被 W1 丢弃。修法取复审建议最小形：`reloading` ref 标记 reload 在途 → **请求级语义门禁**（`loadOlder` 闸门叠加）+ **入口禁用**（按钮 `disabled`）；语义=「翻旧只能在稳定视图上发生」。
+
+**diff 摘要**（`git diff e7a6ae7 -- wiki-steward/web/src`）：
+
+```diff
+--- web/src/components/LogHistoryView.vue
++// F3 门禁（t3 复审留痕收口）：reload 在途标记——翻旧只能在稳定视图上发生（…）
++const reloading = ref(false)
+ async function reload() {
+   const mine = ++epoch.value
++  reloading.value = true
+   ...
++  } finally {
++    if (mine === epoch.value) reloading.value = false
+   }
+ }
+ async function loadOlder() {
+-  if (!canLoadOlder(history.value)) return
++  // F3：reload 在途不发翻旧请求（旧游标+新参窄缝）；W1 epoch 守卫保持不变
++  if (!canLoadOlder(history.value) || reloading.value) return
+ ...
+     :filters="filters"
++    :load-older-disabled="reloading"
+--- web/src/components/IngestLogPanel.vue
++  // F3 门禁：reload 在途禁用「加载更早」入口（翻旧只能在稳定视图上发生；请求级语义门禁在容器）
++  loadOlderDisabled: { type: Boolean, default: false },
+ ...
+         type="button"
++        :disabled="loadOlderDisabled"
+         @click="emit('load-older')"
+```
+
+（`finally` 仅在 `mine === epoch.value` 时清标记：被丢弃的旧 reload 不得误清新在途 reload 的门禁；W1 epoch 双路守卫逐字未动。）
+
+**测试输出原文**（真实现口径 LRN-047：真 SFC+真运行时+真状态机，唯一假缝=props.api I/O 传输；既有 7 测试零改动零漂移）：
+
+```
+✔ F3 门禁：reload（刷新）在途点「加载更早」不发请求（入口禁用+语义门禁），落地后门禁解除
+✔ F3 门禁（复审现象复现）：filter-change 后 reload 响应前点翻旧不发「旧游标+新参」请求
+✖ LRN-045 发布物面（F3）：web/dist/panel.js 字面含门禁语义（loadOlderDisabled 属性键）  ← 重建前对旧 dist 红（expected /loadOlderDisabled/）
+   → pnpm build 重建后同测试 ✔（先红后绿判别力）
+```
+
+锁语义逐条：按钮 `disabled=true`（入口禁用）+ 直接触发 `onClick` 仍零请求（语义门禁，非仅 UI）+ reload 落地后门禁解除（翻旧正常发出，同游标同参=W1 零漂移）；filter-change 路径复现复审窄缝现场：calls 零新增（原会发旧游标 k1+新参）、新页落地后翻旧=新游标 k3+新参（W1 游标不跨集保持）。
+
+#### F3 补锁（t6 repair round 2）：时序探针同型测试 + `finally` 条件**已锁**
+
+t4 报告中「`finally` 仅在 `mine === epoch.value` 时清标记（被丢弃的旧 reload 不得误清新在途 reload 的门禁）」原为实现表述、未单独上锁——t6 以复审探针同型时序测试落实为**已锁**（判别力同源：变异 D=finally 无条件清标记 → 本测试必红）。追加测试 `test/log-history-view.test.mjs`「F3 门禁（时序探针同型）」：mount 首取落地 → 点「刷新」(A 在途) → 改起始日期 (B 在途) → **先 resolve A 的响应**（epoch 不匹配整份丢弃）→ 断言「加载更早」`disabled=true` 且直触发 `onClick` 后 `api.calls.length` 不变（零请求=门禁未被 A 的 finally 误清）→ resolve B → 断言门禁解除、翻旧=新游标+新参。
+
+**测试输出原文**（真实现口径不变：真 SFC+真运行时+真状态机，唯一假缝=props.api I/O 传输）：
+
+```
+✔ F3 门禁（时序探针同型）：A 响应晚到被丢弃后门禁仍锁（finally 仅 mine===epoch 才清），B 落地才解除 (2.971774ms)
+ℹ tests 11
+ℹ pass 11
+ℹ fail 0
+```
+
+全量 `node --test` 新总数（425→**426**，+1 零回退）：
+
+```
+ℹ tests 426
+ℹ pass 426
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+```
+
+t6 changedPaths：`wiki-steward/test/log-history-view.test.mjs`（+37/-0 实测：333→370 行，11 测试）、`wiki-steward/changes/2026-10-07-hindsight-sync/reports/w1-epoch-guard-report.md`（本小节）。`web/src`/`web/dist` 零改动（纯测试面收口；dist 字面判据保持：epoch=1、loadOlderDisabled=2、N2 双文案各 1）。
+
+### F2：报告行号笔误修正
+
+**diff 摘要**：§一 表格 `reload` 行 `LogHistoryView.vue:17-29` → **`LogHistoryView.vue:18-28`**（t1 落盘态实测）+ 表下新增行号基准说明。修正依据=复审实测 18-28、落笔前 `grep -n` 核对一致（`async function reload() {`=18、闭括号=28）——N4 类校对纪律（落笔前实测）。
+
+### F1：dist numstat 笔误修正
+
+**diff 摘要**：§四 `web/dist/panel.js`「+15/-3」→ **`110/95`** + 修正依据标注。修正依据=`git show --numstat e7a6ae7` 实测（dist=110/95、`LogHistoryView.vue`=15/3 即误抄源），与复审实测一致。
+
+### 行号漂移对照（F3 后现行实测，防 N4 复发）
+
+| 位置 | t1 落盘态（§一表基准） | F3 后现行 |
+|---|---|---|
+| epoch 说明+ref | 14-16 | 14-16（不变） |
+| `reload()` | 18-28 | 21-34 |
+| `loadOlder()` | 30-41 | 36-48 |
+| `defineExpose` | 49-50 | 56-57 |
+| F3 新增 | — | `reloading` :17-19、`finally` :31-33、闸门 :38、prop 透传 :66；IngestLogPanel prop :15-16、按钮 `:disabled` :96 |
+
+### 发布物面（LRN-045）
+
+`pnpm build` 重建（`panel.js` 102.78 kB / `style.css` 3.63 kB）；dist 字面（实测 grep）：`epoch`=**1**、`loadOlderDisabled`=**2**、`当前时间区间为空`=**1**、`所选筛选条件下无日志条目`=**1**——F3 门禁语义在 dist **可判**（`loadOlderDisabled` 属性键缩编存活，测试 ⑥ 同型字面锁，无需退化为「不可判」说明）；本波 dist 增量（vs `e7a6ae7`）= **81/71**（`git diff --numstat`）。
+
+### 测试输出原文（全量 + 合同 verify）
+
+① 全量 `node --test`（422→**425**，+3 零回退）：
+
+```
+ℹ tests 425
+ℹ pass 425
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+```
+
+② 合同 verify `node --test 2>&1 | tail -5`：
+
+```
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4699.528921
+```
+
+③ 合同 verify `grep -c 'epoch' web/dist/panel.js && node --test test/dist-browser-load.test.mjs 2>&1 | tail -4`：
+
+```
+1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 334.349522
+```
+
+（`test/dist-browser-load.test.mjs` 全量口径：tests 4 / pass 4 / fail 0，①②③④ 全 ✔）
+
+### t4 changedPaths
+
+- `wiki-steward/web/src/components/LogHistoryView.vue`（+9/-1：reloading 标记 + finally + 闸门 + prop 透传）
+- `wiki-steward/web/src/components/IngestLogPanel.vue`（+3/-0：`loadOlderDisabled` prop + 按钮 `:disabled`）
+- `wiki-steward/web/dist/panel.js`（`pnpm build` 重建入库）
+- `wiki-steward/test/log-history-view.test.mjs`（+54/-0：2 条 F3 门禁测试 + 1 条 dist 字面锁，7→10）
+- `wiki-steward/changes/2026-10-07-hindsight-sync/reports/w1-epoch-guard-report.md`（本节追加 + F1/F2 修正）
+
+**t4 越界申报：无。** `lib/` 零改动、`/root/.dsh/` 零触碰、无发版动作；组件行数合规（LogHistoryView 71 行、IngestLogPanel 101 行，均 ≤300）。

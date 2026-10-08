@@ -277,3 +277,94 @@ test('LRN-045 发布物面：web/dist/panel.js 字面含 W1 守卫语义（epoch
   assert.match(dist, /当前时间区间为空/, 'dist 字面含 N2 区间倒置提示')
   assert.match(dist, /所选筛选条件下无日志条目/, 'dist 字面含 N2 空态文案（渲染互斥由组件条件锁）')
 })
+
+// ── F3 门禁（t3 复审留痕收口）：reload 在途禁翻旧——「旧游标+新参」请求构造窄缝消灭 ───────
+test('F3 门禁：reload（刷新）在途点「加载更早」不发请求（入口禁用+语义门禁），落地后门禁解除', async () => {
+  const { root, api } = await mountView()
+  api.calls[0].resolve(page([L('cron:wiki-ingest', 'f', 1, 'b1', '20260901')], 'k1'))
+  await flush()
+  // reload 在途（刷新按钮）
+  findButton(root, '刷新').props.onClick()
+  await flush()
+  assert.equal(api.calls.length, 2, 'reload 请求已发出（mount + 刷新）')
+  const olderBtn = findButton(root, '加载更早')
+  assert.equal(olderBtn.props.disabled, true, '入口禁用：reload 在途「加载更早」disabled')
+  // 语义门禁：即便直接触发 onClick（绕过 disabled 属性），也不得发出请求
+  olderBtn.props.onClick()
+  await flush()
+  assert.equal(api.calls.length, 2, 'reload 在途点翻旧零请求（不发旧游标请求）')
+  // reload 落地 → 门禁解除 → 稳定视图上翻旧正常（W1 语义零漂移：同游标同参）
+  api.calls[1].resolve(page([L('cron:wiki-ingest', 'f', 2, 'b2', '20260902')], 'k2'))
+  await flush()
+  assert.equal(findButton(root, '加载更早').props.disabled, false, 'reload 落地后入口恢复')
+  findButton(root, '加载更早').props.onClick()
+  await flush()
+  assert.equal(api.calls.length, 3, '稳定视图上翻旧正常发出')
+  assert.equal(api.calls[2].cursor, 'k2', '翻旧游标=当前页游标')
+  assert.deepEqual(api.calls[2].query, {}, '翻旧同参（缺省无筛选）')
+})
+
+test('F3 门禁（复审现象复现）：filter-change 后 reload 响应前点翻旧不发「旧游标+新参」请求', async () => {
+  const { root, api } = await mountView()
+  api.calls[0].resolve(page([L('cron:wiki-ingest', 'f', 1, 'c1', '20260901')], 'k1'))
+  await flush()
+  // 改筛选 → reload 在途（新参）
+  dateInput(root, '起始日期').props.onChange({ target: { value: '2026-09-05' } })
+  await flush()
+  assert.deepEqual(api.calls[1].query, { since: '2026-09-05' }, 'reload 新参在途')
+  // 复审窄缝现场：reload 响应前点「加载更早」→ 原会发「旧游标 k1 + 新参」请求——必须零请求
+  findButton(root, '加载更早').props.onClick()
+  await flush()
+  assert.equal(api.calls.length, 2, 'reload 在途点翻旧零请求（「旧游标+新参」窄缝消灭）')
+  // 新页落地 → 门禁解除 → 翻旧走新游标+新参（W1 游标不跨筛选集语义保持）
+  api.calls[1].resolve(page([L('manual:scan', 'g', 9, 'c3', '20260906')], 'k3'))
+  await flush()
+  findButton(root, '加载更早').props.onClick()
+  await flush()
+  assert.equal(api.calls.length, 3, '稳定视图上翻旧正常发出')
+  assert.equal(api.calls[2].cursor, 'k3', '翻旧游标=新筛选集游标（非旧游标 k1）')
+  assert.deepEqual(api.calls[2].query, { since: '2026-09-05' }, '翻旧同参新筛选')
+})
+
+// ── F3 门禁（时序探针同型，t6）：双 reload 在途 + A 响应晚到——finally 条件锁 ─────────────
+test('F3 门禁（时序探针同型）：A 响应晚到被丢弃后门禁仍锁（finally 仅 mine===epoch 才清），B 落地才解除', async () => {
+  const { root, api } = await mountView()
+  // mount 首取落地
+  api.calls[0].resolve(page([L('cron:wiki-ingest', 'f', 1, 'd1', '20260901')], 'k1'))
+  await flush()
+  // A 在途：点「刷新」（epoch 2）
+  findButton(root, '刷新').props.onClick()
+  await flush()
+  assert.equal(api.calls.length, 2, 'A（刷新 reload）在途')
+  // B 在途：改起始日期（epoch 3）
+  dateInput(root, '起始日期').props.onChange({ target: { value: '2026-09-05' } })
+  await flush()
+  assert.deepEqual(api.calls[2].query, { since: '2026-09-05' }, 'B（filter-change reload）新参在途')
+  // 先 resolve A 的响应 → epoch 不匹配整份丢弃（不落页）
+  api.calls[1].resolve(page([L('alerts:kb', 'h', 5, 'staleA', '20260808')], 'kA'))
+  await flush()
+  await flush()
+  assert.doesNotMatch(texts(root), /staleA/, 'A 响应 epoch 不匹配被丢弃（既不 applyLatest 也不 applyOlder）')
+  assert.match(texts(root), /d1/, '当前页保持 A 覆盖前视图（B 未落地）')
+  // A 的 finally 不得误清 B 的门禁（mine(A) !== epoch）：入口仍 disabled、直触发 onClick 零请求
+  const olderBtn = findButton(root, '加载更早')
+  assert.equal(olderBtn.props.disabled, true, 'A 落地后门禁仍锁（B 在途——finally 条件已锁）')
+  olderBtn.props.onClick()
+  await flush()
+  assert.equal(api.calls.length, 3, 'A 落地后点翻旧仍零请求（门禁未被 A 的 finally 误清）')
+  // resolve B → 门禁解除、翻旧=新游标+新参
+  api.calls[2].resolve(page([L('manual:scan', 'g', 9, 'd3', '20260906')], 'kB'))
+  await flush()
+  assert.equal(findButton(root, '加载更早').props.disabled, false, 'B 落地后门禁解除')
+  findButton(root, '加载更早').props.onClick()
+  await flush()
+  assert.equal(api.calls.length, 4, '稳定视图上翻旧正常发出')
+  assert.equal(api.calls[3].cursor, 'kB', '翻旧=新游标（B 游标，非 A 游标 kA/旧游标 k1）')
+  assert.deepEqual(api.calls[3].query, { since: '2026-09-05' }, '翻旧=新参（同筛选）')
+})
+
+// ── 发布物面锁（LRN-045）⑥：F3 门禁语义在 dist 可判（test 7 同型字面锁）────────────────
+test('LRN-045 发布物面（F3）：web/dist/panel.js 字面含门禁语义（loadOlderDisabled 属性键）', () => {
+  const dist = fs.readFileSync(path.join(fileURLToPath(new URL('..', import.meta.url)), 'web', 'dist', 'panel.js'), 'utf8')
+  assert.match(dist, /loadOlderDisabled/, 'dist 字面含 F3 门禁语义（loadOlderDisabled 属性键——缩编存活形，test 7 同型锁）')
+})

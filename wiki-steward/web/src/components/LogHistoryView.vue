@@ -14,9 +14,13 @@ const filters = ref(defaultFilters())
 // W1 epoch 守卫（0.7.0 波复审 W1 收口）：请求序号——filter-change/reload 递增，loadOlder 沿用当前序号；
 // 响应 epoch 不匹配即丢弃（既不 applyOlder 也不替换当前页，错误同样不落）：晚到的旧筛选响应永不落进新筛选视图。
 const epoch = ref(0)
+// F3 门禁（t3 复审留痕收口）：reload 在途标记——翻旧只能在稳定视图上发生（「加载更早」入口禁用 + 请求级语义门禁），
+// 消灭「filter-change 后 reload 响应前点翻旧 → 旧游标+新参请求」窄缝（W1 同族竞态）。
+const reloading = ref(false)
 
 async function reload() {
   const mine = ++epoch.value
+  reloading.value = true
   try {
     const data = await props.api.fetchLogs(PAGE_SIZE, undefined, toQuery(filters.value))
     if (mine !== epoch.value) return
@@ -24,11 +28,14 @@ async function reload() {
   } catch (e) {
     if (mine !== epoch.value) return
     history.value = applyError(history.value, e)
+  } finally {
+    if (mine === epoch.value) reloading.value = false
   }
 }
 
 async function loadOlder() {
-  if (!canLoadOlder(history.value)) return
+  // F3：reload 在途不发翻旧请求（旧游标+新参窄缝）；W1 epoch 守卫保持不变
+  if (!canLoadOlder(history.value) || reloading.value) return
   const mine = epoch.value
   try {
     const data = await props.api.fetchLogs(PAGE_SIZE, history.value.meta.cursor, toQuery(filters.value))
@@ -56,6 +63,7 @@ defineExpose({ reload, epoch })
     :meta="history.meta"
     :error="history.error"
     :filters="filters"
+    :load-older-disabled="reloading"
     @load-older="loadOlder"
     @reload="reload"
     @filter-change="onFilterChange"
