@@ -49,6 +49,11 @@ export function toQuery(filters) {
   return q
 }
 
+/** 区间倒置判定（since>until；日粒度 YYYY-MM-DD 字典序）——真则当前时间区间恒空（N2 互斥渲染单一判定源） */
+export function rangeInverted(filters) {
+  return filters.since !== '' && filters.until !== '' && filters.since > filters.until
+}
+
 /** 空结果态文案（如实三分：全不选 / 有筛选无匹配 / 无筛选无记录，各说各话不冒充） */
 export function emptyStateMessage(filters) {
   if (filters.types !== null && filters.types.length === 0) return '未选任何来源类型——勾选来源后显示对应日志。'

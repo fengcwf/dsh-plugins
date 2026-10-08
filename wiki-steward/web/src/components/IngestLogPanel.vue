@@ -5,7 +5,7 @@
 // 本组件只做展示（筛选交互经 emit 上交容器，数据面状态机零改动）。
 import { computed } from 'vue'
 import { groupBySource, shortTag, toDisplayOrder } from '../lib/log-view.js'
-import { typeSelection, toggleType, emptyStateMessage } from '../lib/log-filter.js'
+import { typeSelection, toggleType, emptyStateMessage, rangeInverted } from '../lib/log-filter.js'
 
 const props = defineProps({
   lines: { type: Array, required: true },
@@ -18,8 +18,8 @@ const emit = defineEmits(['load-older', 'reload', 'filter-change'])
 const sourceIds = computed(() => (props.meta.sources ?? []).map((s) => s.id))
 const groups = computed(() => groupBySource(toDisplayOrder(props.lines)))
 const checked = computed(() => new Set(typeSelection(props.filters, sourceIds.value)))
-// 时间筛选按日粒度（日志行仅含日期键）；起止同为 YYYY-MM-DD 可字典序比较
-const rangeEmpty = computed(() => props.filters.since !== '' && props.filters.until !== '' && props.filters.since > props.filters.until)
+// 时间筛选按日粒度（日志行仅含日期键）；起止同为 YYYY-MM-DD 可字典序比较（判定单一源=lib/log-filter.rangeInverted）
+const rangeEmpty = computed(() => rangeInverted(props.filters))
 
 function onDate(field, e) {
   emit('filter-change', { ...props.filters, [field]: e.target.value })
@@ -83,7 +83,8 @@ function onToggle(id) {
           <span v-if="line.truncated" class="ws-tag ws-tag-dim">截断</span>
         </div>
       </template>
-      <div v-if="lines.length === 0 && !error" class="ws-note">{{ emptyStateMessage(filters) }}</div>
+      <!-- N2 互斥渲染：区间倒置时只呈现「当前时间区间为空」（上方 note），空态文案不再并存 -->
+      <div v-if="lines.length === 0 && !error && !rangeEmpty" class="ws-note">{{ emptyStateMessage(filters) }}</div>
     </div>
     <div class="ws-actions">
       <button

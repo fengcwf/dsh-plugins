@@ -1,0 +1,214 @@
+{
+  "scan_time": "2026-10-07T09:11:45.967005+00:00",
+  "scanner_version": "1.0.0",
+  "project": {
+    "project_dir": "/opt/workdata/dsh-plugins/wiki-steward",
+    "exists": true,
+    "is_new_project": false,
+    "file_count": 2510,
+    "dir_count": 914,
+    "key_files": {
+      "package.json": {
+        "category": "node",
+        "size": 2593,
+        "modified": "2026-09-30T07:04:50.565461+00:00"
+      },
+      "overview.md": {
+        "category": "clsh-project",
+        "size": 1975,
+        "modified": "2026-10-07T09:02:01.146321+00:00"
+      }
+    },
+    "tech_stack": [
+      "vue"
+    ],
+    "languages": [
+      "typescript",
+      "javascript",
+      "json",
+      "vue",
+      "yaml"
+    ],
+    "existing_artifacts": [
+      "overview.md"
+    ],
+    "changes_dirs": [
+      "2026-10-07-hindsight-sync",
+      "archive",
+      "2026-09-30-logview-filters",
+      "2026-09-29-settings-ingest-controls",
+      "2026-09-28-b1b2-service-effect-fix"
+    ]
+  },
+  "obsidian": {
+    "obsidian_path": "/mnt/unraid_data/Obsidian",
+    "available": true,
+    "grep_results": [
+      {
+        "source": "wiki/INDEX.md",
+        "keyword": "clsh-project",
+        "matched": true
+      },
+      {
+        "source": "wiki/INDEX.md",
+        "keyword": "wiki",
+        "matched": true
+      },
+      {
+        "source": "wiki/INDEX.md",
+        "keyword": "json",
+        "matched": true
+      }
+    ],
+    "solutions_matches": [
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/phase8-enforcement-执行强制方案.md",
+        "keyword": "clsh-project",
+        "name": "phase8-enforcement-执行强制方案"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/loop-engineering-report.md",
+        "keyword": "clsh-project",
+        "name": "loop-engineering-report"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/INDEX.md",
+        "keyword": "wiki",
+        "name": "INDEX"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/css-backdrop-filter-containing-block.md",
+        "keyword": "vue",
+        "name": "css-backdrop-filter-containing-block"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/vue3-cdn-destructuring.md",
+        "keyword": "vue",
+        "name": "vue3-cdn-destructuring"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/fastify-no-execSync.md",
+        "keyword": "node",
+        "name": "fastify-no-execSync"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/codewhale-partial-edit-corruption.md",
+        "keyword": "node",
+        "name": "codewhale-partial-edit-corruption"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/env-hash-format.md",
+        "keyword": "node",
+        "name": "env-hash-format"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/fetch-credentials-missing.md",
+        "keyword": "javascript",
+        "name": "fetch-credentials-missing"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/wiki/solutions/external-api-check-openapi.md",
+        "keyword": "json",
+        "name": "external-api-check-openapi"
+      }
+    ],
+    "project_matches": [
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/obsidian-workbench/changes/archive/2026-05-19-initial/conversation.md",
+        "keyword": "typescript"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/obsidian-workbench/source-of-truth/constitution.md",
+        "keyword": "typescript"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/clsh-project/references/templates/constitution-template.md",
+        "keyword": "typescript"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/clsh-project/references/pitfalls/pitfall-146-tasks-compact-format.md",
+        "keyword": "typescript"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/clsh-project/references/fullstack-scaffolding-template.md",
+        "keyword": "typescript"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/shopping-cart/proposal.md",
+        "keyword": "typescript"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/collaborative-editor/changes/2026-06-12-collaborative-editor-init/conversation.md",
+        "keyword": "typescript"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/collaborative-editor/changes/2026-06-12-collaborative-editor-init/TECH.md",
+        "keyword": "typescript"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/collaborative-editor/changes/2026-06-12-collaborative-editor-init/proposal.md",
+        "keyword": "typescript"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/collaborative-editor/changes/2026-06-12-collaborative-editor-init/validation-report.md",
+        "keyword": "typescript"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/collaborative-editor/changes/2026-06-12-collaborative-editor-init/archive/completion-summary.md",
+        "keyword": "typescript"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/collaborative-editor/source-of-truth/constitution.md",
+        "keyword": "typescript"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/collaborative-editor/overview.md",
+        "keyword": "typescript"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/clsh-content/.references-meta.json",
+        "keyword": "clsh-project"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/cron-management/overview.md",
+        "keyword": "clsh-project"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/obsidian-workbench/changes/2026-05-27-round7-bugfix/bugfix-spec.md",
+        "keyword": "clsh-project"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/obsidian-workbench/.references-meta.json",
+        "keyword": "clsh-project"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/upstream-monitor/overview.md",
+        "keyword": "clsh-project"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/workspace/changes/2026-05-24-workspace-mvp/retrospective.md",
+        "keyword": "clsh-project"
+      },
+      {
+        "path": "/mnt/unraid_data/Obsidian/raw/projects/workspace/overview.md",
+        "keyword": "clsh-project"
+      }
+    ],
+    "keywords_used": [
+      "clsh-project",
+      "javascript",
+      "json",
+      "node",
+      "steward",
+      "typescript",
+      "vue",
+      "wiki",
+      "yaml"
+    ]
+  },
+  "learnings": {
+    "learnings_files": [],
+    "pitfalls_count": 37,
+    "matched_pitfalls": []
+  }
+}
