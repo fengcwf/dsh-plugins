@@ -1,5 +1,14 @@
 # Changelog — dsh-login-gate
 
+## 0.4.1 — 2026-10-09
+- **HTTP 匿名放行（安全边界，默认关）**：新增 `httpAnonymous` 配置键（顶层，默认空数组 = 零开口）。命中放行的请求免会话直通上游，用于把「只读分享面」放到门禁同域端口。
+- 判定是「**锚定前缀 + 只读方法**双锁」：`ANON_METHODS` 仅 GET/HEAD；规则须锚定（`^` 开头）、拒空串/纯通配/零宽锚点、不得覆盖门禁自有端点（`/__gate/login` 等）、不得匹配 R3 越界三形（`/ob_share_backup/x`、`/x/ob_share/`、`/ob_shareX/`）与点段/编码/NUL/反斜杠借道形；越界硬否定形 `..;`、`..%00`、`....//` 在门禁层即拒且零转发。
+- 写入口与装载层共用同一谓词 `anonRuleRejection`（`lib/anon-rules.js`）：坏规则要么被写入面整单拒（不入库），要么装载层丢该条 + 告警，不静默、不炸装载。
+- 放行走**同一 `forwarder.forward` 通道**，门禁不改写上游响应体（坏 token/过期/撤销仍由上游返回既有 404 形）；命中留痕一行（方法/路径/连接级 ip，XFF 降级为不可信附注）。
+- 测试 26→30（http-anonymous）+ 全量 105/105 fail 0，包含规则集合级反通配回归锁与「删判据必红」变异自检。三次换人复审闭环（F1 Critical 整站免登风险、F2 越界借道、R1 锚定非精确前缀均已关闭）。
+- 补充 `scripts.check`（此前 `npm run check` 无该 script）。
+
+
 ## 0.4.0 — 2026-09-30
 - **数据面收口（~/.dsh 根目录治理）**：门禁数据落源码位插件数据目录 `~/.dsh/plugins/dsh-login-gate/data/`（secret / accounts.txt / breakglass.txt / users.json / last-good-plugin.tar.gz；旧落点 `$DSH_HOME/login-gate/` 废弃）。
 - **遗留迁移**：`migrateLegacyGateData()` apply 期一次性搬迁——逐文件「新家已有=不覆盖」（防旧 secret 反灌现役）；rename 同盘原子、0600 权限随 inode 保留；无遗留=零副作用（不 mkdir）；迁空即删；失败留痕不阻塞加载。

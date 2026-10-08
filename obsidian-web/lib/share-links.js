@@ -3,9 +3,11 @@
 //   - 链接生成=服务端单一来源函数 buildShareLinks：/ob_share/<token> 路径段出自 share.js SHARE_URL_PREFIX
 //     唯一字面 + 本函数唯一拼接点；前端零拼接（红线「禁止半路拼分享 URL」——web/src 只渲染服务端下发 links，
 //     test/share-links.test.mjs 全树 grep 零命中锁形）。
-//   - 内外网地址都显示：internal=内网 host:sharePort（settings.lanHost 显式覆盖或 os.networkInterfaces
+//   - 内外网地址都显示：internal=内网链接（settings.lanHost 显式覆盖或 os.networkInterfaces
 //     自动探测首个非 internal IPv4，全 internal 回落 127.0.0.1）；external=设置页配置的外网域名（未配置=null，
-//     UI 显式占位引导设置页）。端口恒取 config.server.sharePort 单一来源（内网 host 禁带端口，防双源漂移）。
+//     UI 显式占位引导设置页）。端口恒取 config.server.sharePort 单一来源（内网 host 禁带端口，防双源漂移）；
+//     0.2.4 口径：sharePort=null（同域模式，出厂默认）时 internal **仅下发路径**（零端口）——旧实现在此
+//     回落常量 3500，而 3500 在生产拓扑上恰是 login-gate 门禁端口，站外访客点进去必被 302 到登录页。
 //   - 外网域名配置=设置页持久化（Ruling 见 task-10-report）：<vaultRoot>/.ob-share/settings.json
 //     （0600，writeAtomicFsync 原子写+双 fsync=ARC-4；落分享存储内=内部段围栏天然遮蔽（guest 永不可达）、
 //     dot 目录不出树；文件名非 token 形，listShares 串号门（entry.token===token）天然不出列表——测试锁形）。
@@ -19,7 +21,6 @@ import { SHARE_DIR, SHARE_URL_PREFIX, TOKEN_RE, ensureShareDir } from './share.j
 import { writeAtomicFsync } from './vault-ops.js'
 
 export const SETTINGS_FILE = 'settings.json'
-export const DEFAULT_SHARE_PORT = 3500 // server.sharePort 出厂默认（lib/index.js Config 同值）
 
 function fail(code, message) {
   const err = new Error(message)
@@ -130,18 +131,28 @@ export async function writeShareSettings(root, patch) {
  * @param config 配置（port=server.sharePort 单一来源）
  * @param settings readShareSettings 形（externalBaseUrl/lanHost）
  * @param lanHost 显式内网 host（缺省=settings.lanHost ?? 自动探测）
+ *
+ * 链接口径（0.2.4 修订——原 3500 回落即本处 bug，见 §附）：
+ *   sharePort=合法端口 → internal=`http://<host>:<port><path>`（独立 listener 模式，端口真实存在）；
+ *   sharePort=null/缺省/非法 → internal=`<path>`（仅路径，**绝不拼端口**）。
+ *   后者=(server.sharePort 默认 null) 同域模式：面挂 ctx.webServer.register，与 dsh 主 UI 同源同端口
+ *   （OW-INV-2「PATH 契约非端口契约」）——此模式下任何具体端口都不成立；旧实现回落常量 3500，而 3500
+ *   在生产拓扑上是 login-gate 门禁端口，站外访客点开必被 302 到登录页。故退化到路径形：由访问者当前
+ *   使用的入口（主 UI 同源）补出完整 URL，插件侧绝不臆造 host:port 双源之一。
+ *   端口来源仍是 config.server.sharePort 单一来源：非法/缺失时**不再有常量兜底**（fail-路径形，不 fail-3500）。
  */
 export function buildShareLinks({ token, config, settings, lanHost } = {}) {
   if (typeof token !== 'string' || !TOKEN_RE.test(token)) throw fail('bad_request', 'token 形非法')
   const urlPath = SHARE_URL_PREFIX + token
   const portRaw = config?.server?.sharePort
-  const port = Number.isInteger(portRaw) && portRaw >= 1 && portRaw <= 65535 ? portRaw : DEFAULT_SHARE_PORT
   const host = normalizeLanHost(lanHost ?? settings?.lanHost ?? detectLanHost())
   const bracketed = host.includes(':') ? `[${host}]` : host
   const externalBaseUrl = settings?.externalBaseUrl ? normalizeExternalBaseUrl(settings.externalBaseUrl) : null
   return {
     path: urlPath,
-    internal: `http://${bracketed}:${port}${urlPath}`,
+    internal: Number.isInteger(portRaw) && portRaw >= 1 && portRaw <= 65535
+      ? `http://${bracketed}:${portRaw}${urlPath}`
+      : urlPath, // 同域模式（sharePort=null）：仅路径，零端口臆造
     external: externalBaseUrl === null ? null : `${externalBaseUrl}${urlPath}`,
   }
 }

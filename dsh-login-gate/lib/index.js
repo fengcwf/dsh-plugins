@@ -19,6 +19,7 @@ import { createForwarder } from './proxy.js'
 import { createGateServer } from './gate.js'
 import { createApplyPatch, createConfigReader, readEntryConfig } from './settings-write.js'
 import { registerSettingsRoutes } from './settings-routes.js'
+import { filterAnonymousRules } from './anon-rules.js'
 
 export const name = 'login-gate'
 export const inject = [] // 不依赖宿主服务 API：任何 dsh 版本均可加载（会话注入走 A/B/C 兼容链）
@@ -33,6 +34,9 @@ export const Config = z.object({
   maxFailures: z.number().min(1).default(5),
   secureCookie: z.boolean().default(true),
   wsAllow: z.array(z.string()).default(['^/api/']),
+  // HTTP 匿名放行前缀（正则串数组；**默认空 = 零开口**，行为与未配置时逐字一致）。
+  // 命中 = 免会话直通（仍然只走 forwarder.forward，响应体不由门禁改写）；仅 GET/HEAD 放行。
+  httpAnonymous: z.array(z.string()).default([]),
   gzipPass: z.boolean().default(true),
   users: z.record(z.string(), z.string()).default({}),
   usersFile: z.string().optional(),
@@ -92,8 +96,19 @@ function loadOrCreateSecret() {
 }
 
 /** 防御性归一化：宿主未做 schema 校验时也能工作 */
-function normalize(raw) {
+function normalize(raw, log) {
   const c = raw ?? {}
+  // 安全边界键：非字符串项一律丢弃（数字 123 会变成未锚定正则 /123/，匹配面不可控）；
+  // 坏规则（未锚定 / 纯通配 / 零宽锚点 / 目标不绝对）按 lib/anon-rules.js 契约一并丢弃并留痕
+  // （复审 F1：规则内容只校验「可编译」不校验「不构成通配」→ 写入面与装载层**双道**判据）。
+  const anon = filterAnonymousRules(c.httpAnonymous)
+  const httpAnonymous = anon.rules
+  if (anon.dropped.length) {
+    for (const d of anon.dropped) {
+      const shown = typeof d.rule === 'string' ? JSON.stringify(d.rule) : Object.prototype.toString.call(d.rule)
+      log?.(`⚠️ httpAnonymous 规则已丢弃（${d.reason}）：${shown}（合法形=以 ^ 开头、目标为 / 绝对前缀、非通配）`)
+    }
+  }
   return {
     enabled: c.enabled !== false,
     listenHost: typeof c.listenHost === 'string' && c.listenHost ? c.listenHost : '127.0.0.1',
@@ -104,6 +119,7 @@ function normalize(raw) {
     maxFailures: Number.isInteger(c.maxFailures) && c.maxFailures > 0 ? c.maxFailures : 5,
     secureCookie: c.secureCookie !== false,
     wsAllow: Array.isArray(c.wsAllow) && c.wsAllow.length ? c.wsAllow.map(String) : ['^/api/'],
+    httpAnonymous,
     gzipPass: c.gzipPass !== false,
     users: c.users && typeof c.users === 'object' ? c.users : {},
     usersFile: typeof c.usersFile === 'string' && c.usersFile ? c.usersFile : undefined,
@@ -121,7 +137,7 @@ export function apply(ctx, rawConfig) {
   if (mig.error) log('⚠️ 遗留门禁数据迁移失败（旧落点留人工处置）：' + mig.error)
   else if (mig.moved.length) log('遗留门禁数据已迁移至 plugins/dsh-login-gate/data/：' + mig.moved.join(', '))
 
-  const cfg = normalize(rawConfig)
+  const cfg = normalize(rawConfig, log)
   if (!cfg.enabled) return
 
   const { users, warnings, usersFile } = loadUsers({ users: cfg.users, usersFile: cfg.usersFile })
@@ -173,7 +189,7 @@ export function apply(ctx, rawConfig) {
   const readCfg = createConfigReader({
     getBase: () => rawConfig,
     readSaved: () => readEntryConfig(probeService('configEditor'), 'login-gate'),
-    normalize,
+    normalize: (c) => normalize(c, log), // 同款坏规则丢条+告警（设置面现读路径亦不留静默）
   })
   const lazyApplyPatch = () => {
     const svc = probeService('configEditor')
@@ -238,6 +254,7 @@ export function apply(ctx, rawConfig) {
       sessionMode: () => dshSession.mode(),
       secureCookie: cfg.secureCookie,
       sessionDays: cfg.sessionDays,
+      httpAnonymous: cfg.httpAnonymous,
       log,
     })
     server.on('error', (e) => log(`门禁监听失败：${e.message}（检查端口 ${cfg.port} 是否被占用/监听地址是否可用）`))
@@ -246,6 +263,9 @@ export function apply(ctx, rawConfig) {
         log(`登录门禁已启动：http://${cfg.listenHost}:${cfg.port} → 127.0.0.1:${cfg.upstreamPort}`)
         log(`账号数：${userCount}（usersFile: ${usersFile}）；会话 ${cfg.sessionDays} 天；失败锁定：连续 ${cfg.maxFailures} 次后指数退避`)
         log(`反代姿态：Host/Origin 改写=${cfg.rewriteHost ? '开（loopback 形式，安全边界=本门禁登录）' : '关（需自行配置 dsh trustedHosts）'}；WS 放行：${cfg.wsAllow.join(', ')}`)
+        if (cfg.httpAnonymous.length) {
+          log(`⚠️ HTTP 匿名放行已开启（前缀×GET/HEAD 双锁，响应仍由上游决定）：${cfg.httpAnonymous.join(', ')}`)
+        }
       })
     } catch (e) {
       log(`门禁启动异常：${e.message}`)

@@ -11,8 +11,23 @@ import { createServer } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { verifyPassword } from './auth.js'
 import { renderLogin } from './login-page.js'
+import { filterAnonymousRules } from './anon-rules.js'
 
 const MAX_BODY = 8 * 1024
+
+// 匿名放行的硬否定形（先于前缀匹配生效，防「放行前缀」被借道出前缀之外）：
+//   - 点段 `..` / `.`（含百分号编码形 %2e%2e / %2f 编码斜杠，大小写不敏感）→ 路径越界形
+//     与上游 obsidian-web lib/share-server.js:58-59 同口径（DOT_SEG_RE / DOT_SEG_ENC_RE）
+//   - 段分隔符族 `;` / NUL(%00) / 反斜杠：某些栈把 `;` 当参数分隔符（`..;` 即绕点段匹配）、
+//     `%00` 截断后续检查、`\` 被上游当分隔符（Windows 语义）——均为借道形
+//     上游同族判据只到 `.`（DOT_SEG_RE = /(?:^|\/)\.{1,2}(?:\/|$)/，不含 ; 与任意长点串），
+//     本门禁取**更宽口径**：段内任意长度点串 + 上述分隔符一并硬否定（纵深防御不依赖上游）
+//   - 编码斜杠 `%2f`（大小写不敏感）→ 点段借道形（..%2f..%2f 经解码即 ../../）
+const ANON_DOT_SEG_RE = /(?:^|\/)\.+(?:\/|;|$|%00|\\)/i
+const ANON_DOT_SEG_ENC_RE = /%2e/i
+const ANON_ENC_SLASH_RE = /%2f/i
+const ANON_NUL_RE = /%00/i
+const ANON_METHODS = new Set(['GET', 'HEAD']) // 仅只读方法；写方法一律不放行
 
 /** 解析 application/x-www-form-urlencoded 请求体（≤8KB） */
 function readForm(req) {
@@ -47,10 +62,11 @@ function readForm(req) {
  * @param {() => string} o.sessionMode 原生会话注入模式 A/B/C（展示用）
  * @param {boolean} o.secureCookie
  * @param {number} o.sessionDays
+ * @param {string[]} [o.httpAnonymous] HTTP 匿名放行前缀（正则串数组；默认空 = 不放行任何路径）
  * @param {(msg:string)=>void} o.log
  */
 export function createGateServer(o) {
-  const { users: staticUsers, getUsers, sessions, limiter, forwarder, onLogoutAll, sessionMode, secureCookie, sessionDays, log } = o
+  const { users: staticUsers, getUsers, sessions, limiter, forwarder, onLogoutAll, sessionMode, secureCookie, sessionDays, httpAnonymous = [], log } = o
   // 账号表：支持热加载供给器（usersFile 变更无需重启），缺省退回静态表
   const usersNow = () => (typeof getUsers === 'function' ? getUsers() : (staticUsers ?? {}))
   const hasUsers = () => Object.keys(usersNow()).length > 0
@@ -91,6 +107,32 @@ export function createGateServer(o) {
 
   // 请求跳转目标校验：必须是站内绝对路径；拒绝协议相对（//、/\）、CRLF 注入、反斜杠
   const safeNext = (v) => (typeof v === 'string' && /^\/(?!\/)[^\r\n\\]*$/.test(v)) ? v : '/'
+
+  // ── HTTP 匿名放行（默认空 = 零开口）—— 配置驱动，判定在会话校验之前 ──
+  // 语义：**锚定前缀 + 只读方法双锁**。不是「免登」：门禁只是决定要不要把请求交给上游，
+  // 真正的授权仍由上游（分享面）自己做——坏 token / 过期 / 撤销的响应体门禁一律不改写。
+  //
+  // F1 治理（装载层兜底，与写入面 settings-write.js 共用 lib/anon-rules.js 同一判据）：
+  // 规则内容不满足「锚定前缀」契约（未锚定/纯通配/零宽锚点/目标不绝对）→ **丢该条 + 告警一行**，
+  // 绝不静默、绝不炸装载。这样即便配置绕开写入面（cordis.patch.yml 直写 / 老 profile）
+  // 也不会把放行面翻成整站。坏正则项由下方编译 catch 收敛（该条不生效）。
+  const { rules: anonRuleStrings, dropped: anonDropped } = filterAnonymousRules(httpAnonymous)
+  for (const d of anonDropped) {
+    const shown = typeof d.rule === 'string' ? JSON.stringify(d.rule) : Object.prototype.toString.call(d.rule)
+    log?.(`⚠️ httpAnonymous 规则已丢弃（${d.reason}）：${shown}（合法形=以 ^ 开头、目标为 / 绝对前缀、非通配）`)
+  }
+  const anonRules = []
+  for (const s of anonRuleStrings) {
+    try { anonRules.push({ rule: s, re: new RegExp(s) }) } catch { /* 坏正则=该条不生效（不炸装载） */ }
+  }
+  const anonHit = (method, path) =>
+    anonRules.length > 0 &&
+    ANON_METHODS.has(String(method ?? '').toUpperCase()) &&
+    // 越界硬否定：点段族 / 点段编码 / 编码斜杠 / NUL / 反斜杠（任一命中一律不放行）
+    !path.includes('\\') &&
+    !ANON_DOT_SEG_RE.test(path) && !ANON_DOT_SEG_ENC_RE.test(path) &&
+    !ANON_ENC_SLASH_RE.test(path) && !ANON_NUL_RE.test(path) &&
+    anonRules.some((r) => r.re.test(path))
 
   const server = createServer(async (req, res) => {
     const url = req.url ?? '/'
@@ -147,6 +189,24 @@ export function createGateServer(o) {
       const session = sessions.verifyCookie(req.headers.cookie)
       if (!session) return sendJson(res, 401, { ok: false, error: '未登录' })
       return sendJson(res, 200, { ok: true, user: session.u, exp: session.exp, mode: sessionMode() })
+    }
+
+    // ── HTTP 匿名放行（命中 = 免会话直通，与下方同一 forwarder.forward 通道）──
+    if (anonHit(req.method, path)) {
+      // F4：审计行主 ip 用**连接级观察值**（socket.remoteAddress，服务端可见、访客不可伪造）。
+      // clientIp() 在私网/回环来源下会采信访客可控的 X-Forwarded-For 首跳（gate.js:72-81），
+      // 匿名面日志记 XFF = 把「谁访问了分享面」这条证据链交给访客改写。故 XFF 仅作附加上下文
+      // （xff=，可为空）且不参与主 ip。
+      const auditIp = req.socket?.remoteAddress ?? 'unknown'
+      const rawXff = String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim()
+      log?.(`匿名放行：${req.method} ${url} ip=${auditIp}${rawXff ? ` xff=${rawXff}(不可信,仅附注)` : ''}`)
+      try {
+        await forwarder.forward(req, res)
+      } catch (e) {
+        if (!res.headersSent) { res.writeHead(502); res.end('bad gateway: ' + e.message) }
+        else res.destroy()
+      }
+      return
     }
 
     // ── 其余路径：认证后转发 ──

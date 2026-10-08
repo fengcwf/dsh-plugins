@@ -70,7 +70,9 @@ async function readJsonBody(req) {
   }
 }
 
-/** 设置面展示投影：九键（users/usersFile/enabled 等内部键绝不外露） */
+/** 设置面展示投影：九键（users/usersFile/enabled 等内部键绝不外露）
+ * 注：`httpAnonymous` 进 EDITABLE_KEYS（可经宿主 configEditor 写），但**不进展示面**——
+ * 展示面新增键会牵动设置页 UI（client.js 字段表），本卡只动 3 文件，故不外露。 */
 function displayConfig(cfg) {
   const c = cfg ?? {}
   return {

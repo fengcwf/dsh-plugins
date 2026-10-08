@@ -214,6 +214,37 @@ test('③ 外网域名未配置：external=null 显式占位、internal 照发�
   })
 })
 
+// ── 0.2.4 缺陷锁：同域模式（sharePort=null，出厂默认）链接口径 = 仅路径（HTTP 面端到端）────
+// 取证：share-external-access-analysis.md §2.2 / §3 方案四。旧行为：null → 回落 3500 → 生成的链接端口
+// = login-gate 门禁端口 → 站外访客点开被 302 到登录页（分享链接实质失效）。
+test('③ 同域模式（sharePort=null 出厂默认）：links.internal=仅路径、sharePort API=null，零 3500', async (t) => {
+  const root = makeVault('same-domain')
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const config = { ...makeConfig(root), server: { sharePort: null, shareHost: '0.0.0.0', trustProxy: [] } }
+  await withApi(config, async (base) => {
+    await postJson(base, '/ob/api/share-settings', { externalBaseUrl: 'https://share.example.com', lanHost: '192.168.1.10' })
+    const created = await postJson(base, '/ob/api/shares/create', { target: 'notes/a.md', role: 'read' })
+    assert.equal(created.status, 200)
+    const token = created.body.data.share.token
+    const links = created.body.data.share.links
+    assert.equal(links.internal, `/ob_share/${token}`, '① internal=仅路径（同域模式零端口）')
+    assert.ok(!links.internal.includes('3500'), '② internal 绝不含 3500（门禁端口）')
+    assert.equal(links.external, `https://share.example.com/ob_share/${token}`, '③ external 照旧：外网域名+路径')
+
+    // 管理列表同一口径
+    const list = await getJson(base, '/ob/api/shares')
+    assert.equal(list.body.data.shares[0].links.internal, `/ob_share/${token}`, '④ 列表面 links 同口径')
+
+    // 设置端点：null 就是 null（旧实现回落 3500 → 前端把门禁端口显示成分享端口）
+    const settingsRes = await getJson(base, '/ob/api/share-settings')
+    assert.equal(settingsRes.body.data.sharePort, null, '⑤ sharePort 端点 = null（不回落 3500）')
+
+    // 撤销面同样消费 buildShareLinks（防分叉）
+    const revoked = await postJson(base, '/ob/api/shares/revoke', { token })
+    assert.equal(revoked.body.data.share.links.internal, `/ob_share/${token}`, '⑥ revoke 面 links 同口径')
+  })
+})
+
 test('⑥ 计数展示口径：guest 访问 N 次 → 管理面 accessCount=N、lastAccessAt 随行（计数=checkAccess 成功次数）', async (t) => {
   const root = makeVault('count')
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))

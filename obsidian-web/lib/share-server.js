@@ -4,7 +4,11 @@
 //     （dsh web 3080 同域 /ob_share，零自有端口）——默认不再开自有端口（3500 与 login-gate 冲突根治）；
 //   ② 独立模式（server.sharePort:number，可选）：宿主内独立 node:http listener（独立端口/独立
 //   生命周期）——OW-INV-10「可单独关停」达成：close()/share.enabled=false → 监听关闭=连接拒绝。
-// 对外契约 3500 /ob_share/<token> = PATH 契约（非端口契约），由 login-gate/nginx 直通反代保持。
+// 对外契约 `/ob_share/<token>` = **PATH 契约（非端口契约）**（0.2.4 口径修订）：
+//   路径段恒定，端口随模式走——模式①无自有端口（走 dsh 主入口），模式②走 server.sharePort。
+//   外部入口（反代/门禁）只需保持该路径段直通到本面，**不得依赖任何端口字面量**：旧的「3500」写法
+//   已不成立（3500 在生产拓扑上恰是 login-gate 门禁端口，本插件的面在该模式下根本没有端口）。
+//   插件侧同口径：链接生成不臆造端口（share-links.buildShareLinks —— null 模式只下发路径形）。
 // watchdog 安全：listener 任何失败 fail-open（面不启+degraded 留痕），全路径绝不抛出炸宿主。
 //
 // 面契约（test/share-server.test.mjs 字面双锁）：

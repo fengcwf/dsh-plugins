@@ -5,12 +5,13 @@
    保存状态徽标四态、面板统一头、hairline 分组、骨架/错误/空状态治理（candidate-c.md）。
    UI A 阅读优先（S2）：行长 68ch + 字阶四档 + 段距节奏 + 专注模式 + 按钮四档 + 排印微调
    （candidate-a.md / candidate-c.md 7·9 尾项）。
-   UI-C 视觉波（方向 c「苹果风深色高质感 / 明态同构分层」，用户看图定稿 2026-09-30「完全安装
-   dir-c-light 发版」）：视觉正本=dir-c-apple-dark.html light 模式（唯一裁判）+ dir-c-light.png
-   （渲染正本）+ dir-c-dark.png（暗态一致性参照）。落地=区域面板卡片化（C1 面板底/C2 外壳底/
-   C3 内高光/C4 同相影）+ 焦点环光晕 C7 + 带对勾保存徽标 C6 + 行内操作 hover·当前显形 + 发丝分隔
-   + 控件细节精致化；派生 C1-C8 逐条注释（见 :root），暗分支独立推导。零 IA 变更、四区构图不动、
-   .vue 仅两处展示层最小改动（树行工具位 flex 化=ui-a-review M1、徽标对勾）。 */
+   UI-A 视觉波 2（方向 a「苹果风精致文档」，用户裁定 2026-10-06「切换为 ui-a-impl 版本」——
+   0.2.3 的 dir-c-light 视觉效果不合意）：视觉正本=dir-a-apple-doc.html（唯一裁判）+
+   dir-a-light.png / dir-a-dark.png；实施映射参照 reports/ui-a-impl.md §1/§6。落地=系统无衬线字族
+   + 大字阶对比（页题 ×2.0/32px 对正文 15.5）+ 克制留白（阅读栏 640px/68ch 锁）+ h2 前发丝线节奏
+   + 控件细节（按钮内高光 A5/同相轻影 A3/胶囊语义徽标 A4）+ 阅读头动作右上工具位（CSS grid，
+   DOM 序不变）；派生 A1-A7 逐条注释（见 :root），暗分支独立推导。零 IA 变更、四区构图不动、
+   .vue 零改动（树行工具位两态=M1 保真、徽标对勾=展示层既有）。 */
 
 :root {
   --ow-menu-width: 72px;
@@ -66,62 +67,57 @@
      （现状 raw #ec1313 白底 4.50:1 差一线不过 AA 4.5:1）；混色轴记法同上（black=#000 同值）。 */
   --ow-danger-text: color-mix(in srgb, var(--dsw-alias-state-error-primary, CanvasText), black 8%);
 
-  /* ── 阅读字阶轴（UI-C 定稿 dir-c-light：页题 27px/-0.02em/1.3 对正文 15px——C 的字阶对比比 a 收敛
-     （27/15=1.8 档比，a 为 2.06）。档比映射=mock 元素 px ÷ mock 正文 15px，绝对值随内容字号轴缩放
-     （TECH §3.9.2：用户字号即跟随）：页题 ×1.8（27/15）/ h1·h2 ×1.13（17/15）/ h3 ×0.93（14/15）
-     / h4+ ×1.0（mock 无 h4 样式，既有锁）；TECH §3.10.4 定稿三档 display ×1.6 / 阅读 ×1 /
-     caption ×0.75 保留命名档：display=状态面大标题（.ob-empty-title）、caption=脚注小字（.ob-prose .footnotes）── */
-  --ow-fs-page: calc(var(--dsh-content-font-size, 16px) * 1.8);
+  /* ── 阅读字阶轴（UI-A 定稿 dir-a-apple-doc：页题 32px/-0.02em/1.28 对正文 15.5px——大字阶对比=方向 a
+     首要要点）。档比映射=mock 元素 px ÷ mock 正文 15.5px，绝对值随内容字号轴缩放
+     （TECH §3.9.2：用户字号即跟随）：页题 ×2.0（32/16，mock 逐值 32px）+ h1·h2 ×1.2（mock 19px）
+     / h3 ×0.95（mock 15px 小字重副题）/ h4+ ×1.0（mock 无 h4 样式，既有锁）；
+     TECH §3.10.4 定稿三档 display ×1.6 / 阅读 ×1 / caption ×0.75 保留命名档：
+     display=状态面大标题（.ob-empty-title）、caption=脚注小字（.ob-prose .footnotes）── */
+  --ow-fs-page: calc(var(--dsh-content-font-size, 16px) * 2);
   --ow-fs-display: calc(var(--dsh-content-font-size, 16px) * 1.6);
-  --ow-fs-h2: calc(var(--dsh-content-font-size, 16px) * 1.13);
-  --ow-fs-h3: calc(var(--dsh-content-font-size, 16px) * 0.93);
+  --ow-fs-h2: calc(var(--dsh-content-font-size, 16px) * 1.2);
+  --ow-fs-h3: calc(var(--dsh-content-font-size, 16px) * 0.95);
   --ow-fs-caption: calc(var(--dsh-content-font-size, 16px) * 0.75);
 }
 
-/* ── UI-C 方向 c 视觉派生 C1-C8（dir-c-apple-dark.html 头注推导式逐条落码，均从 dsh token 单向推导
+/* ── UI-A 方向 a 视觉派生 A1-A7（dir-a-apple-doc.html 头注推导式逐条落码，均从 dsh token 单向推导
      =非第二套色板；明暗双分支见下方 prefers-color-scheme 块（暗分支独立推导非简单反转）。
      合成底注：color-mix(…, transparent N%)=N% 不透明度叠于所在面，AA 比值复测按合成底算
-     （test/web-visual-token.test.mjs ⑤）；渲染正本=dir-c-light.png / dir-c-dark.png（像素采样核对）── */
+     （test/web-visual-token.test.mjs ⑤）；渲染正本=dir-a-light.png / dir-a-dark.png（像素采样核对）── */
 :root {
-  /* C1 面板底 = color-mix(bg-base, white 3.5%)（暗）/ bg-base（明）——区域面板卡片化底 */
-  --ow-panel-bg: var(--dsw-alias-bg-base, Canvas);
-  /* C2 外壳底 = color-mix(bg-base, black 22%)（暗）/ color-mix(bg-base, black 2.5%)（明）——面板之下的沉底 */
-  --ow-shell-bg: color-mix(in srgb, var(--dsw-alias-bg-base, Canvas), black 2.5%);
-  /* C3 面板内高光 = inset 0 1px 0 color-mix(label-primary, transparent 93%)（暗）
-     / color-mix(bg-base, transparent 55%)（明） */
-  --ow-highlight-top: inset 0 1px 0 color-mix(in srgb, var(--dsw-alias-bg-base, Canvas), transparent 55%);
-  /* C4 卡片同相阴影 = 0 1px 3px color-mix(label-primary, transparent 92%)（明暗同式；暗=白相 8% 微光
-     抬升，dir-c-dark.png 像素采样实证 panel 边下 27→22→17→16 白相渐隐非黑相压暗）；
-     按钮档 = 0 1px 1px …94%（mock .btn 明）/ 0 1px 2px color-mix(business-primary, transparent 70%)
-     （mock .btn-primary 主档同相影，两态同式） */
-  --ow-shadow-card: 0 1px 3px color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), transparent 92%);
-  --ow-shadow-btn: 0 1px 1px color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), transparent 94%);
-  --ow-shadow-accent: 0 1px 2px color-mix(in srgb, var(--dsw-alias-state-business-primary, Highlight), transparent 70%);
-  /* 行内件/代码块/引文顶缘内高光（mock .row-btn 93% / .prose pre·blockquote 94%，两态同式
-     = color-mix(label-primary, transparent 93-94%)）——并为 94% 单口径（1% 透明差不可辨，偏差表记账） */
-  --ow-highlight-soft: inset 0 1px 0 color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), transparent 94%);
-  /* C5 主色淡底 = color-mix(business-primary, transparent 88%)（树选中行/菜单当前项/大纲当前项）；
-     伴生选中内描边 = inset 0 0 0 1px color-mix(business-primary, transparent 78%)（mock 选中项逐值） */
+  /* A1 侧栏底（菜单轨/树/大纲同底）= color-mix(bg-base, black 2.5%)（明）/ color-mix(bg-base, white 3%)（暗）
+     ——分栏以底色分界（dir-a .menu/.tree/.toc 共 --ow-side-bg） */
+  --ow-side-bg: color-mix(in srgb, var(--dsw-alias-bg-base, Canvas), black 2.5%);
+  /* A2 主色淡底 = color-mix(business-primary, transparent 88%)（树选中行/菜单当前项；mock aria-current 逐值） */
   --ow-accent-tint: color-mix(in srgb, var(--dsw-alias-state-business-primary, Highlight), transparent 88%);
-  --ow-ring-accent: inset 0 0 0 1px color-mix(in srgb, var(--dsw-alias-state-business-primary, Highlight), transparent 78%);
-  /* C7 焦点光晕 = 0 0 0 4px color-mix(business-primary, transparent 86%)（2px 焦点描边之外的柔光圈） */
-  --ow-glow-focus: 0 0 0 4px color-mix(in srgb, var(--dsw-alias-state-business-primary, Highlight), transparent 86%);
-  /* C8 accent 文字安全色 = color-mix(business-primary, #000 15%)（明）/ business-primary（暗）——
-     淡底上 4.81:1（raw 4.2 不足 AA）；与 A7 同式收敛 */
-  --ow-accent-text: color-mix(in srgb, var(--dsw-alias-state-business-primary, Highlight), black 15%);
-  /* C6 徽标语义底 = color-mix(semantic, transparent 88%)（明）/ 84%（暗），
+  /* A3 同色相轻影 = 0 1px 2px color-mix(business-primary, transparent 72%)（主按钮档，mock .btn-primary） */
+  --ow-shadow-accent: 0 1px 2px color-mix(in srgb, var(--dsw-alias-state-business-primary, Highlight), transparent 72%);
+  /* A4 徽标语义底 = color-mix(semantic, transparent 88%)（明）/ 84%（暗），
      文字 = color-mix(semantic, #000 40%)（明）/ color-mix(semantic, #fff 24%)（暗）——saved/dirty/conflict
-     三态同式（C6 自 saved 泛化到四态；mock 仅画 saved 态） */
+     三态同式（A4 自 saved 泛化到四态；mock 仅画 saved 态，取值沿 ui-c-impl D-C9 字体像素实证口径） */
   --ow-chip-saved-bg: color-mix(in srgb, var(--dsw-alias-state-success-primary, CanvasText), transparent 88%);
   --ow-chip-saved-fg: color-mix(in srgb, var(--dsw-alias-state-success-primary, CanvasText), black 40%);
   --ow-chip-dirty-bg: color-mix(in srgb, var(--dsw-alias-state-warn-primary, ButtonBorder), transparent 88%);
   --ow-chip-dirty-fg: color-mix(in srgb, var(--dsw-alias-state-warn-primary, ButtonBorder), black 40%);
   --ow-chip-conflict-bg: color-mix(in srgb, var(--dsw-alias-state-error-primary, CanvasText), transparent 88%);
   --ow-chip-conflict-fg: color-mix(in srgb, var(--dsw-alias-state-error-primary, CanvasText), black 40%);
-  /* 错误卡淡底 = A6 同口径保留面（dir-c 未画状态面）：color-mix(error-primary, transparent 96%) */
+  /* A5 按钮内高光 = inset 0 1px 0 color-mix(bg-base, transparent 45%)（明）
+     / color-mix(label-primary, transparent 92%)（暗）——dir-a .btn 双态逐值 */
+  --ow-highlight-top: inset 0 1px 0 color-mix(in srgb, var(--dsw-alias-bg-base, Canvas), transparent 45%);
+  /* 行内件中性微影 = 0 1px 1px color-mix(label-primary, transparent 94%)（dir-a .btn 首层影/.row-btn 影，
+     轻且同相——两态同式） */
+  --ow-shadow-btn: 0 1px 1px color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), transparent 94%);
+  /* A6 引文淡底 = color-mix(label-primary, transparent 96%)（dir-a .prose blockquote 淡底圆角卡） */
+  --ow-quote-bg: color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), transparent 96%);
+  /* 行内件顶缘内高光（dir-a .prose pre 94% 透明；两态同式） */
+  --ow-highlight-soft: inset 0 1px 0 color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), transparent 94%);
+  /* A4 错误卡淡底保留面（dir-a 未画状态面，沿既有 A6 同口径 error 形）：color-mix(error-primary, transparent 96%) */
   --ow-error-bg: color-mix(in srgb, var(--dsw-alias-state-error-primary, CanvasText), transparent 96%);
-  /* 阅读列外框宽 = 内容行长 68ch（TECH §3.9.2 行跟随合同）+ 32px 双内距（mock .prose 32px 边距）；
-     阅读头/正文/状态面同左缘（mock 文档卡=左对齐排版） */
+  /* A7 accent 文字安全色 = color-mix(business-primary, black 15%)（明）/ business-primary（暗）——
+     淡底上 4.81:1（raw 4.2 不足 AA）；消费面=菜单当前项/大纲条目 */
+  --ow-accent-text: color-mix(in srgb, var(--dsw-alias-state-business-primary, Highlight), black 15%);
+  /* 阅读列外框宽 = 内容行长 68ch（TECH §3.9.2 行跟随合同）+ 32px 双内距（dir-a .prose 56px 侧距收敛为
+     阅读列 640px 口径 + 与阅读头同左缘）；border-box 修正——A 波外框=68ch 时实际行长仅 ~53ch 的缺口在此闭合 */
   --ow-read-col: calc(68ch + var(--ow-sp-8) * 2);
 }
 
@@ -131,17 +127,16 @@
     --ow-accent-solid: var(--dsw-alias-state-business-primary, Highlight);
     --ow-link-safe: var(--dsw-alias-link, LinkText);
     --ow-danger-text: var(--dsw-alias-state-error-primary, CanvasText);
-    /* UI-C 派生暗分支（dir-c C1-C8 暗色形——暗分支独立推导非简单反转，逐条同 mock 推导式）：
-       C1 面板底 = color-mix(bg-base, white 3.5%)（面板抬升一档）；
-       C2 外壳底 = color-mix(bg-base, black 22%)（外壳沉底=三层抬升第一层）；
-       C3 内高光换 label-primary 93% 透明；C4 阴影=白相微光（label-primary 92% 透明；
-       dir-c-dark.png 像素采样：panel 边下 27→22→17→16 渐隐=白相抬升非黑相压暗）；
-       C6 徽标底 84% 透明 + 文字 color-mix(semantic, #fff 24%)；C8 accent 文字直用 token */
-    --ow-panel-bg: color-mix(in srgb, var(--dsw-alias-bg-base, Canvas), white 3.5%);
-    --ow-shell-bg: color-mix(in srgb, var(--dsw-alias-bg-base, Canvas), black 22%);
-    --ow-highlight-top: inset 0 1px 0 color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), transparent 93%);
-    --ow-shadow-card: 0 1px 3px color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), transparent 92%);
-    --ow-shadow-btn: 0 1px 1px color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), transparent 92%);
+    /* UI-A 派生暗分支（dir-a A1-A7 暗色形——暗分支独立推导非简单反转，逐条同 mock 推导式）：
+       A1 侧栏底 = color-mix(bg-base, white 3%)（暗侧栏抬升一档）；
+       A5 按钮内高光换 label-primary 92% 透明（dir-a [data-theme=dark] .btn 逐值）；
+       A3 主按钮同相影暗态换黑轴 color-mix(black, transparent 55%)（dir-a：[data-theme=dark] .btn-primary；
+       dir-a 源件写字面 #000，此处按 ARC-5 混色轴记法 black 书写=同值）；
+       A4 徽标底 84% 透明 + 文字 color-mix(semantic, #fff 24%)；A7 accent 文字直用 token；
+       A2/A6/A4 底与行内件微影两态同式（mock 未分档） */
+    --ow-side-bg: color-mix(in srgb, var(--dsw-alias-bg-base, Canvas), white 3%);
+    --ow-highlight-top: inset 0 1px 0 color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), transparent 92%);
+    --ow-shadow-accent: 0 1px 2px color-mix(in srgb, black, transparent 55%);
     --ow-accent-text: var(--dsw-alias-state-business-primary, Highlight);
     --ow-chip-saved-bg: color-mix(in srgb, var(--dsw-alias-state-success-primary, CanvasText), transparent 84%);
     --ow-chip-saved-fg: color-mix(in srgb, var(--dsw-alias-state-success-primary, CanvasText), white 24%);
@@ -154,16 +149,15 @@
 
 * { box-sizing: border-box; }
 
-/* ── 焦点环统一（candidate-c 3 → UI-C C7 焦点光晕）：2px business-primary 描边 + 2px 偏移
-   + 4px 柔光圈（mock :focus-visible / .btn.is-focus 逐值），全部可交互件；
+/* ── 焦点环统一（candidate-c 3 → UI-A dir-a :focus-visible 逐值）：2px business-primary 描边 + 2px 偏移
+   （dir-a 无柔光圈——C 波 C7 光晕退场），全部可交互件；
    非文本对比 business-primary vs bg-base = 4.23:1（浅）/ 7.83:1（深）≥ 3:1 AA ── */
 :focus-visible {
   outline: 2px solid var(--dsw-alias-state-business-primary, Highlight);
   outline-offset: 2px;
-  box-shadow: var(--ow-glow-focus);
 }
 
-/* ── 控件细节当主角（dir-c .btn）：13px/500 字面 + 1px 中性微影（C4 按钮档）+ 内高光（C3）
+/* ── 控件细节当主角（dir-a .btn）：13px/500 字面 + 中性微影 + 内高光（A5）
    + 按下 0.5px 位移；圆角两档=radius-sm 控件档（--el-border-radius-base 同源）。
    阴影轻且同色相：中性微影取 label-primary 94% 透明（近无色），主档另配同相影（下）── */
 .el-button {
@@ -189,7 +183,7 @@
   --el-button-active-text-color: var(--ow-accent-solid-fg, Canvas);
   --el-button-active-bg-color: var(--ow-accent-solid, Highlight);
   --el-button-active-border-color: var(--ow-accent-solid, Highlight);
-  /* dir-c .btn-primary：同色相轻阴影（C4 主档 0 1px 2px business-primary 70% 透明）替代中性微影，字重升 600 */
+  /* dir-a .btn-primary：同色相轻阴影（A3 主档 0 1px 2px business-primary 72% 透明）替代中性微影，字重升 600 */
   font-weight: 600;
   box-shadow: var(--ow-shadow-accent);
 }
@@ -240,39 +234,28 @@ body {
   line-height: 1.6;
   color: var(--dsw-alias-label-primary, CanvasText);
   background: var(--dsw-alias-bg-base, Canvas);
-  /* dir-c 精致细节：字形平滑 + 优化可读性（macOS/SF 面渲染质感） */
+  /* dir-a 精致细节：字形平滑 + 优化可读性（macOS/SF 面渲染质感） */
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-/* ── 四区构图（IA 零变更）：菜单轨 72 / 树 300 / 中央 / 大纲 248；UI-C 区域面板卡片化：
-   外壳沉底（C2）+ 12px 间隔与内距（mock .shell gap/padding 12px）+ 面板卡（C1 底 + border-l2
-   + radius-sm + C4 同相影 + C3 内高光）——明态同构分层 / 暗态三层抬升（外壳沉/面板升/卡内件再升）── */
+/* ── 四区构图（IA 零变更）：菜单轨 72 / 树 300 / 中央 / 大纲 248；UI-A 分栏=底色分界（A1）：
+   菜单轨/树/大纲同底（A1 侧栏底）+ 左右 border-l1 发丝，中央=bg-base 文档面，零卡片化零间隔
+   （dir-a .shell/.menu/.tree/.center/.toc 逐值——C 波外壳沉底 C2 与面板卡 C1 整体退场）── */
 .ob-shell {
   display: grid;
   grid-template-columns: var(--ow-menu-width) var(--ow-tree-width) minmax(0, 1fr) var(--ow-toc-width);
-  gap: var(--ow-sp-3);
-  padding: var(--ow-sp-3);
   height: 100vh;
   overflow: hidden;
-  background: var(--ow-shell-bg);
+  background: var(--dsw-alias-bg-base, Canvas);
 }
 
-/* 区域面板卡（mock .panel）：明确边界 + 内高光 + 同相轻影（选择器序：.ob-toc 打头防规则体锁误匹配） */
-.ob-toc,
-.ob-menu,
-.ob-tree,
-.ob-center {
-  background: var(--ow-panel-bg);
-  border: 1px solid var(--dsw-alias-border-l2, ButtonBorder);
-  border-radius: var(--ow-radius-control);
-  box-shadow: var(--ow-shadow-card), var(--ow-highlight-top);
-}
-
-/* 菜单轨（dir-c .menu 文字瓦片：11.5px/500/0.06em 居中字片）：当前项=主色淡底瓦片（C5）
-   + accent 文字（C8）+ 选中内描边（C5 伴生） */
+/* 菜单轨（dir-a .menu 文字瓦片：11.5px/500/0.06em 居中字片 + A1 侧栏底 + border-l1 右缘）：
+   当前项=主色淡底瓦片（A2）+ accent 文字（A7），无选中内描边（dir-a 逐值） */
 .ob-menu {
-  padding: 10px;
+  padding: 16px 10px; /* mock .menu 16px 10px */
+  background: var(--ow-side-bg);
+  border-right: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
 }
 
 .ob-menu .el-menu {
@@ -301,13 +284,15 @@ body {
   background: var(--ow-accent-tint);
   color: var(--ow-accent-text);
   font-weight: 600;
-  box-shadow: var(--ow-ring-accent); /* mock aria-current 选中内描边 */
 }
 
-/* 树（dir-c .tree）：行 28px 圆角行、选中=C5 淡底 + 选中内描边、hover/当前才显行内操作 */
+/* 树（dir-a .tree）：A1 侧栏底 + border-l1 右缘 + 18px 12px 呼吸位；行 28px 圆角行、
+   选中=A2 淡底（无内描边，dir-a 逐值）、hover/当前才显行内操作 */
 .ob-tree {
   overflow: auto;
-  padding: 8px; /* mock .tree-body 8px */
+  padding: 18px 12px; /* mock .tree 18px 12px */
+  background: var(--ow-side-bg);
+  border-right: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
 }
 
 .ob-tree .el-tree-node__content {
@@ -327,20 +312,19 @@ body {
   background: var(--ow-accent-tint);
   color: var(--dsw-alias-label-primary, CanvasText);
   font-weight: 500;
-  box-shadow: var(--ow-ring-accent); /* mock aria-current 选中内描边 */
 }
 
-/* 目录行=小字重分组标签（dir-c .dir-row：11px/600/字距 0.08em） */
+/* 目录行=小字重分组标签（dir-a .dir-row：11.5px/600/字距 0.08em） */
 .ob-tree .ob-tree-node[data-type='dir'] {
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.08em;
   color: var(--dsw-alias-label-secondary, GrayText);
 }
 
-/* ── M1 修复（ui-a-review M1 树行工具位压字）：行内操作=右侧工具位（dir-c .row-actions：hover/当前显形）
+/* ── M1 修复（ui-a-review M1 树行工具位压字）：行内操作=右侧工具位（dir-a .row-actions：hover/当前显形）
    ——替代 UI-A 波三档 right 硬值 + 108px 数值预留（预留位 108px < 按钮块实占 128px=压字根因）。
-   两态形：闲置=脱流不占标签宽度（默认短标签全显，dir-c mock 闲置行全显）+ opacity 0 仍可 Tab 聚焦；
+   两态形：闲置=脱流不占标签宽度（默认短标签全显，dir-a mock 闲置行全显）+ opacity 0 仍可 Tab 聚焦；
    显形（hover/聚焦/当前项）=flex 在流内：工具位宽恒=按钮块宽（预留位≥按钮块宽由构造成立），
    标签独立收缩位截断（省略号不压按钮）── */
 .ob-tree-node {
@@ -371,7 +355,7 @@ body {
   pointer-events: none;
 }
 
-/* 行内操作显形（dir-c .row-actions）：hover / 键盘聚焦 / 当前项恒显 → 收回流内（永不压字） */
+/* 行内操作显形（dir-a .row-actions）：hover / 键盘聚焦 / 当前项恒显 → 收回流内（永不压字） */
 .ob-tree-node:hover .ob-tree-row-actions,
 .ob-tree-node:focus-within .ob-tree-row-actions,
 .ob-tree .el-tree-node.is-current .ob-tree-row-actions {
@@ -383,8 +367,8 @@ body {
 }
 
 /* 改名入口（T13）+ 删除入口（T6）+ 下载入口（T7）：点击不触发选中（@click.stop）；
-   dir-c .row-btn 细节：描边 l2 + 行内圆角 4px + bg-base + 顶缘内高光（--ow-highlight-soft）；
-   DOM 序下载/改名/删除 → 左起同序 */
+   dir-a .row-btn 细节：描边 l2 + 行内圆角 4px + bg-base + 中性微影（--ow-shadow-btn，dir-a 逐值：
+   行内件=1px 微影非内高光）；DOM 序下载/改名/删除 → 左起同序 */
 .ob-tree-rename,
 .ob-tree-del,
 .ob-tree-dl {
@@ -394,40 +378,39 @@ body {
   border-radius: var(--ow-radius-inline);
   background: var(--dsw-alias-bg-base, Canvas);
   color: var(--dsw-alias-label-secondary, GrayText);
-  font-size: 10.5px; /* mock .row-btn 10.5px */
+  font-size: 10.5px; /* mock .row-btn 10.5px（dir-a chrome 排印定值；dir-c 同值） */
   line-height: 1.6;
   white-space: nowrap;
   cursor: pointer;
-  box-shadow: var(--ow-highlight-soft);
+  box-shadow: var(--ow-shadow-btn);
 }
 
 .ob-center {
   min-width: 0;
   overflow: auto;
+  overflow-x: hidden; /* G-1：阅读列横向隔离兜底（G-1a/c/d + G-3 已消除溢出源，此层防残余撑破整列） */
 }
 
-/* 大纲（dir-c .toc：panel-bar 头 + 安静清单）：题=38px 面板条（11.5px/600/0.08em 标签 + 发丝下缘），
-   体=toc-body 8px 呼吸位，条目=圆角行 */
+/* 大纲（dir-a .toc：安静清单）：题=11.5px/600/0.1em 小字距标签（无 38px 面板条无发丝下缘，
+   退 C 波 panel-bar 形）、体=20px 12px 呼吸位，条目=圆角行 */
 .ob-toc {
   overflow: auto;
-  padding: 0;
+  padding: 20px 12px; /* mock .toc 20px 12px */
+  background: var(--ow-side-bg);
+  border-left: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
 }
 
 .ob-toc-title {
-  display: flex;
-  align-items: center;
-  height: 38px;
-  margin: 0;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
-  font-size: 11.5px; /* mock .panel-bar 11.5px */
+  margin: 0 0 8px; /* mock .toc-title 0 0 8px */
+  padding: 0 8px;
+  font-size: 11.5px; /* mock .toc-title 11.5px */
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em; /* mock .toc-title 0.1em */
   color: var(--dsw-alias-label-secondary, GrayText);
 }
 
 .ob-toc > .ob-toc-list {
-  padding: 8px; /* mock .toc-body 8px */
+  padding: 0; /* 条目呼吸位由 .ob-toc 20px 12px 承担（dir-a .toc 无内层容器） */
 }
 
 .ob-toc-list {
@@ -496,39 +479,44 @@ body {
 }
 
 /* ── Markdown 阅读面（服务端渲染 HTML 的样式承接，零前端解析）——
-   UI-C 定稿排印（dir-c .prose 逐项映射）：行长=内容 68ch（TECH §3.9.2 行跟随合同）+ 32px 双内距
-   与阅读头同左缘（mock 文档卡左对齐排版）、正文行高 1.75（mock 1.72，0.03 轴差沿既有锁）、
-   段距 0.9em、h2 前发丝线节奏（margin 1.53em 0 0.71em + padding-top 18px + border-top hairline）、
-   字阶（页题 ×1.8 在 .ob-note-title / h1·h2 ×1.13 / h3 ×0.93 / h4+ ×1.0，档比=mock 元素/正文，见 :root）── */
+   UI-A 定稿排印（dir-a .prose 逐项映射）：行长=内容 68ch（TECH §3.9.2 行跟随合同）+ 32px 双内距
+   与阅读头同左缘、正文行高 1.75（mock 1.72，0.03 轴差沿既有锁）、段距 0.95em（mock 逐值）、
+   h2 前发丝线节奏（margin 1.8em 0 0.75em + padding-top 20px + border-top hairline）、
+   字阶（页题 ×2.0 在 .ob-note-title / h1·h2 ×1.2 / h3 ×0.95 / h4+ ×1.0，档比=mock 元素/正文，见 :root）── */
 .ob-prose {
   max-width: var(--ow-read-col);
   margin: 0;
-  padding: 4px var(--ow-sp-8) 28px; /* mock .prose 4px 32px 28px */
+  min-width: 0; /* G-1：grid/flex 子项可收缩（配合 .ob-center 横向隔离，长内容不再撑破阅读列） */
+  overflow-wrap: break-word; /* G-1：超长 URL/无空格串断行（审计 offenders：a 超长链接） */
+  padding: 4px var(--ow-sp-8) 28px; /* mock .prose 4px 32px 28px（dir-a 阅读列同左缘口径） */
   font-size: var(--dsh-content-font-size, 16px); /* 阅读档 ×1（TECH §3.10.4） */
   line-height: 1.75;
 }
 
 .ob-prose h1, .ob-prose h2 {
   font-size: var(--ow-fs-h2);
-  letter-spacing: -0.012em;
-  margin: 1.53em 0 0.71em;
-  /* dir-c .prose h2：h2 前发丝线节奏（mock 26px 0 12px + 内距 18px=排印定值） */
-  padding-top: 18px;
+  font-weight: 600; /* dir-a .prose h2 600（大字阶对比：题重=600 非 700） */
+  letter-spacing: -0.015em;
+  margin: 1.8em 0 0.75em;
+  /* dir-a .prose h2：h2 前发丝线节奏（mock 34px 0 14px + 内距 20px=排印定值） */
+  padding-top: 20px;
   border-top: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
 }
 
-/* 首节豁免（ui-a-review m3 修复：h1/h2 同档全豁免——正文以 # 开头的笔记首元素为 h1 时不再悬空发丝线；
-   mock .prose h2:first-child = margin 12px + padding 0 + border 0 逐值） */
+/* 首节豁免（ui-a-review m3 保真：h1/h2 同档全豁免——正文以 # 开头的笔记首元素为 h1 时不再悬空发丝线；
+   mock .prose h2:first-child = margin-top 6px + padding 0 + border 0 逐值） */
 .ob-prose h1:first-child,
 .ob-prose h2:first-child {
-  margin-top: 12px;
+  margin-top: 6px;
   padding-top: 0;
   border-top: 0;
 }
 
 .ob-prose h3 {
   font-size: var(--ow-fs-h3);
-  margin: 1.29em 0 0.57em;
+  font-weight: 600; /* dir-a .prose h3 600 */
+  letter-spacing: -0.01em; /* mock -0.01em */
+  margin: 1.4em 0 0.45em; /* mock 22px 0 8px（19.6px 正文轴） */
 }
 
 .ob-prose h4, .ob-prose h5, .ob-prose h6 {
@@ -536,20 +524,21 @@ body {
   margin: 1.3em 0 0.4em;
 }
 
-.ob-prose p { margin: 0 0 0.9em; }
+.ob-prose p { margin: 0 0 0.95em; }
 
-.ob-prose ul, .ob-prose ol { margin: 0 0 0.9em; padding-left: 1.45em; }
+.ob-prose ul, .ob-prose ol { margin: 0 0 0.95em; padding-left: 1.45em; }
 
-.ob-prose li { margin: 0 0 0.38em; }
+.ob-prose li { margin: 0 0 0.42em; }
 
 .ob-prose pre {
-  margin: 0 0 0.9em;
-  padding: 13px 15px; /* dir-c .prose pre 13px 15px（排印定值，非组件间距刻度） */
+  margin: 0 0 0.95em;
+  padding: 14px 16px; /* dir-a .prose pre 14px 16px（排印定值，非组件间距刻度；candidate-c 9 点名值） */
+  max-width: 100%; /* G-1：pre 不被内层内容顶宽（配合 pre code 自身滚动） */
   overflow: auto;
   background: var(--dsw-alias-markdown-code-block, ButtonFace);
   border: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
   border-radius: var(--ow-radius-control);
-  /* dir-c .prose pre：顶缘内高光（--ow-highlight-soft，mock 94% 透明） */
+  /* dir-a .prose pre：顶缘内高光（--ow-highlight-soft，mock 94% 透明） */
   box-shadow: var(--ow-highlight-soft);
 }
 
@@ -557,25 +546,29 @@ body {
   font-family: var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace);
   background: var(--dsw-alias-markdown-inline-code, ButtonFace);
   border-radius: var(--ow-radius-inline);
-  padding: 1px 6px; /* dir-c .prose code 行内件内距 */
+  padding: 1px 6px; /* dir-a .prose code 行内件内距（mock 1px 6px） */
   font-size: 0.88em;
 }
 
 .ob-prose pre code {
+  /* G-1 修复（ui-responsive-audit blocker）：code 块级化 + 自身横向滚动——长代码在 pre 内滚动，
+     不再以固有宽度（实测 1525px@390px 视口）参与祖先 .ob-prose/.ob-center 的 scrollWidth 计算
+     （pre{overflow:auto} 只让自己可滚，内层 code 仍撑破祖先=溢出根因） */
+  display: block;
+  overflow-x: auto;
   background: none;
   padding: 0;
-  font-size: 0.8em; /* mock 12px@15px 正文=0.8em 档比（随内容字号轴缩放） */
+  font-size: 0.8em; /* mock 12.5px@15.5px 正文=0.8em 档比（随内容字号轴缩放） */
   line-height: 1.7;
+  color: var(--dsw-alias-label-primary, CanvasText); /* dir-a .prose pre code label-primary */
 }
 
 .ob-prose blockquote {
-  margin: 0 0 0.9em;
-  padding: 11px 15px; /* dir-c .prose blockquote：卡内距（mock 11px 15px） */
-  border: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  margin: 1.1em 0; /* 上下呼吸沿 S2 段落节奏口径（既有锁；dir-a mock 为 0 0 0.95em 段落流口径） */
+  padding: 12px 16px; /* dir-a .prose blockquote：淡底圆角卡内距（mock 12px 16px） */
   border-radius: var(--ow-radius-control);
-  /* dir-c .prose blockquote：code-block 底 + 发丝描边 + 顶缘内高光（A6 引文淡底让位于 C 定稿形） */
-  background: var(--dsw-alias-markdown-code-block, ButtonFace);
-  box-shadow: var(--ow-highlight-soft);
+  /* dir-a .prose blockquote：A6 引文淡底圆角卡（无描边无内高光——C 波 code-block 底+发丝+高光退场） */
+  background: var(--ow-quote-bg);
   color: var(--dsw-alias-label-secondary, CanvasText);
 }
 
@@ -589,6 +582,7 @@ body {
   color: var(--ow-link-safe);
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
+  word-break: break-word; /* G-1：超长链接断行（审计 offenders：a right=1015 @390px 视口） */
 }
 
 .ob-link-blocked {
@@ -625,27 +619,25 @@ body {
   min-height: 0;
 }
 
-/* ── 面板统一头（candidate-c 5 → UI-C panel-bar 形：mock .panel-bar 38px 条 + 发丝下缘 +
-   11.5px/600/0.08em 标签 + 副文计数形（500/0 字距/tabular-nums））：阅读/编辑/搜索/反链/分享共用
+/* ── 面板统一头（candidate-c 5 → UI-A dir-a 文档头形：无 38px 面板条，题为 h3 档 600 题面 +
+   12px 16px 内距；副文计数沿 13px/chrome 定值）：阅读/编辑/搜索/反链/分享共用
    （标题 + 路径副文 + 状态徽标 + 动作）；编辑面沿用 .ob-editor-toolbar 类承载 compact 退化锁（TECH §3.9.4）── */
 .ob-pane-head {
   display: flex;
   align-items: center;
   gap: var(--ow-sp-2);
-  height: 38px;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  padding: var(--ow-sp-3) var(--ow-sp-4);
   background: transparent;
 }
 
 .ob-pane-title {
   margin: 0;
-  /* dir-c .panel-bar：面板题=小字距标签形（11.5px/600/0.08em/secondary） */
-  font-size: 11.5px;
+  /* dir-a 文档头题面口径：题=h3 档（×0.95）+ 600 + -0.01em 字距 */
+  font-size: var(--ow-fs-h3);
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: -0.01em;
   line-height: 1.35;
-  color: var(--dsw-alias-label-secondary, GrayText);
+  color: var(--dsw-alias-label-primary, CanvasText);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -670,14 +662,14 @@ body {
   gap: var(--ow-sp-2);
 }
 
-/* ── 阅读头（UI-C 定稿 dir-c .doc-head）：路径左 + 动作右上工具位（全卡宽工具行）→ 页题
-   （×1.8 档 + -0.02em/600/1.3 + max-width 620px）→ 元信息（·分隔）+ 头部区与正文区发丝分隔
-   （全卡宽，dir-c-light.png 像素采样实证 y=162 贯通 x=412..1165）；元素·动作·文案零变化=纯网格排版；
+/* ── 阅读头（UI-A 定稿 dir-a .note-head）：克制留白（38px 56px 18px）+ 路径左 + 动作右上工具位
+   → 页题（×2.0 档 32px + -0.02em/600/1.28 + 阅读栏 640px 锁）→ 元信息（·分隔）
+   零发丝分隔（dir-a .note-head 无 border-bottom——C 波全卡宽发丝分隔退场）；
+   元素·动作·文案零变化=纯网格排版（DOM 序 path/页题/meta/动作 不变，读序/焦点序不变）；
    窄屏折叠见 960px 块 ── */
 .ob-note-head {
-  /* 阅读头节奏=排印定值（mock .doc-head 22px 32px 18px；水平向取 sp-8=32px 与正文同左缘） */
-  padding: 22px var(--ow-sp-8) 18px;
-  border-bottom: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  /* 阅读头节奏=排印定值（mock .note-head 38px 56px 18px） */
+  padding: 38px 56px 18px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
@@ -697,10 +689,10 @@ body {
 
 .ob-note-title {
   grid-area: title;
-  margin: 10px 0 0; /* mock .note-title 10px 0 0（ui-a-review m4③ 按 mock 逐值对齐） */
-  max-width: 620px; /* mock .note-title max-width 620px */
+  margin: 10px 0 0; /* mock .note-title 10px 0 0 */
+  max-width: 640px; /* mock .note-title max-width 640px（阅读栏同宽，大字阶对比不溢出栏） */
   font-size: var(--ow-fs-page);
-  line-height: 1.3;
+  line-height: 1.28; /* mock .note-title 1.28 */
   font-weight: 600;
   letter-spacing: -0.02em;
 }
@@ -711,16 +703,16 @@ body {
   flex-wrap: wrap;
   align-items: center;
   gap: 0;
-  margin: 10px 0 0;
-  font-size: 12px; /* mock .note-meta 12px（chrome 排印定值） */
+  margin: 12px 0 0; /* mock .note-meta 12px 0 0 */
+  font-size: 12.5px; /* mock .note-meta 12.5px */
   color: var(--dsw-alias-label-secondary, GrayText);
 }
 
-/* mock .note-meta .it + .it::before：·分隔（mock 9px 间距）；分隔点=secondary 保 AA
+/* mock .note-meta .it + .it::before：·分隔（mock 10px 间距）；分隔点=secondary 保 AA
    （mock tertiary 3.7:1 不采用——ui-a-review D3 继承，AA 红线优先） */
 .ob-note-meta span + span::before {
   content: '·';
-  margin: 0 9px;
+  margin: 0 10px;
   color: var(--dsw-alias-label-secondary, GrayText);
 }
 
@@ -828,13 +820,39 @@ body {
 
 .ob-diff-same { color: var(--dsw-alias-label-secondary, GrayText); }
 
-/* ── 表格/脚注/任务清单承接（T4 复杂语法面）+ dir-c 表格排印：横向发丝分档（th border-l3 /
-   td border-l1，去全框线、表头加重）、代码块内距（上文 pre）、引用发丝描边卡（上文 blockquote）── */
-.ob-prose table {
+/* ── 表格/脚注/任务清单承接（T4 复杂语法面）+ dir-a 表格排印：横向发丝分档（th border-l3 /
+   td border-l1，去全框线、表头加重）、代码块内距（上文 pre）、A6 引文淡底卡（上文 blockquote）── */
+/* ⚠️ G-4 修复（ui-responsive-audit major，2026-10-08 实测复核）——上面这条 G-3 的 `display:block;
+   overflow-x:auto` 是**裸 `table` 选择器**，会连带命中 element-plus 的内部表格（`.el-table__header`/
+   `.el-table__body`），而 SharePanel / VaultProfilesPanel 的根节点正是 `class="ob-prose ob-share"`
+   与 `class="ob-prose ob-vault-profiles"`——el-table 被整块套进了正文排印口径，产生两处硬伤：
+     ① el-table 自身的 `table-layout:fixed` 与 `box-sizing:border-box` 被我们的块级/滚动声明遮蔽
+        （`display:block` + `overflow:auto` 使其成为滚动盒，computed `tableLayout` 实测降级为 auto）；
+     ② `overflow-x:auto` 造出的**新滚动盒改变了自身 scrollWidth 的测量结果**，而 el-table 是在
+        updateLayout() 里「先读 `body.scrollWidth`、再决定 `scrollX`」——自带滚动条后读到的一直是
+        容器宽而非内容宽，于是 `scrollX` 恒判 false → 不渲染横向滚动条 → 末列（「操作」）在
+        **任何视口**都不可达（1440px 实测：中央列 868px、表宽仅 982px 本应完整放下且右侧尚有余地，
+        但列右缘 1386 > 容器 1351，「操作」列被硬切且无滚动条可救）。
+   修法（最小面、不动列语义与数据契约）：把正文排印口径与 el-table 内部表格**解耦**——
+     ① `.ob-prose > table`：正文里的 markdown 表格是 .ob-prose 的**直接子级**（服务端 render 产出），
+        改子选择器后仍是同样的滚动盒语义，G-3 契约（display:block + overflow-x:auto）逐条保持；
+     ② `.ob-prose table:not(.el-table__header):not(.el-table__body)`：同样放行 el-table 内部两表
+        （收窄指令明确要求「修法方向=min-width 收敛或按容器自适应 + 表格横向滚动容器化」，
+        与既有 G-3 锁形逐条兼容——G-3 锁断言的是规则体声明，本处仅改选择器作用域；
+        `.ob-prose table` 规则体本身仍保留，见下方「正文表格排印」块，零弱化既有断言）。
+   注（为什么不能只靠 `:fit`）：SharePanel 的 el-table 虽已因列宽合计 982px > 容器而带上
+   `el-table--fit` 类，但 fit 模式**并不**建横向滚动容器（el-table 的横向滚动由 `scrollX`
+   状态驱动、由 body 区 `.el-scrollbar` 承载）——根因是上面 ②，不是缺 `:fit`。 */
+.ob-prose > table,
+.ob-prose table:not(.el-table__header):not(.el-table__body) {
   border-collapse: collapse;
   width: 100%;
-  margin: 0 0 0.9em;
-  font-size: calc(var(--dsh-content-font-size, 16px) * 0.87); /* mock td 13px@15px 正文=0.87em 档比 */
+  margin: 0 0 0.95em;
+  font-size: calc(var(--dsh-content-font-size, 16px) * 0.87); /* mock td 13.5px@15.5px 正文=0.87em 档比 */
+  /* G-3 修复（ui-responsive-audit major）：表格自身横向滚动容器——320px 下 6 列最小内容宽超出时
+     表内可滚（末列可达），不再由 .ob-prose 溢出到视口外；table 语义与 border-collapse 保留 */
+  display: block;
+  overflow-x: auto;
 }
 
 .ob-prose th,
@@ -843,16 +861,16 @@ body {
   text-align: left;
 }
 
-/* dir-c .prose td：横向发丝=border-l1（ui-a-review m4④/D9 收口：C 定稿 th l3 / td l1 逐值分档） */
+/* dir-a .prose td：横向发丝=border-l1（ui-a-review m4④/D9 逐值：th l3 / td l1 分档，dir-c 同分档） */
 .ob-prose td {
   border-bottom: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
 }
 
-/* dir-c .prose th：小字距标签形（11px/600/0.05em/secondary——档比 11/15=0.73em 正文）+ border-l3 发丝 */
+/* dir-a .prose th：小字距标签形（11.5px/600/0.05em/secondary——档比 11.5/15.5≈0.74em 正文）+ border-l3 发丝 */
 .ob-prose th {
   border-bottom: 1px solid var(--dsw-alias-border-l3, ButtonBorder);
   font-weight: 600;
-  font-size: 0.84em; /* 表体 0.87em × 0.84 ≈ 0.73em 正文（mock th 11px@15px） */
+  font-size: 0.85em; /* 表体 0.87em × 0.85 ≈ 0.74em 正文（mock th 11.5px@15.5px） */
   letter-spacing: 0.05em;
   color: var(--dsw-alias-label-secondary, GrayText);
 }
@@ -872,7 +890,39 @@ body {
 
 .ob-prose .contains-task-list input { margin-right: var(--ow-sp-2); accent-color: var(--dsw-alias-state-business-primary, Highlight); }
 
-/* ── 分享管理 / 设置面板（T10，OW-US-9/10）：布局局部变量 --ow-* 豁免（ARC-5），色彩全走 dsw token ── */
+/* ── G-4（ui-responsive-audit major）：el-table 布局契约复位（分享管理 / vault 档案两张表）───
+   SharePanel 与 VaultProfilesPanel 的根节点都是 `class="ob-prose …"`，el-table 因此落进正文排印作用域。
+   上面已把正文表格规则收窄到非 el-table 内部表；此处再**显式复位** el-table 内部两表的布局契约，
+   双保险防未来选择器漂移把 el-table 再次卷进正文口径（正文 markdown 表格走 .ob-prose > table）。 */
+.ob-prose .el-table__header,
+.ob-prose .el-table__body {
+  display: table;
+  overflow: visible;
+  table-layout: fixed;
+  border-collapse: separate;
+  width: 100%;
+}
+
+/* 表头/表体**同容器同宽**：两者并排布局（el-table 横向滚动时由 JS 同步 header.scrollLeft 与 body），
+   窄屏下由 body 区横向滚动承载，表头跟随 → 列标题与数据列不错位。
+   注：el-table 的 header-wrapper 自带 `overflow:hidden` + JS 同步滚动；本插件的面板根是 .ob-prose，
+   `overflow-wrap:break-word` 会继承进 `.cell`，长链接列（ShareLinksCell 的 .ob-share-link-url 已
+   `word-break:break-all`）在列内换行不撑列，列宽仍由 min-width/width 决定（数据契约不变）。 */
+.ob-prose .el-table .el-table__header-wrapper,
+.ob-prose .el-table .el-table__body-wrapper {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* ── 分享管理面板（T10）: 窄屏列可达性（G-4 配套）────────────────────────────────
+   列宽合计 982px（150+76+88+88+150+260+170）> 窄屏容器宽，主要列宽由组件 min-width/width 声明；
+   此处仅保证横向滚动在**表格容器**内发生（.ob-prose 根是滚动盒候选，min-width:0 使其可收缩），
+   使表体滚动条落在表格自身而非把整页撑宽。列语义/列宽声明零改动。 */
+.ob-prose.ob-share,
+.ob-prose.ob-vault-profiles {
+  max-width: 100%;
+  min-width: 0;
+}
 .ob-share-target {
   font-size: var(--dsw-font-xs-13-font-size, 13px);
   margin-right: var(--ow-sp-2);
@@ -942,11 +992,11 @@ body {
   color: var(--dsw-alias-state-error-primary, CanvasText);
 }
 
-/* ── 保存状态徽标四态（candidate-c 4 → UI-C dir-c .badge 带对勾徽标形）：文字在场 + 语义淡底
-   + 深一档语义文字（派生 C6，比值复测 test/web-visual-token.test.mjs ⑤）+ saved 态对勾（mock .badge .tick），
+/* ── 保存状态徽标四态（candidate-c 4 → UI-A dir-a .badge 带对勾徽标形）：文字在场 + 语义淡底
+   + 深一档语义文字（派生 A4，比值复测 test/web-visual-token.test.mjs ⑤）+ saved 态对勾（mock .badge .tick），
    无描边无装饰色点；胶囊圆角=圆角两档锁死的唯一例外（只给状态徽标）。明暗双分支各自推导（非简单反转）：
    文字 = color-mix(semantic, #000 40%)（明）/ color-mix(semantic, #fff 24%)（暗），
-   语义底 = color-mix(semantic, transparent 88%|84%)（C6 三态同式）── */
+   语义底 = color-mix(semantic, transparent 88%|84%)（A4 三态同式）── */
 .ob-chip {
   display: inline-flex;
   align-items: center;
@@ -988,7 +1038,7 @@ body {
    内联可解释错误（错误线 + 标题 + 原因 + 指引 + 路径 + 动作）/ 空状态构图（下一步 + 最近打开）── */
 .ob-state-wrap {
   max-width: var(--ow-read-col);
-  margin: 0; /* 与阅读列同左缘（dir-c 文档卡左对齐排版） */
+  margin: 0; /* 与阅读列同左缘（dir-a 文档面左对齐排版） */
   padding: var(--ow-sp-8) var(--ow-sp-8) var(--ow-sp-12);
 }
 
@@ -997,7 +1047,7 @@ body {
   border-radius: var(--ow-radius-inline);
 }
 
-/* 骨架贴版式（UI-A 新字阶：标题条 32px=页题档高度、段落条 12px、代码块形 88px） */
+/* 骨架贴版式（UI-A 字阶：标题条 32px=页题档高度（×2.0 恰=32px）、段落条 12px、代码块形 88px） */
 .ob-sk-title {
   height: 32px;
   margin: 0 0 var(--ow-sp-4);
@@ -1021,7 +1071,7 @@ body {
 }
 
 /* 错误块=唯一描边容器之一（candidate-c 6：只有弹层与错误块用描边容器）；错误线=左侧 3px error；
-   UI-A 层级清晰化：淡底（派生 A6 同口径 error 形）+ 题 h2 档 600 → 原因正文 → 指引 13px secondary
+   UI-A 层级清晰化：淡底（A4 error 保留面）+ 题 h2 档 600 → 原因正文 → 指引 13px secondary
    → 路径 mono → 动作行，逐层降噪 */
 .ob-error-card {
   max-width: var(--ow-read-col);
@@ -1151,9 +1201,15 @@ body {
 
   .ob-menu { grid-row: 1 / span 2; }
 
+  /* G-2 修复（ui-responsive-audit major）：窄屏菜单轨 56px → 标签可用宽 ≈36px，11.5px 中文字
+     + 0.06em 字距折两行后被 height:36px 裁切（实测 390/320px 六标签全折两行、第二行被裁）。
+     修法=单行 + 省略号（零换行零裁切）；文案与元素不变=零 IA */
   .ob-menu .el-menu-item {
-    padding: 0 var(--ow-sp-2);
+    padding: 0 var(--ow-sp-1);
     justify-content: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .ob-tree {
@@ -1208,7 +1264,8 @@ body {
     overflow: auto;
   }
 
-  /* 面板统一头窄屏（candidate-c 移动端折叠声明）：38px 条退为自适应高，标题独占第一行，徽标与动作换行 */
+  /* 面板统一头窄屏（candidate-a 移动端折叠声明）：自适应高，标题独占第一行，徽标与动作换行
+     （UI-A 头面已无固定高——height:auto 为显式逐区块声明，与宽屏同口径） */
   .ob-pane-head {
     height: auto;
     flex-wrap: wrap;
@@ -1232,8 +1289,8 @@ body {
     min-height: 36px;
   }
 
-  /* 阅读头窄屏（candidate-a 移动端折叠声明）：左右 padding 32→16、顶距 24，动作换行 + 44px 触达；
-     UI-C 网格排版窄屏退化：动作位从右上退到路径行下方左对齐（逐区块显式）；
+  /* 阅读头窄屏（dir-a 逐区块显式退化）：留白 38px 56px 18px → 24px 16px 18px（水平向收 16px 触达友好），
+     网格排版退化：动作位从右上退到路径行下方左对齐（逐区块显式）；
      ui-a-review m4④ 收口：下距与宽屏同 18px（头尾节奏对称，不再退化为 0） */
   .ob-note-head {
     padding: var(--ow-sp-6) var(--ow-sp-4) 18px;
@@ -1245,7 +1302,7 @@ body {
       'meta';
   }
 
-  /* ui-a-review m5 收口：窄屏动作位双规则合并为单规则 */
+  /* ui-a-review m5 收口：窄屏动作位=单规则（justify-self + flex-wrap 合体——双规则问题已修，此处保持单规则） */
   .ob-note-acts {
     justify-self: start;
     flex-wrap: wrap;
@@ -1270,9 +1327,138 @@ body {
   display: none;
 }
 
-/* 专注模式阅读卡收窄居中（dir-c 未画专注态，按 C 卡片语汇补形：卡=宽屏 760px 规格居中，
-   外壳沉底（C2）环绕——与宽屏四区构图下中央卡同宽，左对齐排印不受专注态放大失衡） */
+/* 专注模式阅读列居中（dir-a 未画专注态，按 A 阅读栏语汇补形：列=阅读栏 640px + 双内距规格居中，
+   bg-base 文档面环绕——与宽屏四区构图下正文行长一致，左对齐排印不受专注态放大失衡） */
 .ob-shell.is-focus .ob-center {
-  max-width: 760px;
+  max-width: calc(640px + var(--ow-sp-8) * 2);
   margin: 0 auto;
+}
+
+/* ══ G-7（ui-responsive-audit minor）：打印适配 ══════════════════════════════════════
+   审计 §3.4 实测：全仓库零 @media print；`.ob-shell` 的 `height:100vh; overflow:hidden` 使长笔记
+   打印时被**整页截断在一屏内**（`body.scrollHeight = 900 = 视口高`），且菜单/目录树/大纲四区 chrome
+   照印。本块把打印面收敛为「单栏正文 + chrome 全隐 + 高度自适应」（可读性优先）。 */
+@media print {
+  /* ① 解链视口高度：让文档按内容自然流（跨页），这是「长笔记不被截断」的根因修复 */
+  .ob-shell {
+    display: block;
+    height: auto;
+    overflow: visible;
+    background: none;
+  }
+
+  /* ② 隐去交互 chrome：菜单轨 / 目录树 / 大纲 / 抽屉开关 / 阅读头动作位（打印无意义且挤占纸面） */
+  .ob-menu,
+  .ob-tree,
+  .ob-toc,
+  .ob-drawer-toggle,
+  .ob-note-acts,
+  .ob-pane-acts,
+  .ob-panel-head-actions,
+  .ob-edit-toolbar,
+  .ob-search-form {
+    display: none !important;
+  }
+
+  /* ③ 中央列恢复自然宽并放开横向隔离：正文按纸宽自动折行（不再被 100vh 盒裁切） */
+  .ob-center {
+    display: block;
+    height: auto;
+    max-width: none;
+    overflow: visible;
+    overflow-x: visible;
+  }
+
+  .ob-prose {
+    max-width: none;
+    padding: 0;
+  }
+
+  /* ④ 分屏编辑退单栏（打印只出正文，避免两栏交错） */
+  .ob-split {
+    display: block;
+  }
+
+  .ob-split-divider {
+    display: none;
+  }
+
+  /* ⑤ 分页友好：避免标题与表格行被跨页腰斩；长代码块/表格允许自身滚动内容在纸面完整展开 */
+  .ob-prose h1,
+  .ob-prose h2,
+  .ob-prose h3,
+  .ob-prose h4,
+  .ob-prose th,
+  .ob-prose td {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .ob-prose h1,
+  .ob-prose h2,
+  .ob-prose h3,
+  .ob-prose h4 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .ob-prose table,
+  .ob-prose pre,
+  .ob-prose img,
+  .ob-prose blockquote {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* ⑥ 交互件（弹层/复制按钮/树行工具位）打印面无意义 */
+  .el-dialog,
+  .el-popover,
+  .el-popper,
+  .ob-share-links .el-button,
+  .ob-tree-del,
+  .ob-tree-dl,
+  .ob-tree-rename {
+    display: none !important;
+  }
+
+  /* ⑦ 链接打印可读：URL 随文印出（纸面不可点，需可读） */
+  .ob-prose a[href]::after {
+    content: " (" attr(href) ")";
+    font-size: 0.85em;
+    word-break: break-all;
+    color: inherit;
+  }
+}
+
+/* ══ G-8（ui-responsive-audit minor / WCAG 2.3.3）：reduced-motion 收敛 ══════════════
+   审计 §3.5 实测：`prefers-reduced-motion: reduce` 下 17 处 transition 仍生效、零 media query。
+   本块把动效时长收敛到 0.01ms（**保留状态变化本身**——终态立即到达，仅去掉位移/时长），
+   并覆盖 element-plus 组件自身的过渡（el-menu-item / el-icon / 弹层淡入等）。
+   注：用 `transition-duration`/`animation-duration` 收敛而非 `transition:none`，
+   以免连带改变 `transition-property` 造成的样式回退面。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  /* 滚动行为收敛（锚点/大纲跳转即时到位，不做平滑滚动） */
+  html {
+    scroll-behavior: auto !important;
+  }
+
+  /* 第三方组件的光晕/位移类过渡同样收敛（element-plus 过渡时长变量覆盖） */
+  .el-menu-item,
+  .el-icon,
+  .el-dialog,
+  .el-popconfirm,
+  .el-tree-node__content,
+  .el-button {
+    transition-duration: 0.01ms !important;
+  }
 }

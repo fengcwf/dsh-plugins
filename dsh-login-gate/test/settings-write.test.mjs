@@ -38,7 +38,7 @@ function fakeConfigEditor(initialConfig = {}, { entryId = 'login-gate', withEntr
 test('白名单：可写键过检；只读键/白名单外键携带=整单拒 not_editable（绝不静默丢键）', () => {
   assert.deepEqual(checkPatchEditable({ port: 3501, sessionDays: 7 }), { ok: true })
   assert.deepEqual(checkPatchEditable({ gzipPass: false, wsAllow: ['^/api/'], maxFailures: 3, secureCookie: false }), { ok: true })
-  assert.deepEqual(EDITABLE_KEYS, ['port', 'sessionDays', 'maxFailures', 'secureCookie', 'wsAllow', 'gzipPass'])
+  assert.deepEqual(EDITABLE_KEYS, ['port', 'sessionDays', 'maxFailures', 'secureCookie', 'wsAllow', 'gzipPass', 'httpAnonymous'])
 
   for (const key of ['listenHost', 'upstreamPort', 'rewriteHost', 'enabled', 'users', 'usersFile', 'unknownKey']) {
     const r = checkPatchEditable({ [key]: 1 })

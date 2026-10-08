@@ -78,6 +78,51 @@ test('② 构建物零拼接：web/dist 同样零 ob_share 字符串（bundle �
   assert.deepEqual(hits, [], `web/dist 禁含 ob_share 字面量，命中：${JSON.stringify(hits)}`)
 })
 
+// ── 0.2.4 缺陷锁①：前端零端口假设（旧 SettingsPanel.vue 初值硬编码 3500 = 门禁端口）────────
+// 语义：分享端口只有服务端 config.server.sharePort 一个来源；null=同域模式（无独立端口）。
+// 前端任何 3500 字面量 = 把门禁端口冒充成分享端口，属必须钉死的防回归哨兵。
+test('① 前端零端口假设：web/src 全树零 3500 字面量（分享端口只认服务端下发 sharePort）', () => {
+  const hits = []
+  for (const file of walkFiles(WEB_SRC, ['.js', '.vue', '.css', '.html'])) {
+    if (fs.readFileSync(file, 'utf8').includes('3500')) hits.push(path.relative(WEB_SRC, file))
+  }
+  assert.deepEqual(hits, [], `web/src 禁含 3500 端口字面量（同域模式无独立端口），命中：${JSON.stringify(hits)}`)
+})
+
+test('① 构建物零端口假设：web/dist 同样零 3500 字面量（dist 必须与源码同口径重建）', () => {
+  const hits = []
+  for (const file of walkFiles(WEB_DIST, ['.js', '.css', '.html'])) {
+    if (fs.readFileSync(file, 'utf8').includes('3500')) hits.push(path.relative(WEB_DIST, file))
+  }
+  assert.deepEqual(hits, [], `web/dist 禁含 3500 端口字面量（需 npm run build 重建 dist），命中：${JSON.stringify(hits)}`)
+})
+
+test('① 端口兜底常量已摘（运行时真断言，非文本 grep）：share-links 模块不再导出 DEFAULT_SHARE_PORT', async () => {
+  const mod = await import('../lib/share-links.js')
+  assert.ok(!('DEFAULT_SHARE_PORT' in mod), 'DEFAULT_SHARE_PORT 必须已从 share-links 导出面移除（其 3500 回落即 bug 本体）')
+})
+
+/**
+ * 真代码行判定（此库注释风格=行首 `//` 或 JSDoc 块内 `* `）：整行注释 line 不计，行尾注释剥除后计。
+ * 说明：手写剥离器会被正则/字符串里的引号拖入错态（已实测失准），故这里只做「注释行」这种一眼可判的形状。
+ * 真正的牙齿是上面的运行时断言（导出面 + buildShareLinks 行为锁）；本条只挡住最粗暴的"又把常量写回来"。
+ */
+function codePortion(line) {
+  const t = line.trimStart()
+  if (t.startsWith('//') || t.startsWith('*')) return '' // 纯注释行
+  return line.replace(/\/\/.*$/, '') // 剥行尾注释，保留代码
+}
+
+test('① 服务端零端口兜底：lib 全树代码面零 3500 端口字面量（注释说明不计）', () => {
+  const hits = []
+  for (const file of walkFiles(LIB_DIR, ['.js'])) {
+    for (const [i, line] of fs.readFileSync(file, 'utf8').split('\n').entries()) {
+      if (codePortion(line).includes('3500')) hits.push(`${path.basename(file)}:${i + 1}: ${line.trim()}`)
+    }
+  }
+  assert.deepEqual(hits, [], `lib 代码面禁含 3500 端口字面量（端口单一来源=config.server.sharePort），命中：${JSON.stringify(hits)}`)
+})
+
 test('③ buildShareLinks：path/internal/external 三线形（内外网地址都显示），端口取 config.server.sharePort', () => {
   const token = 'a'.repeat(43)
   const links = buildShareLinks({
@@ -93,13 +138,67 @@ test('③ buildShareLinks：path/internal/external 三线形（内外网地址�
   })
 })
 
-test('③ buildShareLinks：外网未配置 external=null（内网仍在）；IPv6 内网 host 自动括号；缺 server 组回落默认端口', () => {
+test('③ buildShareLinks：外网未配置 external=null（内网仍在）；IPv6 内网 host 自动括号', () => {
   const token = 'b'.repeat(43)
   const bare = buildShareLinks({ token, config: {}, settings: { externalBaseUrl: null, lanHost: null }, lanHost: '192.168.1.10' })
   assert.equal(bare.external, null, '未配置外网域名 → external=null（UI 显式占位引导设置页）')
-  assert.equal(bare.internal, `http://192.168.1.10:3500/ob_share/${token}`, '缺 server 组回落 3500')
   const v6 = buildShareLinks({ token, config: {}, settings: { externalBaseUrl: null, lanHost: null }, lanHost: 'fd00::1' })
-  assert.equal(v6.internal, `http://[fd00::1]:3500/ob_share/${token}`, 'IPv6 host 自动括号')
+  assert.equal(v6.internal, v6.path, 'IPv6 内网 host：同域模式 internal=路径形（零 host/port 拼接）')
+})
+
+// ── 0.2.4 缺陷锁：链接端口口径统一为「路径契约」（旧实现回落 DEFAULT_SHARE_PORT=3500=门禁端口）──────
+// 取证：changes/2026-09-28-b2-effect-fix/reports/share-external-access-analysis.md §2.2 + §3 方案四。
+// 语义：sharePort=number → internal 带该端口；sharePort=null/缺省/非法 → internal **仅路径**（同域模式，
+//   面挂 ctx.webServer 主入口，任何端口都不成立）——**绝不回落 3500**（3500=login-gate 门禁端口，
+//   站外访客点开必被 302 到登录页）。
+test('① 链接口径：sharePort=null（同域模式）→ internal = 仅路径，零端口（禁回落 3500）', () => {
+  const token = 'c'.repeat(43)
+  for (const config of [{ server: { sharePort: null } }, {}, { server: {} }]) {
+    const links = buildShareLinks({ token, config, settings: { externalBaseUrl: null, lanHost: null }, lanHost: '192.168.1.10' })
+    assert.equal(links.internal, `/ob_share/${token}`, `sharePort=null 形（${JSON.stringify(config)}）→ internal 仅路径`)
+    assert.ok(!links.internal.includes('3500'), 'internal 绝不含 3500（门禁端口）')
+    assert.ok(!links.internal.includes(':'), 'internal 绝不含端口分隔符（同域模式零端口）')
+    assert.equal(links.path, `/ob_share/${token}`, 'path 恒为路径形')
+  }
+})
+
+test('① 链接口径：sharePort=number → internal 带该端口（配置值真实端口，非默认）', () => {
+  const token = 'd'.repeat(43)
+  for (const port of [3501, 4500, 65535, 1]) {
+    const links = buildShareLinks({ token, config: { server: { sharePort: port } }, settings: {}, lanHost: '192.168.1.10' })
+    assert.equal(links.internal, `http://192.168.1.10:${port}/ob_share/${token}`, `sharePort=${port} → internal 带该端口`)
+  }
+})
+
+// IPv6 括号形覆盖：旧测试只在「缺 server 组回落 3500」那条分支上顺带验过括号，该分支随本次修复消失
+// （同域模式不再拼 host:port）——故在**仍能拼出 host 的 number 模式**上补回同等强度的括号锁，零净弱化。
+test('① IPv6 内网 host 自动括号（number 模式拼 host:port 时同样成立）——旧 3500 回落分支覆盖的等价迁补', () => {
+  const token = 'g'.repeat(43)
+  const v6 = buildShareLinks({ token, config: { server: { sharePort: 3501 } }, settings: {}, lanHost: 'fd00::1' })
+  assert.equal(v6.internal, `http://[fd00::1]:3501/ob_share/${token}`, 'IPv6 host 自动括号（免与端口冒号歧义）')
+  const v4 = buildShareLinks({ token, config: { server: { sharePort: 3501 } }, settings: {}, lanHost: '192.168.1.10' })
+  assert.equal(v4.internal, `http://192.168.1.10:3501/ob_share/${token}`, 'IPv4 host 不额外加括号')
+})
+
+test('① 链接口径：非法 sharePort（0/越界/字符串/布尔）→ 同域路径形（旧实现的 3500 兜底即 bug 本体）', () => {
+  const token = 'e'.repeat(43)
+  for (const bad of [0, 65536, -1, '3500', true, Number.NaN, 1.5]) {
+    const links = buildShareLinks({ token, config: { server: { sharePort: bad } }, settings: {}, lanHost: '192.168.1.10' })
+    assert.equal(links.internal, `/ob_share/${token}`, `非法 sharePort=${String(bad)} → 路径形（非 3500 兜底）`)
+  }
+})
+
+test('① 链接 GUI 口径不变式：任何模式下 links.internal 都不得以 3500 端口出现（回归哨兵）', () => {
+  const token = 'f'.repeat(43)
+  const shapes = [
+    { server: { sharePort: null } }, {}, { server: {} },
+    { server: { sharePort: 0 } }, { server: { sharePort: 'x' } },
+    { server: { sharePort: 3501 } }, { server: { sharePort: 4500 } },
+  ]
+  for (const config of shapes) {
+    const links = buildShareLinks({ token, config, settings: { externalBaseUrl: null, lanHost: null }, lanHost: 'fd00::1' })
+    assert.ok(!/(^|[^0-9])3500([^0-9]|$)/.test(links.internal), `internal 禁含 3500 端口，实际：${links.internal}`)
+  }
 })
 
 test('② buildShareLinks：非法 token（含 / 空格或空）拒——token 形围栏在生成侧同样生效', () => {

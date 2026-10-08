@@ -51,7 +51,7 @@ import {
   createShare, listShares, revokeShare, updateShareRole,
 } from './share.js'
 import {
-  buildShareLinks, detectLanHost, readShareSettings, writeShareSettings, DEFAULT_SHARE_PORT,
+  buildShareLinks, detectLanHost, readShareSettings, writeShareSettings,
 } from './share-links.js'
 import {
   listProfiles, addProfile, removeProfile, activateProfile, checkVaultHealth,
@@ -453,12 +453,22 @@ function shareWithLinks(ctx, share) {
   return { ...share, links: buildShareLinks({ token: share.token, config: ctx.config, settings: ctx.settings, lanHost: ctx.lanHost }) }
 }
 
+/**
+ * 分享面端口口径（管理面只读展示来源；0.2.4 修订——原 `?? DEFAULT_SHARE_PORT` 即 bug 的一半）：
+ *   sharePort=number → 原样返回（该端口真实存在，前端照展示）；
+ *   sharePort=null/缺省 → **返回 null**（=同域模式，面挂 dsh web 主入口，**没有独立端口**）。
+ * 旧实现在此回落常量 3500，而 3500 在生产拓扑上是 login-gate 门禁端口 —— 前端把「分享端口」显示成
+ * 3500 会让人以为要访问 3500，实际那儿站的是门禁。故 null 就是 null，由前端文案显式说「同域模式」。
+ * 与 buildShareLinks 同口径（share-links.js）：端口单一来源=config.server.sharePort，无常量兜底。
+ */
 function sharePortOf(ctx) {
-  return ctx.config?.server?.sharePort ?? DEFAULT_SHARE_PORT
+  const port = ctx.config?.server?.sharePort
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null
 }
 
 // GET /ob/api/shares → {data:{shares:[{...管理面形, links:{path,internal,external}}], total, settings,
-//   effectiveLanHost, sharePort}, total}（内外网地址都显示：internal=内网 host:sharePort、
+//   effectiveLanHost, sharePort}, total}（内外网地址都显示：internal=内网 host:sharePort（sharePort=null
+//   的同域模式下 internal **仅路径**——0.2.4 口径，绝不回落 3500）、
 //   external=设置页配置的外网域名（未配置=null 显式占位）；密码 hash 零外泄=hasPassword 布尔）
 function sharesListHandler(getConfig) {
   return async (req, res) => {

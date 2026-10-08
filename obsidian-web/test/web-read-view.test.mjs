@@ -1,11 +1,11 @@
 // S2 阅读面视图模型 + 落地锁单测（delta-specs/ui-ca-wave.md S2 节；设计正本 candidate-a.md）：
 //   ① 阅读头模型（页题/路径/元信息[更新时间/字数/标题数]/专注按钮）纯函数；
 //   ② S2 排印轴落地锁：行长 68ch、字阶四档、段距节奏、标题间距分档
-//     （UI-C 视觉波 2026-09-30 按 dir-c-light 定稿更新锁值：字阶 1.8/1.13/0.93/1.0=mock 27/17/14/15px
-//       档比映射（元素/正文）、段距 0.9em、h1·h2 间距 1.53em 0 0.71em=mock 26px 0 12px、
-//       h3 1.29em 0 0.57em=mock 18px 0 8px、blockquote 11px 15px=mock 卡内距、pre 13px 15px、
+//     （UI-A 视觉波 2 2026-10-06 按 dir-a-apple-doc 正本定稿更新锁值：字阶 2/1.2/0.95/1.0=mock
+//       32/19/15px 档比映射（元素/正文）、段距 0.95em、h1·h2 间距 1.8em 0 0.75em=mock 34px 0 14px、
+//       h3 1.4em 0 0.45em=mock 22px 0 8px、blockquote 12px 16px=A6 淡底卡内距、pre 14px 16px、
 //       表格 th border-l3 / td border-l1 发丝分档；同强度换常量、断言只增不删——
-//       mock→实现映射见 reports/ui-c-impl.md）；
+//       mock→实现映射见 reports/ui-a-impl.md，C→A 回切逐项对照见 reports/ui-a2-impl.md）；
 //   ③ 专注模式最小面落码锁 + 按钮四档（S1 尾项 candidate-c 7）+ 危险档 AA 派生③对比度复测（脚本算比值）；
 //   ④ A5 前端超时/中止落码锁（api.js AbortController + 8s TimeoutError）。
 // 被测对象：web/src/lib/read-view.js + web/src/styles.css + web/src/api.js（纯新增测试，零改既有）。
@@ -68,23 +68,23 @@ test('专注模式按钮模型（最小面：无快捷键无持久化，仅按�
 })
 
 // ── ② S2 排印轴落地锁 ────────────────────────────────────────────────────────
-test('排印轴落码锁：行长 68ch、正文行高 1.75、段距 0.9em、标题间距 1.29–1.53em 分档（UI-C=dir-c 锁值）', () => {
+test('排印轴落码锁：行长 68ch、正文行高 1.75、段距 0.95em、标题间距 0.45–1.8em 分档（UI-A=dir-a 锁值）', () => {
   assert.match(STYLES, /\.ob-prose \{[^}]*max-width: var\(--ow-read-col\)/, '行长收 68ch 列宽（candidate-a 1；外框=68ch+2×32px 内距）')
   assert.match(STYLES, /--ow-read-col: calc\(68ch \+ var\(--ow-sp-8\) \* 2\)/, '行长合同=内容 68ch 随字号缩放（TECH §3.9.2）')
   assert.match(STYLES, /\.ob-prose \{[^}]*line-height: 1\.75/, '阅读正文行高 1.75（candidate-a 2）')
-  assert.match(STYLES, /\.ob-prose p \{ margin: 0 0 0\.9em/, '段距 0.9em（dir-c .prose p）')
-  assert.match(STYLES, /1\.53em 0 0\.71em/, 'h1/h2 上间距 1.53em 0 0.71em（dir-c 26px 0 12px 映射）')
-  assert.match(STYLES, /1\.29em 0 0\.57em/, 'h3 上间距 1.29em 0 0.57em（dir-c 18px 0 8px 映射）')
+  assert.match(STYLES, /\.ob-prose p \{ margin: 0 0 0\.95em/, '段距 0.95em（dir-a .prose p）')
+  assert.match(STYLES, /1\.8em 0 0\.75em/, 'h1/h2 上间距 1.8em 0 0.75em（dir-a 34px 0 14px 映射）')
+  assert.match(STYLES, /1\.4em 0 0\.45em/, 'h3 上间距 1.4em 0 0.45em（dir-a 22px 0 8px 映射）')
   assert.match(STYLES, /1\.3em 0 0\.4em/, 'h4 上间距 1.3em（分档）')
 })
 
-test('字阶四档落码锁：页题 1.8 / h1·h2 1.13 / h3 0.93 / h4+ 1.0（dir-c 27/17/14/15px 档比映射），全部派生 --dsh-content-font-size', () => {
-  assert.match(STYLES, /--ow-fs-page: calc\(var\(--dsh-content-font-size, 16px\) \* 1\.8\)/, '页题档 ×1.8（dir-c 27px/15px 档比）')
-  assert.match(STYLES, /--ow-fs-h2: calc\(var\(--dsh-content-font-size, 16px\) \* 1\.13\)/, 'h1/h2 档 ×1.13（dir-c 17px/15px）')
-  assert.match(STYLES, /--ow-fs-h3: calc\(var\(--dsh-content-font-size, 16px\) \* 0\.93\)/, 'h3 档 ×0.93（dir-c 14px/15px）')
+test('字阶四档落码锁：页题 2 / h1·h2 1.2 / h3 0.95 / h4+ 1.0（dir-a 32/19/15px 档比映射），全部派生 --dsh-content-font-size', () => {
+  assert.match(STYLES, /--ow-fs-page: calc\(var\(--dsh-content-font-size, 16px\) \* 2\)/, '页题档 ×2.0（dir-a 32px 大字阶对比）')
+  assert.match(STYLES, /--ow-fs-h2: calc\(var\(--dsh-content-font-size, 16px\) \* 1\.2\)/, 'h1/h2 档 ×1.2（dir-a 19px）')
+  assert.match(STYLES, /--ow-fs-h3: calc\(var\(--dsh-content-font-size, 16px\) \* 0\.95\)/, 'h3 档 ×0.95（dir-a 15px 小字重副题）')
   assert.match(STYLES, /\.ob-prose h4, \.ob-prose h5, \.ob-prose h6 \{[^}]*font-size: var\(--dsh-content-font-size/, 'h4+ 档 ×1.0=阅读档直用')
   assert.match(STYLES, /\.ob-prose h1, \.ob-prose h2 \{[^}]*font-size: var\(--ow-fs-h2\)/, 'h1/h2 消费 1.13 档')
-  assert.match(STYLES, /\.ob-note-title \{[^}]*font-size: var\(--ow-fs-page\)/, '阅读头页题消费 1.8 档')
+  assert.match(STYLES, /\.ob-note-title \{[^}]*font-size: var\(--ow-fs-page\)/, '阅读头页题消费 2.0 档')
   // TECH §3.10.4 定稿三档保留命名档（display/caption），消费面=状态面大标题/脚注
   assert.match(STYLES, /--ow-fs-display: calc\(var\(--dsh-content-font-size, 16px\) \* 1\.6\)/, 'display 档保留')
   assert.match(STYLES, /--ow-fs-caption: calc\(var\(--dsh-content-font-size, 16px\) \* 0\.75\)/, 'caption 档保留')
@@ -134,13 +134,13 @@ test('AA 派生③落码+复测：color-mix(error-primary, #000 8%) → #d91111�
   assert.ok(dark >= 4.5, `深色危险档直用 token ${dark.toFixed(2)}:1 低于 AA（不加深分支）`)
 })
 
-test('排印微调落码锁（S1 尾项 candidate-c 9 → UI-C dir-c）：表格横向发丝分档+表头加重、代码块内距、引用发丝描边卡', () => {
-  assert.match(STYLES, /\.ob-prose td \{[^}]*border-bottom: 1px solid var\(--dsw-alias-border-l1/, '表格横向 hairline：td=border-l1（dir-c 分档）')
-  assert.match(STYLES, /\.ob-prose th \{[^}]*border-bottom: 1px solid var\(--dsw-alias-border-l3/, '表格横向 hairline：th=border-l3（dir-c 分档，去全框线）')
+test('排印微调落码锁（S1 尾项 candidate-c 9 → UI-A dir-a）：表格横向发丝分档+表头加重、代码块内距、A6 引文淡底卡', () => {
+  assert.match(STYLES, /\.ob-prose td \{[^}]*border-bottom: 1px solid var\(--dsw-alias-border-l1/, '表格横向 hairline：td=border-l1（dir-a 分档）')
+  assert.match(STYLES, /\.ob-prose th \{[^}]*border-bottom: 1px solid var\(--dsw-alias-border-l3/, '表格横向 hairline：th=border-l3（dir-a 分档，去全框线）')
   assert.match(STYLES, /\.ob-prose th \{[^}]*font-weight: 600/, '表头加重')
-  assert.match(STYLES, /\.ob-prose pre \{[^}]*padding: 13px 15px/, '代码块内距（dir-c .prose pre 13px 15px）')
-  assert.match(STYLES, /\.ob-prose blockquote \{[^}]*padding: 11px 15px/, '引用卡内距（dir-c 11px 15px）')
-  assert.match(STYLES, /\.ob-prose blockquote \{[^}]*border: 1px solid var\(--dsw-alias-border-l1/, '引用卡=发丝描边 + code-block 底（dir-c）')
+  assert.match(STYLES, /\.ob-prose pre \{[^}]*padding: 14px 16px/, '代码块内距（dir-a .prose pre 14px 16px=candidate-c 9 点名值）')
+  assert.match(STYLES, /\.ob-prose blockquote \{[^}]*padding: 12px 16px/, '引用卡内距（dir-a 12px 16px）')
+  assert.match(STYLES, /\.ob-prose blockquote \{[^}]*background: var\(--ow-quote-bg\)/, '引用卡=A6 引文淡底（color-mix(label-primary, transparent 96%)）')
 })
 
 // ── ④ A5 前端超时/中止落码锁 ─────────────────────────────────────────────────

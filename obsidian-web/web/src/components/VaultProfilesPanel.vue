@@ -120,19 +120,19 @@ onMounted(load)
     <p class="ob-hint">{{ hint }}</p>
 
     <el-table :data="profiles" v-loading="loading" aria-label="vault 档案列表">
-      <el-table-column label="名称" min-width="8em">
+      <el-table-column label="名称" min-width="120">
         <template #default="{ row }">
           <span>{{ row.name }}</span>
           <el-tag v-if="row.id === activeProfileId" size="small" type="info">激活</el-tag>
           <el-tag v-if="row.isCurrent" size="small">当前目录</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="路径" min-width="16em">
+      <el-table-column label="路径" min-width="240">
         <template #default="{ row }">
           <code>{{ row.path }}</code>
         </template>
       </el-table-column>
-      <el-table-column label="健康（可读/可写/延迟）" min-width="14em">
+      <el-table-column label="健康（可读/可写/延迟）" min-width="210">
         <template #default="{ row }">
           <template v-if="healthById[row.id]">
             <el-tag size="small" :type="healthBadge(healthById[row.id].status).type">
@@ -143,7 +143,7 @@ onMounted(load)
           <span v-else class="ob-hint">未检查</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" min-width="14em">
+      <el-table-column label="操作" min-width="210">
         <template #default="{ row }">
           <el-button size="small" :loading="checkingId === row.id" @click="check(row)">健康检查</el-button>
           <el-button

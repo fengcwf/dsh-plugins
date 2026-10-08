@@ -12,9 +12,10 @@
 //   - configEditor 缝（createApplyPatch）：change 形按 kb-context/lib/settings-write.js 契约
 //     （edit(entry, cb) 的 cb 返回写入形），缺缝/缺入口/校验失败=结构化失败，绝不抛穿路由。
 import net from 'node:net'
+import { anonRuleRejection, ANON_RULE_LIMITS } from './anon-rules.js'
 
 /** 可写白名单（顶层键）；其余键只读/不可见，POST 携带=整单拒 */
-export const EDITABLE_KEYS = Object.freeze(['port', 'sessionDays', 'maxFailures', 'secureCookie', 'wsAllow', 'gzipPass'])
+export const EDITABLE_KEYS = Object.freeze(['port', 'sessionDays', 'maxFailures', 'secureCookie', 'wsAllow', 'gzipPass', 'httpAnonymous'])
 
 function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -71,6 +72,27 @@ export function checkPatchValues(patch) {
         new RegExp(rule) // eslint-disable-line no-new
       } catch {
         return { ok: false, code: 'invalid', message: `wsAllow 不是合法正则：${rule}` }
+      }
+    }
+  }
+  if ('httpAnonymous' in patch) {
+    const v = patch.httpAnonymous
+    if (!Array.isArray(v)) return { ok: false, code: 'invalid', message: 'httpAnonymous 必须是字符串数组' }
+    if (v.length > ANON_RULE_LIMITS.maxCount) {
+      return { ok: false, code: 'invalid', message: `httpAnonymous 最多 ${ANON_RULE_LIMITS.maxCount} 条规则` }
+    }
+    for (const rule of v) {
+      // 安全边界键：**不提供 'any' 式通配**（wsAllow 的 any 只作用于 WS 握手，此处放行的是 HTTP 面）
+      // 且规则内容须满足**锚定前缀**契约（与装载层 index.js/gate.js 共用 lib/anon-rules.js 同一判据）：
+      // 拒空串 / 拒纯通配（.*、.+、^/.* 等可匹配任意路径形）/ 拒零宽锚点（^、^$）/
+      // 拒未锚定（须 ^ 开头，保证「精确前缀」语义不可退化为「路径包含」）/ 拒目标非绝对路径。
+      // 只查「可编译」不查「不构成通配」= 一次误配即把整站翻成匿名免登（复审 F1 Critical）。
+      const why = anonRuleRejection(rule)
+      if (why) {
+        return {
+          ok: false, code: 'invalid',
+          message: `httpAnonymous 规则不合法：${why}（${typeof rule === 'string' ? JSON.stringify(rule) : Object.prototype.toString.call(rule)}；合法形=以 ^ 开头的 / 绝对前缀，如 '^/ob_share/'）`,
+        }
       }
     }
   }

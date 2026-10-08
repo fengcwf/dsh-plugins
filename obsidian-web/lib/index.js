@@ -48,8 +48,9 @@ export const Config = z.object({
   // 分享服务（T9 接；0.2.0 fix-ui-port 双模式修订，照 dsh-better-sidebar 路线）：
   //   sharePort=null（默认）→ 分享面挂 ctx.webServer.register（dsh web 3080 同域 /ob_share，零自有
   //   端口——3500 与 login-gate 冲突根治）；sharePort:number → 独立 listener（可选模式，独立端口/
-  //   生命周期可单独关停 OW-INV-10）。对外契约 3500 /ob_share/<token>=PATH 契约（非端口契约），由
-  //   login-gate/nginx 直通反代保持（OW-INV-2 批注）。模式绑定=启动时配置值（热改 restartRequired）。
+  //   生命周期可单独关停 OW-INV-10）。对外契约 `/ob_share/<token>`=PATH 契约（非端口契约）：路径段
+  //   恒定、端口随模式走，反代只需保持该路径段直通（OW-INV-2 批注；0.2.4 口径修订——旧注释写死的
+  //   「3500」已不成立，见 share-server.js 同口径注释）。模式绑定=启动时配置值（热改 restartRequired）。
   // T9 扩展（load.test 契约锁同步，Ruling 见 task-9-report）：shareHost=独立模式绑定面（分享面=唯一
   // 公开放行面，默认全接口；要收口 loopback 反代场景显式配 127.0.0.1）；trustProxy=显式可信代理清单
   // （C2 IP 口径：缺省空=一切 XFF 忽略、限流键=socket.remoteAddress only）。
