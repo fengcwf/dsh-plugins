@@ -1,5 +1,16 @@
 # CHANGELOG — wiki-steward
 
+## 0.8.1 — 2026-10-09
+
+sha256 frontmatter 引号归一（ingest 假阳性根治，R-27②）：
+
+- **主责（scripts/obsidian/ingest-pipeline.py，monorepo 外）**：`parse_frontmatter` 标量值去成对引号——引号是 YAML 标面形式、语义值不含引号；不去引号则 stored sha256 带引号永远≠实算哈希（INGEST 首跑诊断实录）。
+- **次责（lib/hindsight-sync.js）**：frontmatter `sha256` 模板去 `yq()` 改裸值，与 `mark.js` 既定「`key: value` 形」口径一致（`title`/`date`/`tags`/`latest_timestamp` 等真需引号的保持）。
+- **旧产物自愈**：`raw/06-hindsight/` 4 文件 sha256 行去引号（各恰 2 字节手术，其余字节零动；INV-1 例外事前说明落 ledger）——stored==实算 body sha256 4/4 对盘。
+- **效果**：`scan --summary` 06-hindsight 目录 re_ingest **4→0**（内容不变即老实 skip，不再每夜假报重编译）；引擎幂等 `quoted:false + hashMatch:true`。
+- 备份留证：`ingest-pipeline.py.bak-20261009`（改前 md5 `f30c04a0…` → 改后 `4baa76f7…`）。
+- 测试 466/466 零回退。
+
 ## 0.8.0 — 2026-10-08
 
 Hindsight 记忆同步面 + 0.7.0 遗留竞态收口（来源：`changes/2026-10-07-hindsight-sync/`，t1-t16 全链质量闭环）：
