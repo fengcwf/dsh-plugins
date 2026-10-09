@@ -1,5 +1,15 @@
 # CHANGELOG — wiki-steward
 
+## 0.9.0 — 2026-10-09
+
+设置节六组重排 + 运行逻辑图 + hindsight 双源写根治（solution-design-settings.md；t19-t21 质量链闭环）：
+
+- **P0 根治**：`hindsight.enabled`/`sync.schedule.{enabled,time}` 双源写入口消除——settings rows 摘除、面板六控件唯一入口；服务端双拒（通用 `EDITABLE_PATHS` 10→7 叶整单拒 hindsight 叶 + 专属 `HINDSIGHT_EDITABLE_PATHS` 3 叶写缝）+ 新增 `POST /api/wiki-steward/hindsight/settings` 专属端点（面板写路与通用白名单解耦，消「后写覆盖先写」）。
+- **六组重排**（单 settings.section 节内分组，kb-context 字段级 group 形制、rows 数组顺序零动=顺序断言零影响）：① 运行逻辑图 → ② 会话捕获 → ③ 写入队列与安全 → ④ Ingest·蒸馏（动作+历史入口+定时）→ ⑤ Hindsight 记忆同步（六控件面板，从压第 2 位降组 5 = 主次归位）→ ⑥ 部署信息（只读灰置）→ 底部保存；intro 改写面向用户、双源提示消重。
+- **运行逻辑图**（零依赖）：`WikiStewardFlowBlock` 纯文本四泳道 + details 折叠 + token 暗色自适配——A 捕获→raw 双轨（队列/告警面）/ B raw→wiki（scan→sha256 三态→headless 蒸馏→写侧工具）/ C Hindsight API→raw/06-hindsight/→并入 B / D 运维（crontab/插件 timer 共用 flock→dsh-cron.sh→headless）；12 个真实落点字面、不画凭据（反向断言锁）。
+- **测试 466→466**（+3 新锁 +1 处断言修订带理由：原锁「双源提示文案入 UI」与消噪裁定冲突，改锁「树内零双源字面」）；t21 整面终审 pass（0 blocker/high/medium、6 轮变异恰红、dist 隔离重建 md5 与入库逐字节一致）。
+- 已知 backlog：N1 逻辑图端口字面 / N2 isEditablePath 注释 / O1/O2/O4/R-34。
+
 ## 0.8.1 — 2026-10-09
 
 sha256 frontmatter 引号归一（ingest 假阳性根治，R-27②）：
