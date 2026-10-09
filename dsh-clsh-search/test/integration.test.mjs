@@ -6,12 +6,14 @@
 // keep-alive 附注（progress.md carry-in）：guard 预算定时器 unref——挂起形负载保事件环，防提前退出。
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 
 import { assertContentBlocks, assertSearchProvider, createFakeCtx } from './helpers/fake-ctx.mjs'
-import { Config, apply, renderToolBlocks } from '../lib/index.js'
+import { Config, apply, createSearchRuntime, renderToolBlocks } from '../lib/index.js'
 import { createSource as createDdgSource } from '../lib/sources/ddg.js'
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures')
@@ -173,4 +175,112 @@ test('INV-6：集成链整链预算熔断 → 明示块，预算后零新源请�
   } finally {
     clearInterval(keepAlive)
   }
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T13 装配面收口（B/C/D）：自定义源端到端混排 + guard 单实例 + trigger-log 埋点 + 诊断同源
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 记录型 res 桩（诊断端点集成面）。 */
+function makeRes() {
+  const rec = { status: null, body: null }
+  return {
+    rec,
+    writeHead(status) {
+      rec.status = status
+    },
+    end(body) {
+      rec.body = body ?? null
+    },
+  }
+}
+
+function makeReq({ method = 'GET', url = '/api/dsh-clsh-search/diagnostics', body = null } = {}) {
+  const req = Readable.from(body === null ? [] : [Buffer.from(JSON.stringify(body))])
+  req.method = method
+  req.url = url
+  req.headers = {}
+  return req
+}
+
+test('T13 装配面：自定义源进 sourceList + priority 动态词表——端到端混排生效（B 收口）', async () => {
+  const cacheDir = await mkdtemp(path.join(os.tmpdir(), 'clsh-asm-'))
+  try {
+    const config = Config.parse({
+      cacheDir,
+      sources: {
+        custom: [{
+          id: 'my-src',
+          label: '我的源',
+          urlTemplate: 'https://search.example.com/?q={query}',
+          itemSelector: '.r',
+          titleSelector: 'a',
+          linkSelector: 'a',
+        }],
+        priority: ['my-src', 'ddg'],
+      },
+    })
+    // 动态词表边界：未知 id 仍拒（superRefine），自定义 id 放行
+    assert.throws(() => Config.parse({ sources: { custom: [], priority: ['ghost'] } }), '未知 id 拒')
+    const runtime = createSearchRuntime(config, {})
+    assert.deepEqual([...runtime.sourcesById().keys()], ['ddg', 'bing', 'so360', 'baidu', 'my-src'], '内置四源 + 自定义源同表（R25 混排）')
+    // 端到端：真装配（无注入）→ 混排首源（my-src）真出网命中
+    await withStubFetch(
+      async () => ({ ok: true, status: 200, text: async () => '<html><body><div class="r"><a href="https://hit.example/1">命中</a></div></body></html>' }),
+      async (calls) => {
+        const aggregator = await runtime.getAggregator()
+        const outcome = await aggregator.aggregate('probe')
+        assert.equal(outcome.ok, true, '自定义源在生产装配里真参与聚合')
+        assert.equal(outcome.sources[0].url, 'https://hit.example/1')
+        assert.equal(calls.length, 1, 'priority 首源命中即收口（混排顺序生效）')
+        assert.ok(calls[0].url.startsWith('https://search.example.com/?q=probe'), '自定义源模板展开真出网')
+      },
+    )
+  } finally {
+    await rm(cacheDir, { recursive: true, force: true })
+  }
+})
+
+test('T13 guard 单实例 + trigger-log 埋点 + 诊断同源（C/D 收口）', async () => {
+  const fixture = createFakeCtx({ searchProviderId: 'deepseek-official' })
+  const registered = []
+  fixture.ctx.webServer = {
+    register(spec) {
+      registered.push(spec)
+      return () => {
+        const index = registered.indexOf(spec)
+        if (index >= 0) registered.splice(index, 1)
+      }
+    },
+  }
+  fixture.ctx.connection = { requestRejection: () => null }
+  apply(fixture.ctx, {}, { sources: [okSource('ddg', ['https://a.example/1'])] })
+  const spec = registered.find((entry) => entry.kind === 'prefix')
+  assert.ok(spec, '诊断/设置路由已挂载')
+  const provider = assertSearchProvider(fixture, 'dsh-clsh-search')
+
+  // 真检索一次（runSearch 收口埋点）
+  const result = await provider.search({ query: '深度学习 入门' })
+  assert.ok(result.sources.length > 0)
+
+  // 诊断面读同一 runtime：log.used=1（trigger-log 埋点恰一条）+ ego.used=1（策略 spendEgo 同 guard 单实例）
+  const diagRes = makeRes()
+  await spec.handler(makeReq({ method: 'GET' }), diagRes)
+  assert.equal(diagRes.rec.status, 200)
+  const diag = JSON.parse(diagRes.rec.body).data
+  assert.equal(diag.log.used, 1, '触发日志收口埋点恰一条（T9 seam）')
+  assert.equal(diag.ego.used, 1, '策略 spendEgo 与诊断读数同一 guard（双实例消除）')
+  assert.equal(diag.ego.limit, 15)
+
+  // 日志条目脱敏摘要（INV-12）：queryDigest 只留 len+首词，零 query 明文
+  const logsRes = makeRes()
+  await spec.handler(makeReq({ method: 'GET', url: '/api/dsh-clsh-search/logs' }), logsRes)
+  const entries = JSON.parse(logsRes.rec.body).data.entries
+  assert.equal(entries.length, 1)
+  assert.equal(entries[0].via, 'search')
+  assert.equal(entries[0].queryDigest.first, '深度学习', '首词脱敏')
+  assert.equal(entries[0].queryDigest.len, '深度学习 入门'.length)
+  assert.equal('query' in entries[0], false, '零查询词明文（K-13 闭集）')
+  assert.ok(entries[0].sources.some((item) => item.name === 'ddg' && item.ok === true), '逐源明细进条目')
+  fixture.runTeardowns()
 })

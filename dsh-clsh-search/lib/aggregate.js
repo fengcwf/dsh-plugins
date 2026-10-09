@@ -23,6 +23,25 @@ function failureRecord(sourceName, error, now) {
   }
 }
 
+/**
+ * 跨源 URL 去重（US-15 / R27）：完整 URL 字符串相等判重——不做同域名合并；仅大小写或末尾斜杠
+ * 差异的 URL 不合并。保留收集序中首个出现者：收集序 = 优先级序（orderedSources），故先出现者
+ * 即优先级高者那条（R27 拍板）。被去重条目不计 resultCount（clamp 在去重之后，配额让给真正不同的结果）。
+ * @param {Array<{url: string}>} items - 收集序条目（高优先在前）。
+ * @returns {Array<{url: string}>} 去重后列表（原序、条目同引用）。
+ */
+export function dedupeByUrl(items) {
+  const seenUrls = new Set()
+  const distinct = []
+  for (const item of items) {
+    const url = item && typeof item.url === 'string' ? item.url : ''
+    if (url.length === 0 || seenUrls.has(url)) continue
+    seenUrls.add(url)
+    distinct.push(item)
+  }
+  return distinct
+}
+
 /** 失败块渲染（K-1 载体）：单 text 块，含逐源原因 + 发生时间 + 降级建议。 */
 function renderFailureBlocks(headline, failures, advice) {
   const lines = [headline]
@@ -91,9 +110,16 @@ export function createAggregator(config, sourceList, options = {}) {
    *   （result=seam 封闭形 [sources, truncated]，W4-OUTCOME-ADAPTER；扁平键为兼容别名）；
    *   失败 {ok:false, reason, failures, blocks, error}（blocks=ContentBlock[] 明示错误块，K-1）。
    */
-  async function aggregate(query, signal) {
+  async function aggregate(query, signal, hooks = {}) {
     if (typeof query !== 'string' || query.trim().length === 0) {
       throw new TypeError('aggregate: query 必须是非空字符串')
+    }
+    /** 逐源事件旁路面（T13 埋点：喂 trigger-log 逐源耗时/成败；钩子异常绝不炸主链）。 */
+    const emitSource = (payload) => {
+      if (!hooks || typeof hooks.onSourceEvent !== 'function') return
+      try {
+        hooks.onSourceEvent(payload)
+      } catch { /* 日志旁路面 fail-open */ }
     }
     const trimmed = query.trim()
     const startAt = now()
@@ -147,7 +173,8 @@ export function createAggregator(config, sourceList, options = {}) {
             cached = undefined
           }
           if (cached) {
-            const clamped = cached.sources.slice(0, config.maxResults)
+            // 防御性同口径（US-15 单点守卫）：去重上线前写入的旧缓存条目可能含重复——读面同样去重
+            const clamped = dedupeByUrl(cached.sources).slice(0, config.maxResults)
             // W4-CACHE-TRUNCATED-LOST 关闭：缓存随读返回原始截断标志，二次查询 truncated 不丢
             const truncated = Boolean(cached.truncated)
             return {
@@ -162,9 +189,12 @@ export function createAggregator(config, sourceList, options = {}) {
         }
 
         let result
+        const attemptStarted = now()
         try {
           result = await source.search(trimmed, sourceSignal)
+          emitSource({ name: source.name, elapsedMs: now() - attemptStarted, ok: true })
         } catch (error) {
+          emitSource({ name: source.name, elapsedMs: now() - attemptStarted, ok: false, code: error && error.code ? String(error.code) : undefined })
           // 预算耗尽收口明示块（Ruling-7/Ruling-14）：CHAIN_BUDGET_EXHAUSTED 不裸抛
           if (budgetExhausted(error)) {
             return budgetOutcome(error.code === CHAIN_BUDGET_CODE ? error : (signal.reason ?? budgetError))
@@ -211,8 +241,11 @@ export function createAggregator(config, sourceList, options = {}) {
           // W4-EMPTY-CUTOFF 关闭：单源 0 条=无产出，继续下一家（空集不缓存、不算失败）
           continue
         }
-        const clamped = usable.slice(0, config.maxResults)
-        const truncated = usable.length > config.maxResults
+        // 跨源 URL 去重（US-15/R27）：收口前单点生效——完整字符串相等判重、保留优先级高者
+        // （收集序=优先级序）；被去重条目不计 resultCount（clamp 在去重之后）。
+        const distinct = dedupeByUrl(usable)
+        const clamped = distinct.slice(0, config.maxResults)
+        const truncated = distinct.length > config.maxResults
         if (cache) {
           // best-effort（W4-CACHE-FAIL-OPEN）：缓存写故障（同步/异步抛）不影响已成功结果
           try {

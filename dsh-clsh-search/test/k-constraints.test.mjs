@@ -95,16 +95,38 @@ test('K-4：出网面隐私 grep 封装（INV-4 可重复执行）', async () =>
   assert.ok(libFiles.length >= 10, 'lib 扫描面齐（平铺模块 + sources 四源）')
 
   // ① 唯一出网点：fetch( 只允许出现在 lib/sources/common.js（裸 fetch + 正则路线的唯一出口）
+  // ①-a socket/HTTP 客户端模块白名单（INV-17 / K-18 受控放宽，T26 复核收定）——放宽的精确口径：
+  //    · 允许面 = 仅 CONNECT 隧道所需的 socket 与 HTTP 客户端内建模块（net / tls / http / https，
+  //      均 node 前缀），且**只允许集中在 lib/sources/common.js**（唯一出网缝）；
+  //    · 不是「允许任意 socket」：其余 lib/ web/ 文件零命中（含 diagnostics.js / trigger-log.js /
+  //      selector.js / sources/custom.js 等 0.2.x 新文件，扫描面全覆盖）；
+  //    · **必经出站门禁**：common.js 内一切出网（fetchHtml 与 CONNECT 隧道目标）都过
+  //      assertPublicHttps（INV-15），下方 ①-c 机械断言钉死调用点；
+  //    · 对 0.1.0「禁 socket」是受控放宽、不是废弛（constitution K-18）。
   const fetchSites = []
-  for (const file of libFiles) {
-    if (/(^|[^.\w])fetch\s*\(/.test(read(file))) fetchSites.push(path.relative(LIB_DIR, file))
-    // 其余网络出口一律禁止（http 客户端/XHR/beacon/websocket/动态 import URL）
+  const socketSites = []
+  const scanAll = [...libFiles, ...filesUnder(WEB_SRC_DIR, ['.js', '.vue', '.css'])]
+  for (const file of scanAll) {
     const content = read(file)
-    for (const pattern of [/XMLHttpRequest/, /sendBeacon/, /node:http/, /node:https/, /axios/, /WebSocket\s*\(/, /from\s+['"]node:net['"]/]) {
+    if (/(^|[^.\w])fetch\s*\(/.test(content)) fetchSites.push(path.relative(LIB_DIR, file))
+    if (/node:(net|tls|http|https)/.test(content)) socketSites.push(path.relative(LIB_DIR, file))
+    // 其余网络出口一律禁止（XHR/beacon/websocket/第三方 http 客户端）
+    for (const pattern of [/XMLHttpRequest/, /sendBeacon/, /axios/, /WebSocket\s*\(/]) {
       assert.equal(pattern.test(content), false, `${path.basename(file)} 出现禁用网络出口 ${pattern}`)
     }
   }
   assert.deepEqual(fetchSites, ['sources/common.js'], '唯一出网点 = lib/sources/common.js')
+  assert.deepEqual(socketSites, ['sources/common.js'], 'socket/HTTP 客户端模块只集中在 lib/sources/common.js（INV-17/K-18：受控放宽仅此一文件，非任意 socket）')
+  // ①-b 新文件零命中显式登记（W3-6 精神）：0.2.x 新增模块逐个确认在零命中集内
+  for (const rel of ['diagnostics.js', 'trigger-log.js', 'selector.js', path.join('sources', 'custom.js')]) {
+    assert.equal(socketSites.includes(rel), false, `${rel} 不得引入 socket/HTTP 客户端模块`)
+  }
+  // ①-c 必经出站门禁（INV-15/K-16，K-18 放宽的前提条件）：common.js 门禁调用点——
+  //    fetchHtml 入口（一切 fetch 出网前）+ openConnectTunnel（CONNECT 隧道目标）；缺一即锁失效。
+  const commonSrc = read(path.join(LIB_DIR, 'sources', 'common.js'))
+  const gateCalls = [...commonSrc.matchAll(/assertPublicHttps\(/g)].length
+  assert.ok(gateCalls >= 2, `出站门禁调用点 ≥2（fetchHtml 入口 + 隧道目标），实得 ${gateCalls}`)
+  assert.ok(/export async function openConnectTunnel[\s\S]*assertPublicHttps\(/.test(commonSrc), '隧道目标必经门禁（socket 路径不豁免）')
 
   // ② 凭据类标识：全 lib 零命中（禁读 env、禁密钥/令牌形态字面——凭据只以 env 名引用，P-5/K-4）
   const credentialPatterns = [
@@ -222,7 +244,9 @@ test('K-8：lib 导入面白名单 + package.json 依赖归类（零构建 ESM�
 // 零硬编码字面（豁免三处镜像，且豁免逐一带防漂移测试自证，见文件头「K-9 豁免注记」专节）。
 // ─────────────────────────────────────────────────────────────────────────────
 test('K-9：Config 管控键零硬编码 grep（豁免注记：镜像三处各带防漂移测试）', () => {
-  const KEYS = ['timeoutMs', 'retries', 'maxResults', 'cacheTtlMs', 'egoBudget', 'chainBudgetMs']
+  // 0.2.x 扩面（INV-19/K-20）：新管控键随 Config 扩键同步进扫描面（默认值仍只许存在于 schema）
+  const KEYS = ['timeoutMs', 'retries', 'maxResults', 'cacheTtlMs', 'egoBudget', 'chainBudgetMs',
+    'retryBackoffMs', 'maxResponseBytes', 'logCapacity', 'healthTimeoutMs']
   const EXEMPT = new Map([
     [path.join(LIB_DIR, 'index.js'), 'Config schema 权威源（默认值唯一定义处）'],
     [path.join(LIB_DIR, 'strategy.js'), 'DEFAULT_BUDGET_MIRROR 镜像（strategy.test.mjs 漂移钉死）'],
@@ -230,7 +254,8 @@ test('K-9：Config 管控键零硬编码 grep（豁免注记：镜像三处各�
   ])
   const scan = [...filesUnder(LIB_DIR, ['.js']), ...filesUnder(WEB_SRC_DIR, ['.js', '.vue', '.css'])]
   const keyPattern = new RegExp(`\\b(${KEYS.join('|')})\\s*[:=]\\s*\\d`)
-  const switchPattern = /\b(ddg|bing|so360|baidu)\s*[:=]\s*(true|false)\b/
+  // 0.2.x 扩面：源开关字面布尔 + 每源代理勾选字面布尔（useProxy 默认值同属 schema 专属面）
+  const switchPattern = /\b(ddg|bing|so360|baidu|useProxy)\s*[:=]\s*(true|false)\b/
   const hits = []
   for (const file of scan) {
     if (EXEMPT.has(file)) continue

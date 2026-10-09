@@ -15,11 +15,18 @@ import {
 const props = defineProps({
   sources: { type: Object, required: true },
   priority: { type: Array, required: true },
+  /** 自定义源数（0.2.x sources.custom；为 0 时计数文案与 0.1.0 逐字一致）。 */
+  customCount: { type: Number, default: 0 },
   error: { type: String, default: '' },
 })
 const emit = defineEmits(['change'])
 
-const countText = computed(() => `${SOURCE_IDS.length} 源 · 已启用 ${enabledCount(props.sources)}`)
+const countText = computed(() => {
+  const base = `已启用 ${enabledCount(props.sources)}`
+  return props.customCount > 0
+    ? `${SOURCE_IDS.length + props.customCount} 源（含 ${props.customCount} 自定义） · ${base}`
+    : `${SOURCE_IDS.length} 源 · ${base}`
+})
 
 function onToggle(id) {
   emit('change', { sources: toggleSource(props.sources, id) })

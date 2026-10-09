@@ -146,3 +146,21 @@ test('K-6 grep 断言：guard.js 与 aggregate.js 无无界 while / do 循环 / 
     }
   }
 })
+
+test('INV-20 读数面：egoUsed/egoRemaining/egoLimit 真实反映计数（诊断展示用，非恒 0）', () => {
+  const guard = createGuard(Config.parse({ egoBudget: 5 }))
+  assert.equal(guard.egoUsed(), 0)
+  assert.equal(guard.egoLimit(), 5)
+  assert.equal(guard.egoRemaining(), 5)
+  guard.spendEgo()
+  guard.spendEgo()
+  assert.equal(guard.egoUsed(), 2, '真实计数（接入生产调用方后展示面同源）')
+  assert.equal(guard.egoRemaining(), 3)
+  // 引导块输出缝（strategy.js）复用 spendEgo 且 catch 超预算抛——guard 侧语义不变：
+  // 超预算仍抛（K-6 熔断面不破），计数仍先增后判（防套利）
+  for (let i = 0; i < 3; i += 1) guard.spendEgo()
+  assert.equal(guard.egoUsed(), 5, '预算内计满')
+  assert.throws(() => guard.spendEgo(), (error) => error.code === EGO_BUDGET_CODE, '超预算仍抛（熔断语义不变）')
+  assert.equal(guard.egoUsed(), 6, '抛出前已计数（先增后判不变）')
+  assert.equal(guard.egoRemaining(), 0, '剩余额不为负')
+})

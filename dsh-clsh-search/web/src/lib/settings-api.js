@@ -5,7 +5,15 @@
 // 传输缝：createSettingsApi 注入 fetch 实现；服务端路由挂载（lib/ 侧 webServer 静态服务/读写接口）
 // 不在 W6 范围，故 endpoint 形为契约占位语义（真实路由落地后同一路径对齐即可）。
 import { DEFAULT_SOURCE_FLAGS, SOURCE_IDS, validatePriority, validateSources } from './source-order.js'
-import { BUDGET_KEYS, R5_DEFAULTS, clampMaxResults, validateBudget } from './budget-model.js'
+import {
+  BUDGET_KEYS,
+  EXTRA_KEY_DEFAULTS,
+  R5_DEFAULTS,
+  clampMaxResults,
+  extraPatch,
+  pickExtraKeys,
+  validateBudget,
+} from './budget-model.js'
 import { TAKE_OVER_DEFAULT, normalizeTakeOver } from './takeover-model.js'
 
 /** 设置面键（与 Config 同键；测试做键面一一对应断言）。 */
@@ -27,10 +35,21 @@ export const DEFAULT_SETTINGS = Object.freeze({
   priority: [...SOURCE_IDS],
   ...R5_DEFAULTS,
   takeOver: TAKE_OVER_DEFAULT,
+  // 0.2.x 七组新键（平铺承载；写回经 extraPatch 归位 sources 子键）——镜像 = budget-model EXTRA_KEY_DEFAULTS
+  ...EXTRA_KEY_DEFAULTS,
 })
 
 /** 读接口超时（毫秒）：设置加载为读路径，挂起即可解释失败而非无限等待。 */
 export const LOAD_TIMEOUT_MS = 8000
+
+/** 失败信封缺省 hint（kc/gho 先例形：失败必给可执行下一步）：服务端 hint 在场则以服务端为准。 */
+export const ERROR_HINTS = Object.freeze({
+  logs_unavailable: '日志不可用：内存环写失败——请重试；重启后自愈（INV-13 明示，不粉饰）',
+  bad_request: '请检查填写项后重试',
+  unauthorized: '请刷新页面重试鉴权',
+  write_unavailable: '本部署暂只读：配置写缝缺位，可改 profile 配置后重启生效',
+  default: '请稍后重试；若持续失败请在诊断卡运行自检定位',
+})
 
 /**
  * Config 原始 config → 设置面模型（缺省回落 R5 默认；数值归一）。
@@ -61,6 +80,9 @@ export function fromConfig(raw) {
     }
   }
   out.takeOver = normalizeTakeOver(input.takeOver)
+  // 0.2.x 七组新键透传（T17b）：pickExtraKeys 仅收在场且形状合法的键（缺键不清空不覆写语义在写回面），
+  // 缺省回落 EXTRA_KEY_DEFAULTS——平铺承载（settings.custom / settings.useProxy），写回经 extraPatch 归位。
+  Object.assign(out, { ...EXTRA_KEY_DEFAULTS, ...pickExtraKeys(input) })
   return out
 }
 
@@ -70,8 +92,15 @@ export function fromConfig(raw) {
  */
 export function toConfig(settings) {
   const normalized = fromConfig(settings)
+  // 七组新键写回增量（T17b）：顶层 5 键平铺；custom/useProxy 经 extraPatch 归位 sources 子键（非平铺）
+  const extras = extraPatch(normalized)
   return {
-    sources: { ...normalized.sources, priority: [...normalized.priority] },
+    sources: {
+      ...normalized.sources,
+      priority: [...normalized.priority],
+      custom: extras.sources.custom,
+      useProxy: extras.sources.useProxy,
+    },
     timeoutMs: normalized.timeoutMs,
     retries: normalized.retries,
     chainBudgetMs: normalized.chainBudgetMs,
@@ -79,6 +108,11 @@ export function toConfig(settings) {
     cacheTtlMs: normalized.cacheTtlMs,
     egoBudget: normalized.egoBudget,
     takeOver: normalized.takeOver,
+    retryBackoffMs: extras.retryBackoffMs,
+    maxResponseBytes: extras.maxResponseBytes,
+    logCapacity: extras.logCapacity,
+    healthTimeoutMs: extras.healthTimeoutMs,
+    proxies: extras.proxies,
   }
 }
 
@@ -124,7 +158,16 @@ export function createSettingsApi(opts = {}) {
         signal: ctrl.signal,
       })
       const body = await res.json().catch(() => null)
-      if (!res.ok) throw new Error(body?.error?.message ?? `设置请求失败（HTTP ${res.status}）`)
+      if (!res.ok) {
+        // 信封形制统一（kc/gho 先例形）：{error:{code,message,hint?}} → 上抛带 code/hint 的可解释错误
+        const code = typeof body?.error?.code === 'string' ? body.error.code : `http_${res.status}`
+        const error = new Error(body?.error?.message ?? `设置请求失败（HTTP ${res.status}）`)
+        error.code = code
+        error.hint = typeof body?.error?.hint === 'string' && body.error.hint.length > 0
+          ? body.error.hint
+          : ERROR_HINTS[code] ?? ERROR_HINTS.default
+        throw error
+      }
       if (body == null) throw new Error(`设置响应不是有效 JSON（HTTP ${res.status}）`)
       return body
     } finally {
@@ -147,6 +190,43 @@ export function createSettingsApi(opts = {}) {
         body: JSON.stringify(patch),
       }, false)
       return fromConfig(body?.data?.config ?? patch)
+    },
+
+    // ── T13 诊断/日志/缓存面封装（与服务端六端点逐一对应，信封 {data} 统一解出）──
+
+    /** 诊断快照（GET /diagnostics）：{items, summary, log, ego, stats}。 */
+    async diagnostics() {
+      const body = await request('/diagnostics')
+      return body?.data
+    },
+    /** 单源探针（POST /diagnostics/probe；仅按钮触发，INV-14）：{source, ok, elapsedMs, resultCount, detail}。 */
+    async probe(source) {
+      const body = await request('/diagnostics/probe', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ source }),
+      }, false)
+      return body?.data
+    },
+    /** 真联网测试（POST /diagnostics/online；仅按钮触发）：{results, totalMs, truncated, budgetMs}。 */
+    async onlineTest() {
+      const body = await request('/diagnostics/online', { method: 'POST' }, false)
+      return body?.data
+    },
+    /** 触发日志读面（GET /logs）：{entries, capacity, enabled, available}；环不可用抛 logs_unavailable。 */
+    async logs() {
+      const body = await request('/logs')
+      return body?.data
+    },
+    /** 清空触发日志（POST /logs/clear）：{cleared}——只清内存环。 */
+    async clearLogs() {
+      const body = await request('/logs/clear', { method: 'POST' }, false)
+      return body?.data
+    },
+    /** 清空缓存（POST /cache/clear）：{cleared}——只清缓存面。 */
+    async clearCache() {
+      const body = await request('/cache/clear', { method: 'POST' }, false)
+      return body?.data
     },
   }
 }

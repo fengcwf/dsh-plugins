@@ -25,20 +25,37 @@ export const SOURCE_DESCS = {
 export const DEFAULT_SOURCE_FLAGS = Object.fromEntries(SOURCE_IDS.map((id) => [id, true]))
 
 /**
- * priority 全排列校验：长度=4、每源恰好一次、无未知 id（US-2 设置面）。
+ * 动态源词汇（R25 混排）：内置四源 + 自定义源 id 拼为全排列词表。
+ * 自定义 id 与内置 id 冲突即拒（fail-closed：同 id 两源会制造顺序/开关歧义）。
+ * @param {readonly string[]} [customIds] - sources.custom[].id 列表。
+ * @returns {string[]} 内置在前、自定义在后（顺序语义由 priority 承载，此处只出词表）。
+ */
+export function allSourceIds(customIds = []) {
+  const ids = [...SOURCE_IDS]
+  for (const id of customIds) {
+    if (typeof id !== 'string' || id.length === 0) throw new TypeError(`自定义源 id 非法：${String(id)}`)
+    if (SOURCE_IDS.includes(id)) throw new TypeError(`自定义源 id 与内置源冲突：${id}`)
+    ids.push(id)
+  }
+  return ids
+}
+
+/**
+ * priority 全排列校验：长度=词表数、每源恰好一次、无未知 id（US-2 设置面；R25 混排三检继续有效）。
  * @param {unknown} priority
+ * @param {readonly string[]} [knownIds] - 词表（缺省=内置四源；混排时传 allSourceIds(...)）。
  * @returns {{ok: boolean, errors: string[]}}
  */
-export function validatePriority(priority) {
+export function validatePriority(priority, knownIds = SOURCE_IDS) {
   const errors = []
   if (!Array.isArray(priority)) {
     return { ok: false, errors: ['priority 必须是数组'] }
   }
-  if (priority.length !== SOURCE_IDS.length) {
-    errors.push(`priority 长度必须为 ${SOURCE_IDS.length}（四源全排列）`)
+  if (priority.length !== knownIds.length) {
+    errors.push(`priority 长度必须为 ${knownIds.length}（全排列）`)
   }
   for (const id of priority) {
-    if (!SOURCE_IDS.includes(id)) errors.push(`priority 含未知源：${String(id)}`)
+    if (!knownIds.includes(id)) errors.push(`priority 含未知源：${String(id)}`)
     else if (priority.filter((x) => x === id).length !== 1) errors.push(`priority 重复源：${id}`)
   }
   return { ok: errors.length === 0, errors }

@@ -64,7 +64,7 @@ export function createSource(config) {
     async search(query, signal) {
       const q = typeof query === 'string' ? query.trim() : ''
       if (q.length === 0) throw new TypeError('ddg.search: query 必须是非空字符串')
-      const html = await fetchHtml(buildUrl(q), { timeoutMs: config.timeoutMs, retries: config.retries, signal })
+      const html = await fetchHtml(buildUrl(q), { timeoutMs: config.timeoutMs, retries: config.retries, retryBackoffMs: config.retryBackoffMs, maxResponseBytes: config.maxResponseBytes, signal })
       return { sources: parseSerp(html) }
     },
   }

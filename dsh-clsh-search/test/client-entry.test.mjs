@@ -96,7 +96,7 @@ test('settings.section 注册（safeRegister 形）：decl 面 + 贡献组件 + 
   assert.equal(decl.id, 'dsh-clsh-search')
   assert.equal(typeof decl.order, 'number')
   assert.equal(decl.order, 50, 'W66-N1：独占 order（30/31/40 已被他插件占用，避免同值并列）')
-  assert.equal(decl.label(), '搜索（dsh-clsh-search）')
+  assert.equal(decl.label(), '搜索设置')
   assert.equal(typeof component, 'function', '贡献组件在场（React 函数组件形）')
   dispose()
   assert.equal(harness.state.disposals, 1, 'inject 面收敛（setup 注册面的回收归壳）')

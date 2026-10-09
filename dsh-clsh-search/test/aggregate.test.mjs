@@ -9,7 +9,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { assertContentBlocks } from './helpers/fake-ctx.mjs'
-import { createAggregator } from '../lib/aggregate.js'
+import { createAggregator, dedupeByUrl } from '../lib/aggregate.js'
+import { createTriggerLog } from '../lib/trigger-log.js'
 import { createCache } from '../lib/cache.js'
 import { BLOCK_CODE } from '../lib/ratelimit.js'
 
@@ -302,5 +303,150 @@ test('W4-CACHE-FAIL-OPEN：cache.set 抛错不炸已成功结果', async () => {
   const outcome = await aggregate('q')
   assert.equal(outcome.ok, true, '缓存故障不得炸掉已成功结果')
   assert.equal(outcome.sources.length, 1)
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T11（US-15/US-16）：跨源 URL 去重 + 逐源耗时采集
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('US-15 跨源 URL 去重：同 URL 双源样本只保留优先级高者一条（R27）', async () => {
+  // 双源合并样本（收集序=优先级序）：高优先版本胜出，低优先重复条被去重
+  const merged = [
+    { url: 'https://dup.example/1', title: 'high', snippet: '' },
+    { url: 'https://dup.example/1', title: 'low', snippet: '' },
+    { url: 'https://other.example/2', title: 'y', snippet: '' },
+  ]
+  const distinct = dedupeByUrl(merged)
+  assert.equal(distinct.length, 2, '同 URL 只留一条')
+  assert.equal(distinct[0].title, 'high', '保留优先级高者那条（R27）')
+
+  // 聚合级：高优先源命中即收口（先成功先收口语义不破），低优先源的同 URL 条目零进入
+  const ddg = makeSource('ddg', async () => ({ sources: [{ url: 'https://dup.example/1', title: 'high', snippet: '' }, { url: 'https://dup.example/1', title: 'dup-in-source', snippet: '' }] }))
+  const bing = makeSource('bing', async () => ({ sources: [{ url: 'https://dup.example/1', title: 'low', snippet: '' }, { url: 'https://y.example/2', title: 'y', snippet: '' }] }))
+  const { aggregate } = createAggregator(makeConfig(), [ddg, bing])
+  const outcome = await aggregate('q')
+  assert.equal(outcome.ok, true)
+  assert.deepEqual(outcome.sources.map((item) => [item.url, item.title]), [['https://dup.example/1', 'high']], '同 URL 仅优先级高者一条（源内重复同口径去重）')
+  assert.equal(bing.calls.length, 0, '先成功先收口语义不被去重破坏（低优先源不为凑数被调）')
+})
+
+test('去重口径：完整字符串相等判重——大小写/末尾斜杠差异不合并', async () => {
+  const variants = [
+    { url: 'https://a.example/1', title: 'base', snippet: '' },
+    { url: 'https://a.example/1/', title: 'slash', snippet: '' },
+    { url: 'https://A.example/1', title: 'upper', snippet: '' },
+    { url: 'https://a.example/2', title: 'other', snippet: '' },
+    { url: 'https://a.example/2', title: 'dup', snippet: '' },
+  ]
+  const distinct = dedupeByUrl(variants)
+  assert.equal(distinct.length, 4, '仅完全相同字符串判重（斜杠/大小写差异各保留）')
+  assert.deepEqual(distinct.map((item) => item.title), ['base', 'slash', 'upper', 'other'])
+  // 聚合级同口径：单源 SERP 内重复只留首条、变体全保留
+  const ddg = makeSource('ddg', async () => ({ sources: variants }))
+  const { aggregate } = createAggregator(makeConfig(), [ddg])
+  const outcome = await aggregate('q')
+  assert.deepEqual(outcome.sources.map((item) => item.title), ['base', 'slash', 'upper', 'other'])
+})
+
+test('被去重条目不计 resultCount：clamp 在去重之后（配额让给真正不同的结果）', async () => {
+  // 4 原始条含 2 重复 → distinct 2 条：count/截断标志全按去重后口径（不虚高）
+  const items = [
+    { url: 'https://a.example/1', title: 'a1', snippet: '' },
+    { url: 'https://a.example/1', title: 'a1-dup', snippet: '' },
+    { url: 'https://a.example/2', title: 'a2', snippet: '' },
+    { url: 'https://a.example/2', title: 'a2-dup', snippet: '' },
+  ]
+  const ddg = makeSource('ddg', async () => ({ sources: items }))
+  const { aggregate } = createAggregator(makeConfig({ maxResults: 2 }), [ddg])
+  const outcome = await aggregate('q')
+  assert.deepEqual(outcome.sources.map((item) => item.title), ['a1', 'a2'], 'quota 给不同结果（去重后 clamp）')
+  assert.equal(outcome.sources.length, 2, '被去重条目不计 resultCount（配额不虚高）')
+  assert.equal(outcome.truncated, false, 'distinct 2 = max 2 → 不截断（按去重后口径，原始 4 条不虚报截断）')
+  // 超配额截断标志仍如实：distinct 3 > max 2
+  const more = makeSource('ddg', async () => ({ sources: [
+    { url: 'https://a.example/1', title: 'a1', snippet: '' },
+    { url: 'https://a.example/1', title: 'dup', snippet: '' },
+    { url: 'https://a.example/2', title: 'a2', snippet: '' },
+    { url: 'https://a.example/3', title: 'a3', snippet: '' },
+  ] }))
+  const { aggregate: aggregate2 } = createAggregator(makeConfig({ maxResults: 2 }), [more])
+  const outcome2 = await aggregate2('q')
+  assert.deepEqual(outcome2.sources.map((item) => item.title), ['a1', 'a2'])
+  assert.equal(outcome2.truncated, true, 'distinct 3 > max 2 → 截断如实')
+})
+
+test('逐源耗时采集：hooks.onSourceEvent 前后打点 {name,elapsedMs,ok,code}（US-16）', async () => {
+  let clock = 1000
+  const now = () => clock
+  const events = []
+  const ddg = makeSource('ddg', async () => {
+    clock += 5
+    return okResult(['https://a.example/1'])
+  })
+  const bing = makeSource('bing', async () => {
+    clock += 7
+    const error = new Error('boom')
+    error.code = 'SOURCE_BOOM'
+    throw error
+  })
+  const so360 = makeSource('so360', async () => {
+    clock += 5
+    return okResult(['https://c.example/1'])
+  })
+  const { aggregate } = createAggregator(makeConfig(), [bing, so360], { now })
+  const outcome = await aggregate('q', undefined, { onSourceEvent: (event) => events.push(event) })
+  assert.equal(outcome.ok, true)
+  assert.deepEqual(events.map((event) => [event.name, event.ok]), [['bing', false], ['so360', true]], '逐源打点序=调用序')
+  assert.equal(events[0].elapsedMs, 7, '失败路径耗时=前后打点差（假时钟可检）')
+  assert.equal(events[0].code, 'SOURCE_BOOM', '失败带错误码')
+  assert.equal(events[1].elapsedMs, 5, '成功路径耗时=前后打点差')
+  assert.equal(events[1].code, undefined, '成功无 code 键')
+  // ddg 未被调用（先成功先收口）——零打点
+  assert.equal(ddg.calls.length, 0)
+})
+
+test('fromCache 路径不产生逐源耗时记录（采集点只在真调用面）', async () => {
+  const cache = {
+    async get() {
+      return { sources: [{ url: 'https://a.example/1', title: 't', snippet: '' }], truncated: false }
+    },
+    async set() {},
+  }
+  const events = []
+  const ddg = makeSource('ddg', async () => okResult(['https://x.example/9']))
+  const { aggregate } = createAggregator(makeConfig(), [ddg], { cache })
+  const outcome = await aggregate('q', undefined, { onSourceEvent: (event) => events.push(event) })
+  assert.equal(outcome.fromCache, true)
+  assert.deepEqual(events, [], '缓存命中零耗时记录（不虚报源调用）')
+  assert.equal(ddg.calls.length, 0)
+})
+
+test('统计复用 trigger-log.stats()（R29 不另建状态）：事件入环即出逐源聚合', async () => {
+  let clock = 0
+  const now = () => clock
+  const triggerLog = createTriggerLog({ capacity: 50 })
+  const bing = makeSource('bing', async () => {
+    clock += 3
+    const error = new Error('boom')
+    error.code = 'SOURCE_BOOM'
+    throw error
+  })
+  const so360 = makeSource('so360', async () => {
+    clock += 4
+    return okResult(['https://c.example/1'])
+  })
+  const { aggregate } = createAggregator(makeConfig(), [bing, so360], { now })
+  // 与 index.runSearch 同一接线形：逐源事件 → trigger-log 条目 sources 明细（不另建统计状态）
+  const events = []
+  const outcome = await aggregate('q', undefined, { onSourceEvent: (event) => events.push(event) })
+  triggerLog.record({ ts: Date.now(), via: 'search', ok: outcome.ok, elapsedMs: 7, resultCount: outcome.sources.length, queryDigest: { len: 1, first: 'q' }, sources: events })
+  const stats = triggerLog.stats()
+  assert.deepEqual(stats.map((stat) => stat.name), ['bing', 'so360'])
+  const bingStat = stats.find((stat) => stat.name === 'bing')
+  assert.deepEqual({ count: bingStat.count, okCount: bingStat.okCount, failCount: bingStat.failCount, lastMs: bingStat.lastMs, lastOk: bingStat.lastOk },
+    { count: 1, okCount: 0, failCount: 1, lastMs: 3, lastOk: false }, '逐源统计直出（无第二份状态）')
+  const so360Stat = stats.find((stat) => stat.name === 'so360')
+  assert.equal(so360Stat.lastMs, 4)
+  assert.equal(so360Stat.lastOk, true)
 })
 

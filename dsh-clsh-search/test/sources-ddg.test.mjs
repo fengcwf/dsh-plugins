@@ -140,7 +140,8 @@ test('4xx 不重试：反爬类状态码立即抛（交 Task 8 ratelimit 分类�
 test('K-4 静态断言：lib/sources/*.js 无凭据/上下文注入标识，且超时重试无字面硬编码（K-9）', async () => {
   const dir = new URL('../lib/sources/', import.meta.url)
   const files = (await readdir(dir)).filter((file) => file.endsWith('.js')).sort()
-  assert.deepEqual(files, ['bing.js', 'common.js', 'ddg.js', 'so360.js', 'baidu.js'].sort(), '公共层 + 四源齐')
+  // 源文件清单锁（W3-6 脆性即把关力）：增删 lib/sources 文件必须显式登记——T8 自定义源工厂 custom.js 落地登记
+  assert.deepEqual(files, ['bing.js', 'common.js', 'custom.js', 'ddg.js', 'so360.js', 'baidu.js'].sort(), '公共层 + 四源 + 自定义源工厂齐')
   const forbidden = [
     /process\.env/i,
     /api[_-]?key/i,
@@ -163,6 +164,10 @@ test('K-4 静态断言：lib/sources/*.js 无凭据/上下文注入标识，且�
     }
     assert.ok(!/timeoutMs\s*[:=]\s*\d/.test(content), `${file} timeoutMs 不得出现字面数值（K-9：从 Config 读）`)
     assert.ok(!/retries\s*[:=]\s*\d/.test(content), `${file} retries 不得出现字面数值（K-9：从 Config 读）`)
+    // 0.2.x 扩面（INV-19/K-20）：新管控键同样只许从 Config 读，源文件零字面
+    for (const key of ['retryBackoffMs', 'maxResponseBytes', 'logCapacity', 'healthTimeoutMs']) {
+      assert.ok(!new RegExp(`\\b${key}\\s*[:=]\\s*\\d`).test(content), `${file} ${key} 不得出现字面数值（K-9 扩面：从 Config 读）`)
+    }
     if (file !== 'common.js') {
       assert.ok(content.includes('config.timeoutMs'), `${file} 超时从 Config 读（K-9）`)
       assert.ok(content.includes('config.retries'), `${file} 重试从 Config 读（K-9）`)

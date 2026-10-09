@@ -41,6 +41,26 @@ test('固定样本解析：c-container 块字段齐全，mu 优先落地页，�
   assert.ok(!('publishedAt' in first), '百度 SERP 无日期字段时不臆造 publishedAt')
 })
 
+test('W3-5 回归锁：data-mu 不被误配为 mu，data-mu 与 mu 并存时 URL 与 mu 属性一致', () => {
+  // data-mu 与真 mu 并存：旧 \b 正则会先命中 data-mu 值（- 非 \w 也算词边界）造成候选污染。
+  const both = `
+    <div class="result c-container" data-mu="https://tracker.example.net/pixel?sid=1" mu="https://real.example.cn/baidu-land">
+      <h3 class="t"><a href="https://www.baidu.com/link?url=zzz999" target="_blank">并存样本</a></h3>
+      <div class="c-abstract">并存摘要</div>
+    </div>`
+  const [item] = parseSerp(both)
+  assert.equal(item.url, 'https://real.example.cn/baidu-land', '解析出的 URL 与 mu 属性一致，data-mu 不参与')
+
+  // 仅 data-mu、无真 mu：必须回退题链 href，不被 data-mu 值污染。
+  const onlyDataMu = `
+    <div class="result c-container" data-mu="https://tracker.example.net/pixel?sid=2">
+      <h3 class="t"><a href="https://www.baidu.com/link?url=yyy888" target="_blank">仅 data-mu 样本</a></h3>
+      <div class="c-abstract">回退摘要</div>
+    </div>`
+  const [fallback] = parseSerp(onlyDataMu)
+  assert.equal(fallback.url, 'https://www.baidu.com/link?url=yyy888', '无真 mu 时回退题链 href（data-mu 不落地）')
+})
+
 test('无结果样本：空数组不抛异常', () => {
   for (const html of EMPTY_SAMPLES) {
     assert.deepEqual(parseSerp(html), [])

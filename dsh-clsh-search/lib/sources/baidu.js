@@ -28,7 +28,8 @@ export function parseSerp(html) {
   for (const segment of segments.slice(1)) {
     const tagEnd = segment.indexOf('>')
     const openingTag = tagEnd >= 0 ? segment.slice(0, tagEnd + 1) : ''
-    const mu = /\bmu="([^"]*)"/.exec(openingTag)?.[1] ?? ''
+    // W3-5：属性名 mu 的边界形 = 前置字符非 \w 且非 '-'（lookbehind 排除 data-mu 前缀吞并）。
+    const mu = /(?<![\w-])mu="([^"]*)"/.exec(openingTag)?.[1] ?? ''
     const heading = firstTagOfAnyClass(segment, 'h3')
     const anchor = heading ? firstAnchor(heading) : null
     if (!anchor) continue
@@ -57,7 +58,7 @@ export function createSource(config) {
     async search(query, signal) {
       const q = typeof query === 'string' ? query.trim() : ''
       if (q.length === 0) throw new TypeError('baidu.search: query 必须是非空字符串')
-      const html = await fetchHtml(buildUrl(q), { timeoutMs: config.timeoutMs, retries: config.retries, signal })
+      const html = await fetchHtml(buildUrl(q), { timeoutMs: config.timeoutMs, retries: config.retries, retryBackoffMs: config.retryBackoffMs, maxResponseBytes: config.maxResponseBytes, signal })
       return { sources: parseSerp(html) }
     },
   }

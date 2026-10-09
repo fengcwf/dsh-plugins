@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { createAggregator } from '../lib/aggregate.js'
 import { BLOCK_CODE, classifyBlock, isBlocked } from '../lib/ratelimit.js'
 import { createSource as createDdgSource } from '../lib/sources/ddg.js'
+import { assertPublicHttps, fetchHtml, isBlockedIpLiteral } from '../lib/sources/common.js'
 import { Config } from '../lib/index.js'
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures')
@@ -102,4 +103,126 @@ test('e2e 正常 SERP 不误报：四源 fixtures 全部非 blocked（分类回�
       assert.ok(outcome.sources.length > 0, '解析出结果')
     },
   )
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 出站门禁（INV-15 / K-16，T2）：assertPublicHttps 单测矩阵。离线：纯字面判定 + lookup 注入，
+// 零真实 DNS / 零真实出网。
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('出站门禁：https 公网地址通过；http 明文与非 https scheme 被拒（INV-15）', async () => {
+  await assertPublicHttps('https://www.bing.com/search?q=test')
+  await assertPublicHttps('https://html.duckduckgo.com/html/?q=probe')
+  await assertPublicHttps('https://x.example/probe')
+  for (const url of ['http://example.com/', 'http://www.baidu.com/s?wd=q', 'ftp://example.com/', 'ws://example.com/']) {
+    await assert.rejects(
+      () => assertPublicHttps(url),
+      (error) => error.code === 'BAD_TARGET' && error.reason === 'scheme',
+      `http 明文/非 https 必须拒：${url}`,
+    )
+  }
+  await assert.rejects(() => assertPublicHttps('not a url'), (error) => error.code === 'BAD_TARGET' && error.reason === 'unparsable')
+})
+
+test('出站门禁：内网/回环/链路本地/云元数据矩阵逐类被拒（INV-15 SSRF）', async () => {
+  const blocked = [
+    // localhost 家族与单标签内网名
+    'https://localhost/', 'https://app.localhost/', 'https://printer.local/', 'https://nas.internal/',
+    'https://router.home.arpa/', 'https://fileserver.lan/', 'https://intranet/',
+    // IPv4 回环 / 内网 / CGNAT / 协议段
+    'https://127.0.0.1/', 'https://127.8.8.8/', 'https://10.1.2.3/', 'https://192.168.0.41/',
+    'https://172.16.0.1/', 'https://172.31.255.255/', 'https://100.64.0.1/', 'https://192.0.0.1/',
+    'https://0.0.0.0/',
+    // 链路本地 + 云元数据
+    'https://169.254.169.254/', 'https://169.254.0.1/',
+    // IPv6 回环 / 未指定 / 链路本地 / 唯一本地 / 映射
+    'https://[::1]/', 'https://[::]/', 'https://[fe80::1]/', 'https://[fc00::1]/', 'https://[fd12:3456::1]/',
+    'https://[::ffff:127.0.0.1]/', 'https://[::ffff:169.254.169.254]/',
+  ]
+  for (const url of blocked) {
+    await assert.rejects(
+      () => assertPublicHttps(url),
+      (error) => error.code === 'BAD_TARGET' && error.reason === 'host',
+      `非公网目标必须拒：${url}`,
+    )
+  }
+})
+
+test('出站门禁：云元数据 169.254.169.254 及映射形专项被拒（INV-15）', async () => {
+  for (const url of ['https://169.254.169.254/latest/meta-data/', 'https://[::ffff:169.254.169.254]/', 'https://169.254.170.2/']) {
+    await assert.rejects(() => assertPublicHttps(url), (error) => error.code === 'BAD_TARGET' && error.reason === 'host', `云元数据必须拒：${url}`)
+  }
+  assert.equal(isBlockedIpLiteral('169.254.169.254'), true, '字面判定同口径')
+})
+
+test('出站门禁：公网边界负例不过度封锁（放行面）', async () => {
+  for (const url of ['https://8.8.8.8/', 'https://172.32.0.1/', 'https://192.169.0.1/', 'https://100.128.0.1/', 'https://[2606:4700::1111]/']) {
+    await assertPublicHttps(url, {})
+    assert.equal(isBlockedIpLiteral(url.includes('[') ? url.slice(url.indexOf('[') + 1, url.indexOf(']')) : url.slice('https://'.length, -1)), false, `公网地址不得误伤：${url}`)
+  }
+  assert.equal(isBlockedIpLiteral('172.32.0.1'), false, '172.32 越出 172.16/12 不得误伤')
+  assert.equal(isBlockedIpLiteral('::ffff:8.8.8.8'), false, '映射公网 v4 不得误伤')
+})
+
+test('出站门禁：DNS 解析后 IP 同段核验防解析绕过（lookup 注入，离线 stub）', async () => {
+  const lookupOf = (addresses) => async () => addresses.map((address) => ({ address, family: 4 }))
+  await assert.rejects(
+    () => assertPublicHttps('https://evil.example.com/', { lookup: lookupOf(['10.0.0.5']) }),
+    (error) => error.code === 'BAD_TARGET' && error.reason === 'resolved',
+    '解析到内网 IP 必须拒',
+  )
+  await assert.rejects(
+    () => assertPublicHttps('https://evil.example.com/', { lookup: lookupOf(['93.184.216.34', '127.0.0.1']) }),
+    (error) => error.code === 'BAD_TARGET' && error.reason === 'resolved',
+    '任一解析 IP 非公网即拒',
+  )
+  await assertPublicHttps('https://evil.example.com/', { lookup: lookupOf(['93.184.216.34']) })
+  await assert.rejects(
+    () => assertPublicHttps('https://nx.example.com/', { lookup: async () => { throw new Error('ENOTFOUND') } }),
+    (error) => error.code === 'BAD_TARGET' && error.reason === 'resolve',
+    '解析失败 fail-closed',
+  )
+})
+
+test('出站门禁：URL 内嵌凭据被拒（P-5 / K-4）', async () => {
+  for (const url of ['https://user:pass@example.com/', 'https://admin@example.com/']) {
+    await assert.rejects(() => assertPublicHttps(url), (error) => error.code === 'BAD_TARGET' && error.reason === 'credentials', `内嵌凭据必须拒：${url}`)
+  }
+})
+
+test('出站门禁不可绕过：fetchHtml 被拒目标零 fetch 调用（门禁先于出网，K-16）', async () => {
+  for (const url of ['http://example.com/', 'https://127.0.0.1/', 'https://[::1]/', 'https://169.254.169.254/latest/meta-data/']) {
+    await withStubFetch(
+      async () => {
+        throw new Error('stub：门禁拒绝后不应有任何出网调用')
+      },
+      async (calls) => {
+        await assert.rejects(() => fetchHtml(url, { timeoutMs: 1000, retries: 0 }), (error) => error.code === 'BAD_TARGET')
+        assert.equal(calls.length, 0, `门禁拒绝即零出网：${url}`)
+      },
+    )
+  }
+  // 正例：公网 https 目标照常走 fetch（门禁放行不误伤主链）
+  await withStubFetch(
+    async () => ({ ok: true, status: 200, text: async () => '<html></html>' }),
+    async (calls) => {
+      const html = await fetchHtml('https://x.example/probe', { timeoutMs: 1000, retries: 0 })
+      assert.equal(html, '<html></html>')
+      assert.equal(calls.length, 1, '放行面照常出网')
+    },
+  )
+})
+
+test('出站门禁零第三方依赖（P-4 / K-8）：common.js 导入面白名单', async () => {
+  const source = await readFile(new URL('../lib/sources/common.js', import.meta.url), 'utf8')
+  const specifiers = [...source.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((match) => match[1])
+  assert.ok(specifiers.length > 0, '导入面可扫描')
+  for (const spec of specifiers) {
+    assert.ok(
+      spec.startsWith('node:') || spec.startsWith('./') || spec.startsWith('../'),
+      `禁第三方导入（P-4）：${spec}`,
+    )
+  }
+  assert.ok(!/\brequire\s*\(/.test(source), '纯 ESM 零 require')
+  assert.equal(isBlockedIpLiteral('8.8.8.8'), false, '同步字面判定可直测')
 })

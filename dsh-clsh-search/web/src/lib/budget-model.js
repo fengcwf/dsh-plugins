@@ -30,6 +30,83 @@ export function clampMaxResults(value) {
   return Math.min(10, Math.max(1, Number(value)))
 }
 
+// —— 0.2.x 扩键词汇（T18 / INV-19）：Config 七组新键的前端词汇表与写回面 ——
+// 镜像纪律（K-9 豁免③）：默认值与 lib/index.js Config schema 逐字一致，
+// web/test/budget-model.test.mjs 用 Config.parse({}) 钉死防漂移（三面一致：Config ↔ 词汇表 ↔ 锁）。
+// 形状注记：custom / useProxy 在 Config 挂 sources 子键（sources.custom / sources.useProxy），
+// 设置面模型平铺承载（settings.custom / settings.useProxy），写回时经 extraPatch 归位。
+
+/** 七组新键默认值（= Config schema 默认；custom/useProxy 平铺，写回时归位 sources 子键）。 */
+export const EXTRA_KEY_DEFAULTS = {
+  retryBackoffMs: 300,
+  maxResponseBytes: 1048576,
+  logCapacity: 200,
+  healthTimeoutMs: 5000,
+  proxies: [],
+  useProxy: { ddg: true, bing: true, so360: false, baidu: false },
+  custom: [],
+}
+
+/** 七组新键词汇（设置面/未来卡片渲染用：label / 说明 / 形状）。 */
+export const EXTRA_KEY_FIELDS = [
+  { key: 'retryBackoffMs', label: '重试退避基数', desc: '可重试瞬态重试前的指数退避基数，单次等待不外溢单查询超时', unit: 'ms', shape: 'number' },
+  { key: 'maxResponseBytes', label: '响应体上限', desc: '单响应读取字节上限，超限按普通失败处理（不入反爬类目）', unit: 'B', shape: 'number' },
+  { key: 'logCapacity', label: '触发日志容量', desc: '进程内存环条数上限，超出丢最旧；不落盘、重启即清空', unit: '条', shape: 'number' },
+  { key: 'healthTimeoutMs', label: '健康测试超时', desc: '单源健康探针超时，短于主链超时以快速反馈', unit: 'ms', shape: 'number' },
+  { key: 'proxies', label: '代理地址池', desc: 'https 代理地址列表（host:port，禁凭据），空 = 全直连', unit: '', shape: 'array' },
+  { key: 'useProxy', label: '每源代理开关', desc: '境外源默认走代理、国内源默认直连（按源勾选）', unit: '', shape: 'object' },
+  { key: 'custom', label: '自定义源', desc: '自定义搜索源列表（https + {query} 占位，id 唯一）', unit: '', shape: 'array' },
+]
+
+/** 数字键（其余为 proxies/custom 数组与 useProxy 对象）。 */
+const EXTRA_SCALAR_KEYS = ['retryBackoffMs', 'maxResponseBytes', 'logCapacity', 'healthTimeoutMs']
+
+/**
+ * 从 Config 形对象取**在场**的新键（不做默认回填——merge 场景防把已载入值重置回默认）。
+ * 兼容两形：Config 形（custom/useProxy 在 sources 子键）与设置面平铺形。
+ * @param {unknown} raw - Config 或 settings 形对象。
+ * @returns {Partial<typeof EXTRA_KEY_DEFAULTS>} 仅含在场且形状合法的键。
+ */
+export function pickExtraKeys(raw) {
+  const input = raw && typeof raw === 'object' ? raw : {}
+  const src = input.sources && typeof input.sources === 'object' ? input.sources : {}
+  const out = {}
+  for (const key of EXTRA_SCALAR_KEYS) {
+    const value = Number(input[key])
+    if (Number.isFinite(value) && value >= 0) out[key] = Math.round(value)
+  }
+  const proxies = Array.isArray(input.proxies) ? input.proxies : Array.isArray(src.proxies) ? src.proxies : null
+  if (proxies) out.proxies = [...proxies]
+  const useProxy = input.useProxy && typeof input.useProxy === 'object' && !Array.isArray(input.useProxy)
+    ? input.useProxy
+    : (src.useProxy && typeof src.useProxy === 'object' && !Array.isArray(src.useProxy) ? src.useProxy : null)
+  if (useProxy) out.useProxy = { ...useProxy }
+  const custom = Array.isArray(input.custom) ? input.custom : Array.isArray(src.custom) ? src.custom : null
+  if (custom) out.custom = [...custom]
+  return out
+}
+
+/**
+ * 设置面模型 → Config 写回增量（A2：不含新键则保存即丢）。
+ * 顶层 5 键平铺；custom / useProxy 归位 sources 子键（调用方与 base.sources 合并）。
+ * 缺值回落 EXTRA_KEY_DEFAULTS（保存前未加载到的服务端值不致被清空）。
+ * @param {object} settings - 设置面模型（平铺承载新键）。
+ * @returns {{retryBackoffMs: number, maxResponseBytes: number, logCapacity: number,
+ *   healthTimeoutMs: number, proxies: string[], sources: {custom: Array, useProxy: object}}}
+ */
+export function extraPatch(settings) {
+  const flat = settings && typeof settings === 'object' ? settings : {}
+  const merged = { ...EXTRA_KEY_DEFAULTS, ...pickExtraKeys(flat) }
+  return {
+    retryBackoffMs: merged.retryBackoffMs,
+    maxResponseBytes: merged.maxResponseBytes,
+    logCapacity: merged.logCapacity,
+    healthTimeoutMs: merged.healthTimeoutMs,
+    proxies: merged.proxies,
+    sources: { custom: merged.custom, useProxy: merged.useProxy },
+  }
+}
+
 /** 结果条数滑杆值域。 */
 export const MAX_RESULTS_RANGE = { min: 1, max: 10, step: 1 }
 

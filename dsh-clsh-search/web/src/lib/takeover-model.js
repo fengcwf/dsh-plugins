@@ -7,11 +7,28 @@ export const TAKE_OVER_MODES = ['auto', 'force', 'off']
 /** 默认态 = auto（INV-10 让位优先；K-10）。 */
 export const TAKE_OVER_DEFAULT = 'auto'
 
-/** segmented 选项（设置页展示序）；force 严禁默认激活（K-10，由 TAKE_OVER_DEFAULT 保证）。 */
+/** segmented 选项（设置页展示序）；force 严禁默认激活（K-10，由 TAKE_OVER_DEFAULT 保证）。
+ *  hint = 原 :title 悬浮文案（Task 24 起提为常驻可见，原文照抄不改写）；
+ *  scene = 「按场景怎么选」引导句（US-14 / R10），每档一句，随档常驻显示。 */
 export const TAKE_OVER_OPTIONS = [
-  { value: 'auto', label: '让位优先', hint: 'profile 显式指定别家 provider 时只警告不接管（默认）' },
-  { value: 'force', label: '强制接管', hint: '覆盖别家 provider 强制接管 web_search（需显式选择）' },
-  { value: 'off', label: '禁用接管', hint: '不注册 provider、不动指针（K-10 关断态）' },
+  {
+    value: 'auto',
+    label: '让位优先',
+    hint: 'profile 显式指定别家 provider 时只警告不接管（默认）',
+    scene: '按场景怎么选：想先试插件又不想改变现有习惯 → 选它，随时可回退',
+  },
+  {
+    value: 'force',
+    label: '强制接管',
+    hint: '覆盖别家 provider 强制接管 web_search（需显式选择）',
+    scene: '按场景怎么选：确定要插件接管全部 web_search、不再用别家 provider → 选它',
+  },
+  {
+    value: 'off',
+    label: '禁用接管',
+    hint: '不注册 provider、不动指针（K-10 关断态）',
+    scene: '按场景怎么选：只想保留设置与缓存、暂时不用本插件搜索 → 选它',
+  },
 ]
 
 /**

@@ -12,10 +12,12 @@ import {
   buildStrategyText,
   DEFAULT_BUDGET_MIRROR,
   installStrategy,
+  outputEgoGuidanceBlock,
   STRATEGY_ORDER_NAME,
   STRATEGY_SECTION_NAME,
   STRATEGY_TEXT,
 } from '../lib/strategy.js'
+import { createGuard } from '../lib/guard.js'
 import { apply, Config } from '../lib/index.js'
 
 test('systemPrompt.section 注册：name 与 order 槽位正确（W1-N3 语义补齐=TOOLS_SDK 真键）', () => {
@@ -122,4 +124,51 @@ test('W5-STRATEGY-DISPOSE-ASYM：拆除对称 + 身份校验（幂等、陈旧�
   second()
   assertNoSection(fixture2, STRATEGY_SECTION_NAME)
   assert.equal(fixture2.state.disposals, 2, '新装的拆除器正常回收')
+})
+
+test('INV-20：ego 兜底引导块输出缝接 spendEgo——真实 guard 计数非 0（集成实证）', () => {
+  const guard = createGuard(Config.parse({}))
+  assert.equal(guard.egoUsed(), 0, '起点 0')
+  // 集成面：真 createGuard + 真 installStrategy（非 mock），安装即引导块输出一次
+  const fixture = createFakeCtx()
+  installStrategy(fixture.ctx, Config.parse({}), { guard })
+  assert.equal(guard.egoUsed(), 1, '安装输出引导块一次 → spendEgo 真实计数 1')
+  assert.ok(guard.egoUsed() > 0, 'egoUsed 真实非 0（INV-20 禁恒 0 假计数）')
+  // 再次输出（新 ctx 重装）再计一次
+  installStrategy(createFakeCtx().ctx, Config.parse({}), { guard })
+  assert.equal(guard.egoUsed(), 2, '每次引导块输出各计一次（语义=引导次数，R33）')
+  // buildStrategyText 直接输出同缝计数
+  buildStrategyText(Config.parse({}), { guard })
+  assert.equal(guard.egoUsed(), 3)
+  // 无 guard 的构建零副作用
+  buildStrategyText(Config.parse({}))
+  assert.equal(guard.egoUsed(), 3, '无 guard 不计数（STRATEGY_TEXT 构建零副作用）')
+})
+
+test('INV-20/K-21 明示文案：宿主另有 50 次/任务硬兜底，两者不叠加', () => {
+  assert.match(STRATEGY_TEXT, /宿主另有 50 次\/任务硬兜底/, '明示宿主兜底额度')
+  assert.match(STRATEGY_TEXT, /两者不叠加/, '明示不叠加')
+  assert.match(STRATEGY_TEXT, /不设第二道熔断/, '明示无双重熔断（K-21）')
+  assert.match(STRATEGY_TEXT, /两套独立计数/, '明示两套计数关系')
+})
+
+test('K-21 无双重熔断：达预算上限引导块仍输出并标注（不拦截）', () => {
+  const guard = createGuard(Config.parse({ egoBudget: 2 }))
+  const first = buildStrategyText(Config.parse({ egoBudget: 2 }), { guard })
+  assert.match(first, /ego-browser 仅兜底/)
+  assert.doesNotMatch(first, /已达上限/, '预算未用完不标注（remaining>0）')
+  const second = buildStrategyText(Config.parse({ egoBudget: 2 }), { guard })
+  assert.match(second, /引导预算已达上限/, '预算用尽（remaining=0）即标注（仅展示面）')
+  const third = buildStrategyText(Config.parse({ egoBudget: 2 }), { guard })
+  assert.match(third, /ego-browser 仅兜底/, '超预算后引导块照常输出（不被熔断拦住）')
+  assert.match(third, /引导预算已达上限/, '持续标注')
+  assert.equal(guard.egoUsed(), 3, '计数先增后判仍单调（防套利）')
+  assert.equal(guard.egoRemaining(), 0, '剩余额不为负')
+})
+
+test('outputEgoGuidanceBlock 直用缝：guard 缺省只组文本（引导块行形稳定）', () => {
+  const lines = outputEgoGuidanceBlock(undefined, { egoBudget: 9 })
+  assert.equal(lines.length, 2, '默认两行：用法 + 不叠加明示')
+  assert.match(lines[0], /9 次/)
+  assert.match(lines[1], /宿主另有 50 次\/任务硬兜底/)
 })

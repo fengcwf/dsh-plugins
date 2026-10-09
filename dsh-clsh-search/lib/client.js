@@ -90,7 +90,7 @@ window.__ModuleLoader__.load({
           // W66-N1 关闭：取独占 order（仓库实测已占位 30=github-ops/kb-context/wiki-steward、
           // 31=login-gate、40=rtk-kit → 50 无并列），同值并列会让两插件共存次序不被钉死。
           order: 50,
-          label: function label() { return '搜索（dsh-clsh-search）' },
+          label: function label() { return '搜索设置' },
         }, DshClshSearchSettingsSection))
       } catch (e) {
         try {

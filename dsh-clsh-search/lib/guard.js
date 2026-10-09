@@ -65,6 +65,8 @@ export function createGuard(config, options = {}) {
   return {
     /**
      * 花费一次 ego-browser 兜底额度：计数先增后判（熔断后的调用同样计数，防重试套利）。
+     * INV-20 接线：strategy.js 的 ego 兜底引导块输出缝复用本计数（语义=引导次数，R33 拍板），
+     * 超预算抛出由缝内 catch 承接（引导块不被熔断拦住）——本函数与 K-6 熔断面语义不变（单调、超限抛）。
      * @returns {number} 本次调用后的已用次数。
      * @throws {Error} 超预算时抛（code=EGO_BUDGET_EXHAUSTED，文案含预算熔断与预算值）。
      */

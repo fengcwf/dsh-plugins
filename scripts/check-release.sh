@@ -13,16 +13,20 @@ ok()  { echo "[PASS] $1"; }
 bad() { echo "[FAIL] $1"; fail=1; }
 
 [ -d "$d" ] || { bad "无此插件目录: $name"; exit 1; }
-ver=$(node -e "console.log(require('$d/package.json').version||'')")
+# require 守卫（T30）：$d/package.json 缺失/不可解析时不裸 require 炸 MODULE_NOT_FOUND（$d 恒为绝对路径，加 './' 反而依赖 cwd 更脆）；ver 为空时后续对齐项不再拿空串当期望值误判
+ver=""
+if [ -f "$d/package.json" ]; then
+  ver=$(node -e "try{console.log(require('$d/package.json').version||'')}catch(e){}" 2>/dev/null) || ver=""
+fi
 if [ -n "$ver" ]; then ok "package.json version = $ver"; else bad "package.json 缺 version"; fi
 
-if grep -qE "^##[[:space:]]+$ver" "$d/CHANGELOG.md" 2>/dev/null; then
+if [ -n "$ver" ] && grep -qE "^##[[:space:]]+$ver" "$d/CHANGELOG.md" 2>/dev/null; then
   ok "CHANGELOG.md 含 '## $ver' 更新记录"
 else
   bad "CHANGELOG.md 缺 '## $ver' 更新记录 —— 发版必须记录更新内容"
 fi
 
-if grep -qE "$name.*$ver" "$repo_root/README.md" 2>/dev/null; then
+if [ -n "$ver" ] && grep -qE "$name.*$ver" "$repo_root/README.md" 2>/dev/null; then
   ok "根 README.md 版本表已同步"
 else
   bad "根 README.md 版本表未同步 $name $ver"

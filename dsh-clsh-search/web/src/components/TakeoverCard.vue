@@ -46,6 +46,22 @@ function onSelect(value) {
         </div>
       </div>
     </div>
+    <!-- 让位语义常驻解释区（Task 24 / DESIGN.md V3）：三档 hint 从 :title 提为常驻可见 + 「按场景怎么选」。
+         纯展示 v-for，激活态走 class 绑定（K-11：交互控件禁条件渲染）；文案唯一事实源 = lib/takeover-model.js。 -->
+    <div class="cs-sem" role="note" aria-label="让位语义说明">
+      <div
+        v-for="opt in TAKE_OVER_OPTIONS"
+        :key="opt.value"
+        class="cs-sem-row"
+        :class="{ 'is-current': isTakeOverActive(props.takeOver, opt.value) }"
+      >
+        <div class="cs-sem-name">{{ opt.label }}</div>
+        <div class="cs-sem-body">
+          <p class="cs-sem-text">{{ opt.hint }}</p>
+          <p class="cs-sem-scene">{{ opt.scene }}</p>
+        </div>
+      </div>
+    </div>
     <div class="cs-tip">
       <svg class="cs-tip-icon" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
         <path d="M8 1.5 2.5 3.5v4c0 3.2 2.3 5.6 5.5 6.9 3.2-1.3 5.5-3.7 5.5-6.9v-4L8 1.5z" fill="none" stroke="currentColor" stroke-width="1.2" />

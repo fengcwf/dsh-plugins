@@ -6,9 +6,13 @@ import { Config } from '../../lib/index.js'
 import {
   BUDGET_KEYS,
   CACHE_TTL_OPTIONS,
+  EXTRA_KEY_DEFAULTS,
+  EXTRA_KEY_FIELDS,
   R5_DEFAULTS,
   clampMaxResults,
+  extraPatch,
   msToSeconds,
+  pickExtraKeys,
   secondsToMs,
   validateBudget,
   validateNumber,
@@ -21,7 +25,8 @@ test('键面一一对应：BUDGET_KEYS 全在 Config，且 Config 无遗漏预�
   const configKeys = Object.keys(parsedDefault).sort()
   for (const key of BUDGET_KEYS) assert.ok(key in parsedDefault, `Config 缺预算键 ${key}`)
   const nonBudget = configKeys.filter((key) => !BUDGET_KEYS.includes(key))
-  assert.deepEqual(nonBudget, ['cacheDir', 'dataDir', 'logDir', 'sources', 'takeOver'])
+  // 0.2.x 扩键（INV-19/K-20）：非预算键新增 proxies / retryBackoffMs / maxResponseBytes / logCapacity / healthTimeoutMs
+  assert.deepEqual(nonBudget, ['cacheDir', 'dataDir', 'healthTimeoutMs', 'logCapacity', 'logDir', 'maxResponseBytes', 'proxies', 'retryBackoffMs', 'sources', 'takeOver'])
   assert.deepEqual([...BUDGET_KEYS].sort(), ['cacheTtlMs', 'chainBudgetMs', 'egoBudget', 'maxResults', 'retries', 'timeoutMs'])
 })
 
@@ -68,4 +73,49 @@ test('换算与下拉候选：毫秒↔秒、TTL 候选含 R5 默认 10 分钟',
   assert.equal(msToSeconds(30000), 30)
   assert.equal(secondsToMs(12), 12000)
   assert.ok(CACHE_TTL_OPTIONS.some((opt) => opt.valueMs === R5_DEFAULTS.cacheTtlMs && opt.label === '10 分钟'))
+})
+
+test('0.2.x 七组新键三面镜像：EXTRA_KEY_DEFAULTS 与词汇表 == Config schema（K-9 豁免③防漂移自证）', () => {
+  // 面1：Config schema（lib/index.js） ↔ 面2：web 词汇表（budget-model）——逐键钉死
+  for (const key of ['retryBackoffMs', 'maxResponseBytes', 'logCapacity', 'healthTimeoutMs']) {
+    assert.equal(EXTRA_KEY_DEFAULTS[key], parsedDefault[key], `${key} 默认值漂移（Config ↔ 词汇表）`)
+  }
+  assert.deepEqual(EXTRA_KEY_DEFAULTS.proxies, parsedDefault.proxies, 'proxies 漂移')
+  assert.deepEqual(EXTRA_KEY_DEFAULTS.useProxy, parsedDefault.sources.useProxy, 'sources.useProxy 漂移')
+  assert.deepEqual(EXTRA_KEY_DEFAULTS.custom, parsedDefault.sources.custom, 'sources.custom 漂移')
+  // 面3：词汇表（EXTRA_KEY_FIELDS）与默认值一一对应、字段齐 label/desc（设置页展示面）
+  assert.deepEqual([...EXTRA_KEY_FIELDS.map((f) => f.key)].sort(), Object.keys(EXTRA_KEY_DEFAULTS).sort(), '词汇表键面 = 默认值键面')
+  for (const field of EXTRA_KEY_FIELDS) {
+    assert.ok(field.label && field.desc, `${field.key} 缺 label/desc 词汇`)
+  }
+  // 默认值语义抽样（R32/R5 拍板值）
+  assert.equal(EXTRA_KEY_DEFAULTS.retryBackoffMs, 300)
+  assert.equal(EXTRA_KEY_DEFAULTS.maxResponseBytes, 1048576)
+  assert.equal(EXTRA_KEY_DEFAULTS.logCapacity, 200)
+  assert.equal(EXTRA_KEY_DEFAULTS.healthTimeoutMs, 5000)
+})
+
+test('写回面（保存即不丢）：extraPatch 含七组新键且 custom/useProxy 归位 sources 子键；pickExtraKeys 仅取在场键', () => {
+  const customItem = { id: 'my-src', urlTemplate: 'https://e.example/s?q={query}' }
+  const patch = extraPatch({ custom: [customItem], retryBackoffMs: 100 })
+  // 七组全覆盖：顶层 5 + sources 子键 2
+  for (const key of ['retryBackoffMs', 'maxResponseBytes', 'logCapacity', 'healthTimeoutMs', 'proxies', 'sources']) {
+    assert.ok(key in patch, `写回 patch 缺 ${key}（保存即丢）`)
+  }
+  assert.equal(patch.retryBackoffMs, 100, '在场键透传')
+  assert.equal(patch.maxResponseBytes, 1048576, '缺键回默认（保存不把服务端已配值清空）')
+  assert.deepEqual(patch.sources.custom, [customItem], 'custom 归位 sources 子键')
+  assert.ok(patch.sources.useProxy && typeof patch.sources.useProxy === 'object', 'useProxy 归位 sources 子键')
+  assert.ok(Array.isArray(patch.proxies), 'proxies 数组形')
+
+  // pickExtraKeys 在场语义：不在场不回填（applyPatch 编辑旧键不得重置新键）
+  assert.deepEqual(Object.keys(pickExtraKeys({ logCapacity: 50 })).sort(), ['logCapacity'])
+  // Config 形兼容：custom/useProxy 从 sources 子键取平铺
+  const fromShape = pickExtraKeys({ sources: { custom: [customItem], useProxy: { ddg: false } }, proxies: ['https://p.example:8443'] })
+  assert.deepEqual(fromShape.custom, [customItem])
+  assert.equal(fromShape.useProxy.ddg, false)
+  assert.deepEqual(fromShape.proxies, ['https://p.example:8443'])
+  // 非法形回缺省（不产键）
+  assert.deepEqual(pickExtraKeys(null), {})
+  assert.deepEqual(pickExtraKeys({ retryBackoffMs: 'x' }), {})
 })

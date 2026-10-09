@@ -23,6 +23,17 @@ export const EDITABLE_PATHS = Object.freeze([
   Object.freeze(['sources', 'so360']),
   Object.freeze(['sources', 'baidu']),
   Object.freeze(['sources', 'priority']),
+  // 0.2.x 七组新键（INV-19 扩键面；T17b 透传收口）——custom/useProxy 落 sources 子键、其余顶层
+  Object.freeze(['sources', 'custom']),
+  Object.freeze(['sources', 'useProxy', 'ddg']),
+  Object.freeze(['sources', 'useProxy', 'bing']),
+  Object.freeze(['sources', 'useProxy', 'so360']),
+  Object.freeze(['sources', 'useProxy', 'baidu']),
+  Object.freeze(['proxies']),
+  Object.freeze(['retryBackoffMs']),
+  Object.freeze(['maxResponseBytes']),
+  Object.freeze(['logCapacity']),
+  Object.freeze(['healthTimeoutMs']),
   Object.freeze(['timeoutMs']),
   Object.freeze(['retries']),
   Object.freeze(['chainBudgetMs']),
@@ -292,7 +303,7 @@ export function staticHandler(distDir, prefix = API_PREFIX) {
  * @param {(line:string)=>void} [deps.warn]
  * @returns {Function[]} dispose 列表（交 ctx.effect 收敛）
  */
-export function registerSettingsRoutes({ register, connection = null, getConfig, applyPatch = null, distDir, warn = () => {} }) {
+export function registerSettingsRoutes({ register, connection = null, getConfig, applyPatch = null, distDir, warn = () => {}, diagnostics = null }) {
   const disposers = []
   const statics = staticHandler(distDir)
 
@@ -336,11 +347,84 @@ export function registerSettingsRoutes({ register, connection = null, getConfig,
     }
   }
 
+  // ── T13 诊断面（US-10/11/16，INV-14）：全部 handler 自调 authGate + methodGuard（C14 惯例）──
+  const diagnosticsGet = async (req, res) => {
+    if (!authGate(connection, req, res)) return
+    if (!methodGuard(req, res, ['GET'])) return
+    try {
+      return sendJson(res, 200, { data: await diagnostics.selfCheck() })
+    } catch (error) {
+      return fail(res, 500, 'internal', String(error?.message ?? error))
+    }
+  }
+
+  const diagnosticsProbe = async (req, res) => {
+    if (!authGate(connection, req, res)) return
+    if (!methodGuard(req, res, ['POST'])) return
+    try {
+      const body = await readJsonBody(req)
+      const source = typeof body?.source === 'string' ? body.source.trim() : ''
+      if (source.length === 0) return fail(res, 400, 'bad_request', 'body.source 必填（单源探针）')
+      return sendJson(res, 200, { data: await diagnostics.probe(source) })
+    } catch (error) {
+      return fail(res, 500, 'internal', String(error?.message ?? error))
+    }
+  }
+
+  const diagnosticsOnline = async (req, res) => {
+    if (!authGate(connection, req, res)) return
+    if (!methodGuard(req, res, ['POST'])) return
+    try {
+      return sendJson(res, 200, { data: await diagnostics.online() })
+    } catch (error) {
+      return fail(res, 500, 'internal', String(error?.message ?? error))
+    }
+  }
+
+  const logsGet = async (req, res) => {
+    if (!authGate(connection, req, res)) return
+    if (!methodGuard(req, res, ['GET'])) return
+    try {
+      return sendJson(res, 200, { data: diagnostics.logsView() })
+    } catch (error) {
+      if (error?.code === 'logs_unavailable') return fail(res, 503, 'logs_unavailable', String(error?.message ?? error))
+      return fail(res, 500, 'internal', String(error?.message ?? error))
+    }
+  }
+
+  const logsClear = async (req, res) => {
+    if (!authGate(connection, req, res)) return
+    if (!methodGuard(req, res, ['POST'])) return
+    try {
+      return sendJson(res, 200, { data: diagnostics.clearLogs() })
+    } catch (error) {
+      return fail(res, 500, 'internal', String(error?.message ?? error))
+    }
+  }
+
+  const cacheClear = async (req, res) => {
+    if (!authGate(connection, req, res)) return
+    if (!methodGuard(req, res, ['POST'])) return
+    try {
+      return sendJson(res, 200, { data: await diagnostics.clearCache() })
+    } catch (error) {
+      return fail(res, 500, 'internal', String(error?.message ?? error))
+    }
+  }
+
   const handler = async (req, res) => {
     const pathname = pathnameOf(req)
     if (pathname === `${API_PREFIX}/settings`) {
       if (req.method === 'GET') return settingsGet(req, res)
       return settingsWrite(req, res)
+    }
+    if (diagnostics) {
+      if (pathname === `${API_PREFIX}/diagnostics`) return diagnosticsGet(req, res)
+      if (pathname === `${API_PREFIX}/diagnostics/probe`) return diagnosticsProbe(req, res)
+      if (pathname === `${API_PREFIX}/diagnostics/online`) return diagnosticsOnline(req, res)
+      if (pathname === `${API_PREFIX}/logs`) return logsGet(req, res)
+      if (pathname === `${API_PREFIX}/logs/clear`) return logsClear(req, res)
+      if (pathname === `${API_PREFIX}/cache/clear`) return cacheClear(req, res)
     }
     return statics(req, res)
   }

@@ -11,11 +11,14 @@ import { createAggregator } from './aggregate.js'
 import { createCache } from './cache.js'
 import { createGuard } from './guard.js'
 import { installStrategy } from './strategy.js'
+import { createDiagnostics } from './diagnostics.js'
+import { createTriggerLog } from './trigger-log.js'
 import { createApplyPatch, registerSettingsRoutes } from './settings-routes.js'
 import { createSource as createDdgSource } from './sources/ddg.js'
 import { createSource as createBingSource } from './sources/bing.js'
 import { createSource as createSo360Source } from './sources/so360.js'
 import { createSource as createBaiduSource } from './sources/baidu.js'
+import { createCustomSource } from './sources/custom.js'
 
 /** web/dist 构建物目录（settings 服务端缝的静态服务面；相对本模块定位，随包分发）。 */
 const DIST_DIR = fileURLToPath(new URL('../web/dist', import.meta.url))
@@ -44,31 +47,125 @@ function dirField(r5Literal) {
   return z.string().transform(expandHome).prefault(r5Literal)
 }
 
+/** 自定义源描述项（US-12 / INV-15/16）：URL 模板 + 解析选择器；出网必经 fetchHtml 唯一缝与出站门禁。 */
+const customSourceItem = z
+  .object({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    urlTemplate: z.string().min(1),
+    itemSelector: z.string().min(1),
+    titleSelector: z.string().min(1),
+    linkSelector: z.string().min(1),
+    snippetSelector: z.string().optional(),
+    useProxy: z.boolean().default(false),
+  })
+  .refine((item) => item.urlTemplate.startsWith('https://'), {
+    message: 'urlTemplate 必须 https 起头（INV-15 禁 http 明文）',
+    path: ['urlTemplate'],
+  })
+  .refine((item) => item.urlTemplate.includes('{query}'), {
+    message: 'urlTemplate 必须含 {query} 占位（查询词唯一入口，K-4）',
+    path: ['urlTemplate'],
+  })
+
+/** 自定义源列表：项 id 唯一（防 priority 词汇歧义）。 */
+const customSourceList = z
+  .array(customSourceItem)
+  .superRefine((items, ctx) => {
+    const seen = new Set()
+    for (const [index, item] of items.entries()) {
+      if (seen.has(item.id)) {
+        ctx.addIssue({ code: 'custom', message: `sources.custom 项 id 重复：${item.id}`, path: [index, 'id'] })
+      }
+      seen.add(item.id)
+    }
+  })
+  .default([])
+
+/** 代理地址项（US-13 / INV-18）：host:port 或 http://host:port，不支持认证（拒 user:pass@）。 */
+const proxyItem = z
+  .object({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    address: z.string().min(1),
+  })
+  .refine((item) => !item.address.includes('@'), {
+    message: '代理地址禁止含凭据（INV-18：不支持 user:pass@ 认证形态）',
+    path: ['address'],
+  })
+  .refine((item) => /^(?:https?:\/\/)?[A-Za-z0-9.-]+:\d{1,5}$/.test(item.address), {
+    message: '代理地址形如 host:port 或 http://host:port（P-5 禁凭据位）',
+    path: ['address'],
+  })
+
+/** 代理地址池：多套可维护（R17 拍板），项 id 唯一。 */
+const proxyList = z
+  .array(proxyItem)
+  .superRefine((items, ctx) => {
+    const seen = new Set()
+    for (const [index, item] of items.entries()) {
+      if (seen.has(item.id)) {
+        ctx.addIssue({ code: 'custom', message: `proxies 项 id 重复：${item.id}`, path: [index, 'id'] })
+      }
+      seen.add(item.id)
+    }
+  })
+  .default([])
+
 /**
  * Config 面（INV-9 / K-9）：全键可配，默认值逐项 = R5 确认表。
  * 数值项一律是本 schema 的字段默认值——源码其他位置不得出现绕过 Config 的硬编码常量。
+ * 0.2.x 扩键（INV-19 / K-20）：新键一律带默认值——老 profile 缺键自动补齐（R24 零迁移）。
  */
 const Config = z.object({
-  /** 四源开关 + 聚合优先级（失败切换顺序，可重排；R1 四源全开）。 */
+  /** 四源开关 + 聚合优先级（失败切换顺序，可重排；R1 四源全开）+ 0.2.x 自定义源与代理勾选。 */
   sources: z.object({
     ddg: z.boolean().default(true),
     bing: z.boolean().default(true),
     so360: z.boolean().default(true),
     baidu: z.boolean().default(true),
-    priority: z.array(z.enum(SOURCE_IDS)).default([...SOURCE_IDS]),
+    priority: z.array(z.string().min(1)).default([...SOURCE_IDS]),
+    /** 自定义源描述项列表（US-12，默认空 = 行为与 0.1.0 等价）。 */
+    custom: customSourceList,
+    /** 每源代理勾选（US-13 / R21：境外源默认走代理、国内源默认直连）。 */
+    useProxy: z.object({
+      ddg: z.boolean().default(true),
+      bing: z.boolean().default(true),
+      so360: z.boolean().default(false),
+      baidu: z.boolean().default(false),
+    }).prefault({}),
+  }).superRefine((value, ctx) => {
+    // priority 动态词表（R25 混排收口，T13）：id ∈ 内置四源 ∪ sources.custom[].id（未知即拒）；
+    // 替代 0.1.0 的 z.enum 静态四元面——自定义源进 priority 才能端到端混排。
+    const customIds = new Set((Array.isArray(value.custom) ? value.custom : []).map((item) => item && item.id))
+    for (const [index, id] of value.priority.entries()) {
+      if (!SOURCE_IDS.includes(id) && !customIds.has(id)) {
+        ctx.addIssue({ code: 'custom', message: `priority 含未知源：${id}`, path: ['priority', index] })
+      }
+    }
   }).prefault({}),
+  /** 代理地址池（US-13 / INV-18：不支持认证，默认空 = 全直连）。 */
+  proxies: proxyList,
   /** 单请求超时（毫秒）。 */
   timeoutMs: z.number().int().positive().default(12000),
   /** 单源重试次数（反爬命中不重试，INV-5）。 */
   retries: z.number().int().min(0).default(3),
+  /** 重试退避基数（毫秒，指数退避；C3 技术债，决策回填第 2 项 = 300）。 */
+  retryBackoffMs: z.number().int().min(0).default(300),
   /** 整链总预算（毫秒）：优先级链串行切换的总时长上限。 */
   chainBudgetMs: z.number().int().positive().default(30000),
   /** 单次搜索返回条数，越界截断到 1-10（clamp，非静默放行）。 */
   maxResults: z.number().int().transform((v) => Math.min(10, Math.max(1, v))).default(8),
+  /** 响应体上限（字节；W3-3 技术债，超限=普通失败不入 blocked，决策回填第 2 项 = 1MiB）。 */
+  maxResponseBytes: z.number().int().positive().default(1048576),
   /** 查询缓存 TTL（毫秒，10 分钟）。 */
   cacheTtlMs: z.number().int().min(0).default(600000),
   /** ego-browser 兜底单任务上限（次，熔断守卫 INV-6）。 */
   egoBudget: z.number().int().min(0).default(15),
+  /** 触发日志内存环容量（条；INV-11 默认 200，超出丢最旧）。 */
+  logCapacity: z.number().int().min(1).default(200),
+  /** 单源健康测试超时（毫秒；R23 = 5000，短于主链 timeoutMs 失败快速反馈）。 */
+  healthTimeoutMs: z.number().int().positive().default(5000),
   /** 接管开关三态（INV-10）。 */
   takeOver: z.enum(TAKE_OVER_MODES).default('auto'),
   /** 有状态数据落点（K-7：只落 ~/.dsh 下插件专属目录，禁写安装位/源码位）。 */
@@ -216,20 +313,44 @@ function createSearchRuntime(config, options = {}) {
   }
   const injectedSources = Array.isArray(options.sources) ? options.sources : null
   const injectedCache = options.cache ?? null
+  /** 触发日志内存环（T9 seam；T13 埋点收口）。 */
+  const triggerLog = options.triggerLog ?? createTriggerLog({ capacity: config.logCapacity })
+  let cachePromise = null
+  /** 生产源列表（W3 统一源形）：内置四源 + 自定义源工厂（R25 混排，T8/T13 端到端收口）。 */
+  function buildSources() {
+    if (injectedSources) return injectedSources
+    const customItems = Array.isArray(config?.sources?.custom) ? config.sources.custom : []
+    return [
+      createDdgSource(config),
+      createBingSource(config),
+      createSo360Source(config),
+      createBaiduSource(config),
+      ...customItems.map((item) => createCustomSource(item, config)),
+    ]
+  }
+  /** 诊断/探针面用：id → 源实例（与聚合器同源同形，探针直调绕过缓存与 guard，task-A D16）。 */
+  function sourcesById() {
+    return new Map(buildSources().map((source) => [source.name, source]))
+  }
+  /** 缓存单实例（聚合器与清缓存共用同一实例，避免内存索引与目录失同步）。 */
+  async function getCache() {
+    if (injectedCache) return injectedCache
+    if (injectedSources) return null
+    if (!cachePromise) cachePromise = createCache({ dir: config.cacheDir, ttlMs: config.cacheTtlMs })
+    return cachePromise
+  }
+  /** 清缓存（US-16：只清缓存面；与 logs/clear 分离）。 */
+  async function clearCache() {
+    const cache = await getCache()
+    if (!cache || typeof cache.clear !== 'function') return 0
+    return cache.clear()
+  }
   let aggregatorPromise = null
   async function getAggregator() {
     if (!aggregatorPromise) {
       const pending = (async () => {
-        const sourceList = injectedSources ?? [
-          createDdgSource(config),
-          createBingSource(config),
-          createSo360Source(config),
-          createBaiduSource(config),
-        ]
-        const cache = injectedCache ?? (injectedSources ? null : await createCache({
-          dir: config.cacheDir,
-          ttlMs: config.cacheTtlMs,
-        }))
+        const sourceList = buildSources()
+        const cache = await getCache()
         return createAggregator(config, sourceList, cache ? { cache } : {})
       })()
       aggregatorPromise = pending
@@ -242,7 +363,7 @@ function createSearchRuntime(config, options = {}) {
     }
     return aggregatorPromise
   }
-  return { guard, getAggregator }
+  return { guard, getAggregator, triggerLog, sourcesById, clearCache, config }
 }
 
 /**
@@ -264,14 +385,34 @@ async function runSearch(runtime, request, signal) {
     throw new Error('dsh-clsh-search: search(request) 需要非空字符串 query（WebSearchRequest 契约）')
   }
   const chain = runtime.guard.chain(signal)
+  const startedAt = Date.now()
+  const sourceEvents = []
+  let outcome = null
+  let failure = null
   try {
-    const outcome = await (await runtime.getAggregator()).aggregate(query, chain.signal)
-    if (outcome.ok) return { sources: outcome.sources, truncated: outcome.truncated }
-    const text = outcome.blocks.map((block) => (typeof block.text === 'string' ? block.text : '')).join('\n')
-    return { content: text, sources: [], truncated: false }
+    outcome = await (await runtime.getAggregator()).aggregate(query, chain.signal, {
+      // 逐源耗时/成败旁路面（T13 埋点：喂 trigger-log 明细与逐源统计，US-16）
+      onSourceEvent: (event) => sourceEvents.push(event),
+    })
+  } catch (error) {
+    failure = error
   } finally {
     chain.dispose()
   }
+  // 触发日志收口埋点（T9 seam / INV-11~13）：每次触发恰一条；脱敏摘要（len+首词）；record 内部 fail-open
+  runtime.triggerLog.record({
+    ts: startedAt,
+    via: 'search',
+    ok: !failure && outcome?.ok === true,
+    elapsedMs: Date.now() - startedAt,
+    resultCount: !failure && outcome?.ok === true ? outcome.sources.length : 0,
+    queryDigest: { len: query.length, first: query.split(/\s+/)[0] },
+    sources: sourceEvents,
+  })
+  if (failure) throw failure
+  if (outcome.ok) return { sources: outcome.sources, truncated: outcome.truncated }
+  const text = outcome.blocks.map((block) => (typeof block.text === 'string' ? block.text : '')).join('\n')
+  return { content: text, sources: [], truncated: false }
 }
 
 /** 结果正文（K-1 载体）：与宿主 formatSearchOutput **同输入同输出**的逐字节同实现。 */
@@ -338,15 +479,27 @@ function renderToolBlocks(result) {
  */
 function apply(ctx, rawConfig, options = {}) {
   const config = resolveConfig(ctx, rawConfig)
+  // T13 收口：单一 runtime——策略 ego 计数、provider 消耗、诊断读数共用同一个 guard（双实例消除）
+  const runtime = createSearchRuntime(config, options)
+  const writeSeam = { available: false }
+  const diagnostics = createDiagnostics({
+    config,
+    validateConfig: (candidate) => Config.safeParse(candidate),
+    triggerLog: runtime.triggerLog,
+    getGuard: () => runtime.guard,
+    clearCache: () => runtime.clearCache(),
+    sourcesById: () => runtime.sourcesById(),
+    hasWriteSeam: () => writeSeam.available,
+  })
   ctx.effect(() => {
     // 生命周期缝内成对建立/释放：顺序策略注入（Task 12）+ provider 注册/接管（Task 3）
-    // + settings 服务端缝（W6.5：读写路由 + web/dist 静态服务）
-    const releaseStrategy = installStrategy(ctx, config)
-    const releaseProvider = installSearchProvider(ctx, config, options)
+    // + settings 服务端缝（W6.5：读写路由 + web/dist 静态服务 + T13 诊断面）
+    const releaseStrategy = installStrategy(ctx, config, { guard: runtime.guard })
+    const releaseProvider = installSearchProvider(ctx, config, options, runtime)
     // T18-B1-②：settings 面任何故障不拖死 provider 主链（US-1 优先于 US-3）——故障 warn 留痕后照常
     let releaseSettings = () => {}
     try {
-      releaseSettings = installSettingsRoutes(ctx, config)
+      releaseSettings = installSettingsRoutes(ctx, config, { diagnostics, writeSeam })
     } catch (error) {
       warn(ctx, `dsh-clsh-search: settings 面挂载失败（web_search 主链不受影响）：${error?.message ?? error}`)
     }
@@ -368,7 +521,7 @@ function apply(ctx, rawConfig, options = {}) {
  * 非 cordis 面（测试/裸 ctx）缺缝 → trace 静默（单元面零告警断言限该面保持）。
  * @returns {() => void} 拆除器（路由 disposers 成对回收）。
  */
-function installSettingsRoutes(ctx, config) {
+function installSettingsRoutes(ctx, config, extras = {}) {
   const noop = () => {}
   // T18-B1-①：外层探测一律 softService 形（wiki-steward lib/index.js:672-684 同款）——
   // 真 cordis 宿主代理取未 inject 属性即抛（cannot get property ... without inject），全部
@@ -391,6 +544,8 @@ function installSettingsRoutes(ctx, config) {
   const webServerSvc = softService('webServer', (s) => typeof s?.register === 'function')
   const connectionSvc = softService('connection', (s) => typeof s?.requestRejection === 'function')
   const configEditorSvc = softService('configEditor', (s) => typeof s?.edit === 'function' && typeof s?.entries === 'function')
+  // T13 诊断面自检项「配置写缝在场」读数（诊断卡 7 项之一）
+  if (extras.writeSeam) extras.writeSeam.available = configEditorSvc !== null
   const applyPatch = configEditorSvc === null
     ? null
     : createApplyPatch({ configEditor: configEditorSvc, entryId: name, Config })
@@ -402,6 +557,7 @@ function installSettingsRoutes(ctx, config) {
       applyPatch,
       distDir: DIST_DIR,
       warn: (line) => warn(ctx, line),
+      diagnostics: extras.diagnostics ?? null,
     })
     return () => {
       for (const dispose of disposers) dispose()
@@ -414,7 +570,7 @@ function installSettingsRoutes(ctx, config) {
   } catch { /* 宿主代理未 inject 即抛——按无 plugin 处理 */ }
   if (pluginFn !== null) {
     if (webServerSvc === null) {
-      warn(ctx, 'dsh-clsh-search: webServer 服务缝缺失，settings 数据面（/api/dsh-clsh-search/*）未注册（fail-open：web_search/工具面照常）')
+      warn(ctx, 'dsh-clsh-search: webServer 快照缺位（子插件等待注入中，若终缺则 settings 数据面 /api/dsh-clsh-search/* 不注册）——fail-open：web_search/工具面照常')
     }
     try {
       const disposePlugin = pluginFn.call(ctx, {
@@ -448,7 +604,7 @@ function installSettingsRoutes(ctx, config) {
  * 占位（多 fiber 窗口不丢注册 + 拆除器身份校验，W2-IDEMPOTENT-DISPOSE）。
  * @returns {() => void} fiber 卸载拆除器（身份校验 + 幂等：陈旧/重复调用零作用）。
  */
-function installSearchProvider(ctx, config, options = {}) {
+function installSearchProvider(ctx, config, options = {}, runtime) {
   const web = ctx && ctx.web
   const noop = () => {}
   if (config.takeOver === 'off') {
@@ -459,7 +615,6 @@ function installSearchProvider(ctx, config, options = {}) {
     trace(ctx, 'dsh-clsh-search: web 服务缺席（inject 未满足）— 跳过 provider 注册')
     return noop
   }
-  const runtime = createSearchRuntime(config, options)
   const pointer = typeof web.searchProviderId === 'string' ? web.searchProviderId : ''
   const explicitOther = pointer !== '' && pointer !== name && pointer !== HOST_DEFAULT_POINTER
   const yieldToOther = config.takeOver === 'auto' && explicitOther

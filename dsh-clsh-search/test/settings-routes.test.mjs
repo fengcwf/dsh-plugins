@@ -48,7 +48,7 @@ function makeReq({ method = 'GET', url = `${API_PREFIX}/settings`, body = null, 
  * 路由装置：fake register 捕获 spec + configEditor 桩（entries/edit 同宿主形）+ 内存 current 面。
  * applyPatch 缺省=createApplyPatch（真白名单/校验/持久化缝语义）；传 null 模拟写缝缺位。
  */
-function setupRoutes({ current = {}, patchResult = null, applyPatchMode = 'editor', rejection = null } = {}) {
+function setupRoutes({ current = {}, patchResult = null, applyPatchMode = 'editor', rejection = null, diagnostics = null } = {}) {
   const state = {
     registered: [],
     disposed: 0,
@@ -77,6 +77,7 @@ function setupRoutes({ current = {}, patchResult = null, applyPatchMode = 'edito
     applyPatch,
     distDir: WEB_DIST,
     warn: () => {},
+    diagnostics,
   })
   const spec = state.registered[0]
   assert.ok(spec, '必须注册路由 spec')
@@ -251,4 +252,140 @@ test('集成：index.js apply 在 webServer 缝上挂载 settings 路由（接�
   apply(bare.ctx, {})
   assert.equal(bare.state.warnings.length, 0)
   assert.equal(bare.state.effects.length, 1, '仍守单 effect 生命周期缝')
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T13 诊断面端点（US-10/11/16，INV-13/14）：四类端点自调 authGate + methodGuard（C14 惯例）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 诊断面桩：记账各方法调用，可编程异常（logs_unavailable 形）。 */
+function stubDiagnostics({ logsThrows = null } = {}) {
+  const calls = { selfCheck: 0, probe: [], online: 0, logs: 0, clearLogs: 0, clearCache: 0 }
+  return {
+    calls,
+    async selfCheck() {
+      calls.selfCheck += 1
+      return {
+        items: [{ id: 'config', label: 'Config 可读且合法', status: 'pass', detail: '' }],
+        summary: '1 项 · 1 通过 / 0 失败',
+        log: { available: true, used: 0, capacity: 200 },
+        ego: { used: 0, limit: 15 },
+        stats: [],
+      }
+    },
+    async probe(source) {
+      calls.probe.push(source)
+      return { source, ok: true, elapsedMs: 1, resultCount: 0, detail: '命中 0 条' }
+    },
+    async online() {
+      calls.online += 1
+      return { results: [], totalMs: 1, truncated: false, budgetMs: 10000 }
+    },
+    logsView() {
+      calls.logs += 1
+      if (logsThrows) throw logsThrows
+      return { entries: [], capacity: 200, enabled: true, available: true }
+    },
+    clearLogs() {
+      calls.clearLogs += 1
+      return { cleared: 0 }
+    },
+    async clearCache() {
+      calls.clearCache += 1
+      return { cleared: 0 }
+    },
+  }
+}
+
+test('T13 诊断面端点：GET diagnostics / POST probe / POST online / GET logs / POST logs·cache clear 全在场', async () => {
+  const diagnostics = stubDiagnostics()
+  const { handler } = setupRoutes({ diagnostics })
+
+  const diagRes = makeRes()
+  await handler(makeReq({ method: 'GET', url: `${API_PREFIX}/diagnostics` }), diagRes)
+  assert.equal(diagRes.rec.status, 200)
+  const diagBody = JSON.parse(diagRes.rec.body)
+  assert.equal(diagBody.data.summary, '1 项 · 1 通过 / 0 失败', 'summary 形制')
+  assert.ok(Array.isArray(diagBody.data.items) && diagBody.data.items[0].status === 'pass')
+
+  const probeRes = makeRes()
+  await handler(makeReq({ method: 'POST', url: `${API_PREFIX}/diagnostics/probe`, body: { source: 'ddg' } }), probeRes)
+  assert.equal(probeRes.rec.status, 200)
+  assert.deepEqual(diagnostics.calls.probe, ['ddg'], '单源探针按 body.source 分派')
+
+  const probeBad = makeRes()
+  await handler(makeReq({ method: 'POST', url: `${API_PREFIX}/diagnostics/probe`, body: {} }), probeBad)
+  assert.equal(probeBad.rec.status, 400, '缺 source 400 如实')
+
+  const onlineRes = makeRes()
+  await handler(makeReq({ method: 'POST', url: `${API_PREFIX}/diagnostics/online` }), onlineRes)
+  assert.equal(onlineRes.rec.status, 200)
+  assert.equal(diagnostics.calls.online, 1)
+
+  const logsRes = makeRes()
+  await handler(makeReq({ method: 'GET', url: `${API_PREFIX}/logs` }), logsRes)
+  assert.equal(logsRes.rec.status, 200)
+  assert.equal(diagnostics.calls.logs, 1)
+
+  const logsClearRes = makeRes()
+  await handler(makeReq({ method: 'POST', url: `${API_PREFIX}/logs/clear` }), logsClearRes)
+  assert.equal(logsClearRes.rec.status, 200)
+  assert.equal(diagnostics.calls.clearLogs, 1, 'logs/clear 只清日志环面')
+
+  const cacheClearRes = makeRes()
+  await handler(makeReq({ method: 'POST', url: `${API_PREFIX}/cache/clear` }), cacheClearRes)
+  assert.equal(cacheClearRes.rec.status, 200)
+  assert.equal(diagnostics.calls.clearCache, 1, 'cache/clear 只清缓存面')
+  assert.equal(diagnostics.calls.clearLogs, 1, '两清分离互不越界')
+})
+
+test('T13 诊断面鉴权与方法守卫：authGate 拒=401、methodGuard 拒=405（C14 惯例，每 handler 自调）', async () => {
+  const diagnostics = stubDiagnostics()
+  const guarded = setupRoutes({ diagnostics, rejection: 'denied' })
+  for (const [method, url] of [
+    ['GET', `${API_PREFIX}/diagnostics`],
+    ['POST', `${API_PREFIX}/diagnostics/probe`],
+    ['POST', `${API_PREFIX}/diagnostics/online`],
+    ['GET', `${API_PREFIX}/logs`],
+    ['POST', `${API_PREFIX}/logs/clear`],
+    ['POST', `${API_PREFIX}/cache/clear`],
+  ]) {
+    const res = makeRes()
+    await guarded.handler(makeReq({ method, url, body: { source: 'ddg' } }), res)
+    assert.equal(res.rec.status, 401, `${method} ${url} 未鉴权 401`)
+  }
+  assert.equal(diagnostics.calls.selfCheck, 0, '401 后业务面零触达')
+
+  const ok = setupRoutes({ diagnostics })
+  for (const [method, url] of [
+    ['POST', `${API_PREFIX}/diagnostics`],
+    ['GET', `${API_PREFIX}/diagnostics/probe`],
+    ['GET', `${API_PREFIX}/diagnostics/online`],
+    ['POST', `${API_PREFIX}/logs`],
+    ['GET', `${API_PREFIX}/logs/clear`],
+    ['GET', `${API_PREFIX}/cache/clear`],
+  ]) {
+    const res = makeRes()
+    await ok.handler(makeReq({ method, url }), res)
+    assert.equal(res.rec.status, 405, `${method} ${url} 方法不符 405`)
+  }
+})
+
+test('T13 logs 503：环不可用回 logs_unavailable（INV-13 明示不粉饰）', async () => {
+  const error = new Error('日志不可用（内存环写失败，INV-13）')
+  error.code = 'logs_unavailable'
+  error.status = 503
+  const diagnostics = stubDiagnostics({ logsThrows: error })
+  const { handler } = setupRoutes({ diagnostics })
+  const res = makeRes()
+  await handler(makeReq({ method: 'GET', url: `${API_PREFIX}/logs` }), res)
+  assert.equal(res.rec.status, 503)
+  assert.equal(JSON.parse(res.rec.body).error.code, 'logs_unavailable')
+})
+
+test('T13 诊断面缺位：diagnostics=null 时不挂诊断路由（回落静态面，不半挂）', async () => {
+  const { handler } = setupRoutes({ diagnostics: null })
+  const res = makeRes()
+  await handler(makeReq({ method: 'GET', url: `${API_PREFIX}/diagnostics` }), res)
+  assert.equal(res.rec.status, 404, '无诊断面时回落静态 404（不暴露半成品端点）')
 })
