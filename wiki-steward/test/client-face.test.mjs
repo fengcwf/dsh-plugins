@@ -721,7 +721,7 @@ test('手动动作：{error:{code,message}} 原文展示（绝不静默）', asy
 })
 
 // ── Task F3：定时执行控制（时间输入 + 启用开关 + 双源如实提示）──────────────────
-test('定时控制：时间输入（input[type=time]）+ 启用开关入设置节，双源提示文案如实入 UI', async () => {
+test('定时控制：时间输入（input[type=time]）+ 启用开关入设置节，双源提示归一面板（节内零重复）', async () => {
   const { mod, effects } = loadClientFace()
   const registered = []
   mod.apply(mkCtx(registered, []))
@@ -763,10 +763,14 @@ test('定时控制：时间输入（input[type=time]）+ 启用开关入设置�
   find(swTree, (n) => n.props && n.props.role === 'switch').props.onClick()
   assert.equal(toggled, false, 'Switch 点击=onChange(翻转值)——与原 checkbox onChange(checked) 数据契约一致')
 
-  assert.match(
+  // 断言修订理由（t20 设置节重排，P2「双源提示两处重复一并消」）：原断言锁「双源提示文案入 UI」——
+  // 该 00:25/cron/flock 说明原在 client.js 行 note 与 Hindsight 面板提示**两处重复**（P2 噪音），
+  // 队长裁定归一面板（solution-design-settings.md §1 P2 + t20 任务⚠️条）：节内行 note 只留执行语义，
+  // 双源说明唯一落点=面板提示（web/dist 字面判据锁「共用 flock 防重入」）。此处改锁「节内零双源字面」。
+  assert.doesNotMatch(
     JSON.stringify(tree.children),
-    /系统 cron 仍在 00:25 触发，flock 防重入；如需单一时间源请运维侧停用该行/,
-    '双源如实提示文案入 UI（去留交用户，F3 裁定③）',
+    /系统 cron 仍在 00:25 触发|共用 flock 防重入|如需单一时间源/,
+    '双源提示已归一面板（设置节内零重复——P2 消噪）',
   )
 })
 
@@ -900,7 +904,7 @@ test('F2 设置节 DOM 形（§3.2）：节容器 > 标题/引言 > rows 容器 
       assert.ok(find(card, (n) => typeof n.props?.className === 'string' && n.props.className.includes('wiki-steward-settings-note')), '卡内注记（12px/18px tertiary）')
     }
   }
-  assert.ok(noted >= 2, '带 note 字段（定时开关/执行时间双源提示）的注记分层在场')
+  assert.ok(noted >= 2, '带 note 字段（定时开关/执行时间注记）的注记分层在场')
 })
 
 test('F2 控件形（§3.2）：布尔=Switch 行内形、数字=number、时间=time（原生语义保持）；按钮=原生 Button 36px 形（保存 primary/动作 outline）', async () => {
@@ -1012,4 +1016,62 @@ test('T-F2 回归锁：同批次连发两变更两叶子都保留（后写不再
     defects.push(`②同批两叶子后写覆盖前写（补丁=${JSON.stringify(body)}）`)
   }
   assert.deepEqual(defects, [], '同批次连发两变更两叶子都保留 + 同批双击开关净零（函数式 updater 消陈旧闭包）')
+})
+
+// ── t20 设置节六组重排 + 运行逻辑图（solution-design-settings.md §3；R-31~R-33）────────
+test('t20 六组重排：组标题顺序=运行逻辑图/会话捕获/写入队列与安全/Ingest·蒸馏/Hindsight 记忆同步/部署信息（只读）；rows 数组顺序零变动；面板降组 5', async () => {
+  const { tree } = await f2Tree({ capture: { enabled: true }, vaultRoot: '/mnt/unraid_data/Obsidian' })
+  const groups = findAll(tree, (n) => n.type === 'h4' && String(n.props.className).includes('wiki-steward-settings-group'))
+    .map((n) => String(n.children[0]))
+  assert.deepEqual(groups, ['运行逻辑图', '会话捕获', '写入队列与安全', 'Ingest·蒸馏', 'Hindsight 记忆同步', '部署信息（只读）'], '§3 六组顺序落地（kb-context group 形制）')
+
+  // 形制纪律：仅加 group 元数据，rows 数组顺序零变动（ingest-routes.test.mjs data.editable 顺序断言零影响）
+  assert.deepEqual(rowsOf(tree).map((r) => r.props.field.path.join('.')), [
+    'capture.enabled', 'capture.bufferRounds', 'queue.maxRetries', 'queue.ttlDays', 'secrets.enabled',
+    'ingest.schedule.enabled', 'ingest.schedule.time', 'vaultRoot', 'write.readOnly',
+  ], '字段行序=原数组序（只加分组元数据不动 rows）')
+
+  // R-32：运行逻辑图=引言后、rows 前（首屏第 2 位，Hindsight 面板之前）
+  const flowIdx = tree.children.findIndex((n) => n && typeof n.type === 'function' && n.type.name === 'WikiStewardFlowBlock')
+  const rowsIdx = tree.children.findIndex((n) => n && n.props && String(n.props.className).includes('wiki-steward-settings-rows'))
+  assert.ok(flowIdx >= 0, '运行逻辑图组件在设置节树内')
+  assert.ok(rowsIdx > flowIdx, '运行逻辑图在 rows 容器之前（首屏第 2 位）')
+
+  // 组内逐位：动作两按钮+历史入口归 Ingest 组；Hindsight 面板降组 5（Ingest 后、部署信息前）；只读归组 6
+  const label = (n) => (typeof n.type === 'function' ? n.type.name : n.type === 'h4' ? 'h4:' + String(n.children[0]) : String(n.type))
+  assert.deepEqual(tree.children[rowsIdx].children.flat().map(label), [
+    'h4:会话捕获', 'SettingsRow', 'SettingsRow',
+    'h4:写入队列与安全', 'SettingsRow', 'SettingsRow', 'SettingsRow',
+    'h4:Ingest·蒸馏', 'WikiStewardManualActions', 'WikiStewardHistoryEntry', 'SettingsRow', 'SettingsRow',
+    'h4:Hindsight 记忆同步', 'WikiStewardHindsightMount',
+    'h4:部署信息（只读）', 'SettingsRow', 'SettingsRow',
+  ], '六组结构逐位（P1 平铺/主次颠倒修正）')
+})
+
+test('t20 运行逻辑图（R-31/R-33）：WikiStewardFlowBlock 零依赖纯文本四泳道 + details 折叠 + 真实落点标注 + 不画凭据', async () => {
+  const { tree } = await f2Tree({})
+  const comp = findComp(tree, 'WikiStewardFlowBlock')
+  assert.ok(comp, '设置节渲染面必须含 WikiStewardFlowBlock（R-33 载体）')
+  const ft = comp.type(comp.props)
+  assert.equal(ft.type, 'details', '折叠语义=原生 details（零依赖，非 mermaid/第三方）')
+  assert.equal(ft.props.open, true, '默认展开（R-32 先见图再操作；折叠对冲首屏变长）')
+  assert.ok(find(ft, (n) => n.type === 'summary'), 'summary 折叠把手在场')
+
+  const lanes = findAll(ft, (n) => n.props && n.props['data-ws-lane'])
+  assert.deepEqual(lanes.map((n) => n.props['data-ws-lane']), ['A', 'B', 'C', 'D'], '四泳道全链（R-31）')
+  const text = JSON.stringify(ft.children)
+  for (const literal of ['raw/04-session_logs', 'raw/projects', 'raw/06-hindsight', 'ingest-pipeline.py', 'kb_mark', 'dsh-cron.sh', '21-wiki-ingest.md', 'wiki_write', 'wiki_validate', '127.0.0.1:8888', 'kb-alerts.md', 'flock']) {
+    assert.ok(text.includes(literal), `节点标注真实落点缺：${literal}`)
+  }
+  assert.doesNotMatch(text, /api_token|Bearer |sk-[A-Za-z0-9]{8,}|password|密钥|token=/i, '不画凭据与 key（红线）')
+})
+
+test('t20 部署信息组灰置：只读两行 muted 卡（kind readonly 形保持），可改行不灰置', async () => {
+  const { tree } = await f2Tree({ vaultRoot: '/mnt/unraid_data/Obsidian' })
+  for (const r of rowsOf(tree)) {
+    const card = r.type(r.props)
+    const muted = String(card.props.className).includes('rowCardMuted')
+    const isReadonlyField = r.props.field === undefined ? false : (r.props.field.path.join('.') === 'vaultRoot' || r.props.field.path.join('.') === 'write.readOnly')
+    assert.equal(muted, isReadonlyField, `灰置判定逐行：${r.props.field.path.join('.')}`)
+  }
 })

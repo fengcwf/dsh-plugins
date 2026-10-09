@@ -36,7 +36,7 @@ import { createIngestScheduler, isValidScheduleTime } from './ingest-schedule.js
 import { registerIngestRoutes } from './ingest-routes.js'
 import { createHindsightSync, syncRanOnStamp } from './hindsight-sync.js'
 import { createHindsightHandlers, createSyncStarter, collectStatus } from './hindsight-routes.js'
-import { createApplyPatch } from './settings-write.js'
+import { createApplyPatch, HINDSIGHT_EDITABLE_PATHS } from './settings-write.js'
 
 export const name = 'wiki-steward'
 export const inject = ['tools']
@@ -759,6 +759,9 @@ export function apply(ctx, rawConfig, opts = {}) {
   }
   const configEditorSvc = softService('configEditor', (s) => typeof s?.edit === 'function' && typeof s?.entries === 'function')
   const applyPatch = configEditorSvc === null ? null : createApplyPatch({ configEditor: configEditorSvc, entryId: 'wiki-steward', Config })
+  // R-29（t19 P0 双源根治）：hindsight 专属写缝（白名单=HINDSIGHT_EDITABLE_PATHS 3 叶）= 面板唯一写入口；
+  // 通用 applyPatch（EDITABLE_PATHS 7 叶）对 hindsight 键整单拒（rows/POST settings 面不再可写）。
+  const applyHindsightPatch = configEditorSvc === null ? null : createApplyPatch({ configEditor: configEditorSvc, entryId: 'wiki-steward', Config, editablePaths: HINDSIGHT_EDITABLE_PATHS })
   const wsProbe = softService('webServer', (s) => typeof s?.register === 'function')
   const connProbe = softService('connection', (s) => typeof s?.requestRejection === 'function')
   if (wsProbe === null && connProbe === null) {
@@ -790,7 +793,7 @@ export function apply(ctx, rawConfig, opts = {}) {
               const hindsight = createHindsightHandlers({
                 connection: c.connection,
                 getConfig: readCfg,
-                applyPatch,
+                applyHindsightPatch, // R-29：面板专属写缝（3 叶白名单）；通用 applyPatch 不接此面
                 startSync,
                 statusProbe: async () => {
                   const cfg = readCfg()

@@ -122,10 +122,13 @@ test('动作状态机：idle → running → done|error，message 如实原文�
 test('api.js 端点形：hindsight/* 与 settings 全走 ${base} 拼接（文档相对），零前导斜杠字面', async () => {
   const fs = await import('node:fs')
   const src = fs.readFileSync(new URL('../web/src/api.js', import.meta.url), 'utf8')
-  for (const ep of ['hindsight/status', 'hindsight/sync-log', 'hindsight/sync', 'hindsight/toggle']) {
+  // 断言修订理由（2026-10-07 波 t19，R-29 P0）：面板写路径改走 /hindsight/settings 专属写面（唯一写入口）——
+  // 端点清单 +5'hindsight/settings'；${base}/settings 仍在（通用设置面保留，hindsight 键已摘整单拒）。
+  for (const ep of ['hindsight/status', 'hindsight/sync-log', 'hindsight/sync', 'hindsight/toggle', 'hindsight/settings']) {
     assert.ok(src.includes('${base}/' + ep), `缺 \${base}/${ep} 拼接形（文档相对端点）`)
   }
-  assert.ok(src.includes('${base}/settings'), '时间热改走 settings 写面（${base}/settings）')
+  assert.ok(src.includes('${base}/settings'), '通用设置面写入仍在（${base}/settings；hindsight 键已摘=R-29）')
+  assert.ok(src.includes('saveHindsightSettings'), '面板时间热改走 saveHindsightSettings（专属写面）')
   assert.doesNotMatch(src, /['"`]\/(?:api\/)?(?:wiki-steward\/)?hindsight/, '禁前导斜杠端点字面（B 卡实测 404 坑）')
 })
 

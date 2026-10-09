@@ -31,7 +31,7 @@ const l1Enabled = computed(() => props.status?.enabled === true)
   <section class="ws-block" aria-label="Hindsight 同步">
     <h3 class="ws-title">Hindsight 同步</h3>
     <p class="ws-note">
-      记忆→raw 机械转录链路（raw/06-hindsight/，不做语义编译）；L1 开关热改立即生效，L2 记忆插件启停只读展示。
+      记忆→raw 机械转录链路（raw/06-hindsight/，不做语义编译）；L1 开关热改立即生效（关闭即停同步行为——手动/定时均不跑），L2 记忆插件启停只读展示；定时同步每日到点触发记忆机械转录（缺省 03:25，与 wiki-ingest 蒸馏错峰——wiki-ingest 由系统 cron 00:25 与插件 timer 双源触发、共用 flock 防重入，如需单一时间源请运维侧停用该 cron 行）。本面板为 Hindsight 配置（同步开关/定时开关/执行时间）的唯一写入口（R-29）。
     </p>
 
     <!-- ① 状态条：diagnose/sync_status 官方口径徽标（取不到=未知，不编造） -->

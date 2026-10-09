@@ -8,15 +8,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Config } from '../lib/index.js'
-import { EDITABLE_PATHS, applyEditablePatch, createApplyPatch, isEditablePath } from '../lib/settings-write.js'
+import { EDITABLE_PATHS, HINDSIGHT_EDITABLE_PATHS, applyEditablePatch, createApplyPatch, isEditablePath, checkPatchEditable } from '../lib/settings-write.js'
 
-test('可改白名单契约：10 叶子（F3 扩 ingest.schedule 两项 + t9 扩 hindsight 三项）；vaultRoot / write.readOnly 永不在列（INV-7 语义勿动）', () => {
-  // 断言修订理由（Task F3，验收③）：白名单随「配置面写入持久化（settings-write 白名单扩项+校验）」
-  // 由 5 叶子扩为 7 叶子（+ingest.schedule.enabled / ingest.schedule.time）——扩展非弱化：
-  // 原 5 叶子逐条仍在列，vaultRoot/write.readOnly 禁改断言与越界整单拒语义原样保留。
-  // 断言修订理由（2026-10-07 波 t9，验收②）：再扩 3 叶子（+hindsight.enabled / hindsight.sync.schedule.enabled
-  // / hindsight.sync.schedule.time，L1 启停+定时同步两项可热改）——原 7 叶子逐条仍在列；双侧同集
-  // 由 hindsight-routes.test.mjs② 一致性测试钉住（EDITABLE_PATHS ↔ client.js EDITABLE_FIELDS）。
+test('可改白名单契约：7 叶子（R-29 摘 hindsight 三项——面板唯一写入口）；HINDSIGHT 专属面 3 叶；vaultRoot / write.readOnly 永不在列（INV-7 语义勿动）', () => {
+  // 断言修订理由（Task F3，验收③）：白名单随「配置面写入持久化」由 5 叶子扩为 7 叶子（+ingest.schedule 两项）。
+  // 断言修订理由（2026-10-07 波 t19，R-29 P0 双源根治）：t9 曾扩 3 叶 hindsight——现**摘除**（通用面
+  // rows/POST settings 整单拒写），唯一写入口=Hindsight 面板（HINDSIGHT_EDITABLE_PATHS 专属写缝）；
+  // 原 7 叶子逐条仍在列，vaultRoot/write.readOnly 禁改断言与越界整单拒语义原样保留。
   assert.deepEqual(EDITABLE_PATHS.map((p) => p.join('.')), [
     'capture.enabled',
     'capture.bufferRounds',
@@ -25,10 +23,20 @@ test('可改白名单契约：10 叶子（F3 扩 ingest.schedule 两项 + t9 扩
     'secrets.enabled',
     'ingest.schedule.enabled',
     'ingest.schedule.time',
+  ])
+  // R-29 专属写面（面板唯一入口的协议层白名单）
+  assert.deepEqual(HINDSIGHT_EDITABLE_PATHS.map((p) => p.join('.')), [
     'hindsight.enabled',
     'hindsight.sync.schedule.enabled',
     'hindsight.sync.schedule.time',
-  ])
+  ], 'hindsight 专属白名单 3 叶（/hindsight/* 端点消费）')
+  // 摘叶判死：通用白名单对 hindsight 键整单拒（双源根治——rows/POST settings 面不再可写）
+  for (const banned of [['hindsight', 'enabled'], ['hindsight', 'sync', 'schedule', 'enabled'], ['hindsight', 'sync', 'schedule', 'time']]) {
+    assert.equal(isEditablePath(banned), false, `通用面不可写（R-29 摘叶）：${banned.join('.')}`)
+  }
+  assert.equal(checkPatchEditable({ hindsight: { enabled: true } }).code, 'not_editable', '通用面写 hindsight 键=整单拒（后写覆盖先写根除）')
+  assert.equal(checkPatchEditable({ hindsight: { enabled: true } }, HINDSIGHT_EDITABLE_PATHS).ok, true, '专属面可写（面板唯一入口）')
+  assert.equal(checkPatchEditable({ capture: { enabled: true } }, HINDSIGHT_EDITABLE_PATHS).code, 'not_editable', '专属面同样受限（3 叶之外整单拒）')
   for (const banned of [['vaultRoot'], ['write', 'readOnly'], ['write'], []]) {
     assert.equal(isEditablePath(banned), false, `不可改：${banned.join('.')}`)
   }

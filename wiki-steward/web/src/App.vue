@@ -88,7 +88,7 @@ async function saveHindsightTime(value) {
   }
   hsActions.value = beginAction(hsActions.value, 'time')
   try {
-    await props.api.saveSettings({ hindsight: { sync: { schedule: { time: v } } } })
+    await props.api.saveHindsightSettings({ hindsight: { sync: { schedule: { time: v } } } }) // R-29：面板专属写面（唯一入口）
     hsActions.value = finishAction(hsActions.value, 'time', { ok: true, message: `同步时间已保存：${v}（热改立即生效）` })
     await loadHindsight()
   } catch (e) {

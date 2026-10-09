@@ -31,3 +31,11 @@
 | t13 整面终审 | review | reviewer-pro | t11,t12,t14 | pro | 🔄 调度器派发中（最后一卡） |
 
 | t14 设置节挂载缝（t12② 可达性） | implementation | mechanic | t12 | flash | ✅ 455/455（+4）；usePanelMount 双缝并存零回退；LRN-045 先红后绿实证；报告 t14-settings-mount-seam-report.md |
+
+### 设置页波（2026-10-09 进队，Phase 2=solution-design-settings.md）
+| 卡 | 类型 | 成员 | 依赖 | 模型 | 状态 |
+|----|------|------|------|------|------|
+| t19 P0 双源写修复 | implementation | coder | — | pro | 就绪派发 |
+| t20 六组重排+逻辑图 | implementation | artist | t19 | pro | ⏳ |
+| t21 整面终审 | review | reviewer-pro | t19,t20 | pro | ⏳ |
+| 17/18 侦察 | work | scout | — | flash | ✅（scout-automation-plugin / scout-settings-layout） |

@@ -246,9 +246,10 @@ test('GET settings：Config 面 + 可改白名单 + writable 缺缝如实（fals
   assert.equal(data.config.vaultRoot, '/mnt/unraid_data/Obsidian')
   // 断言修订理由（Task F3，验收③）：可改白名单随「settings-write 白名单扩项」由 5 叶子扩 7 叶子
   //（+ingest.schedule.enabled / ingest.schedule.time）——扩展非弱化，响应契约形（data 四键）不变。
-  // 断言修订理由（2026-10-07 波 t9，验收②）：再扩 3 叶子（+hindsight 三项）——editable 回显=EDITABLE_PATHS
-  // 同列表语义原样（双侧一致由 hindsight-routes.test.mjs②/⑥ 钉住），响应契约形（data 四键）仍不变。
-  assert.deepEqual(data.editable.map((p) => p.join('.')), ['capture.enabled', 'capture.bufferRounds', 'queue.maxRetries', 'queue.ttlDays', 'secrets.enabled', 'ingest.schedule.enabled', 'ingest.schedule.time', 'hindsight.enabled', 'hindsight.sync.schedule.enabled', 'hindsight.sync.schedule.time'])
+  // 断言修订理由（2026-10-07 波 t9，验收②）：曾扩 3 叶子（+hindsight 三项）。
+  // 断言修订理由（2026-10-07 波 t19，R-29 P0）：hindsight 三叶**随摘**（面板唯一写入口）——editable 回显
+  // =EDITABLE_PATHS 同列表语义原样（双侧一致由 hindsight-routes.test.mjs②/⑥ 钉住），响应契约形（data 四键）仍不变。
+  assert.deepEqual(data.editable.map((p) => p.join('.')), ['capture.enabled', 'capture.bufferRounds', 'queue.maxRetries', 'queue.ttlDays', 'secrets.enabled', 'ingest.schedule.enabled', 'ingest.schedule.time'])
   assert.equal(data.writable, false, '缺 configEditor 缝=writable:false 如实')
 })
 

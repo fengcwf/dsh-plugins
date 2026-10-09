@@ -48,7 +48,15 @@ export function createApi(base) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ enabled: Boolean(enabled) }),
       }),
-    // 同步时间热改走 settings 四处同步面（hindsight.sync.schedule.time=可改白名单叶子）
+    // 同步时间热改走 Hindsight 专属写面（R-29 唯一写入口：/hindsight/settings，3 叶白名单）——
+    // 通用 /settings 已摘 hindsight 叶（整单拒），面板写路径不再穿通用白名单面
+    saveHindsightSettings: (patch) =>
+      requestJson(`${base}/hindsight/settings`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ patch }),
+      }),
+    // 通用设置面写入（rows 表单消费；hindsight 键已摘——not_editable 整单拒）
     saveSettings: (patch) =>
       requestJson(`${base}/settings`, {
         method: 'POST',

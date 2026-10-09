@@ -2,7 +2,8 @@
 //   GET  /api/wiki-steward/hindsight/status     状态分析（hindsight_diagnose / hindsight_sync_status 口径聚合）
 //   POST /api/wiki-steward/hindsight/sync       手动同步（detached 不阻塞请求，回执 started/reason/note）
 //   GET  /api/wiki-steward/hindsight/sync-log   同步日历数据源（?since&until=YYYY-MM-DD，非法参 400）
-//   POST /api/wiki-steward/hindsight/toggle     L1 启停写面（走 settings 同一持久化机制=applyPatch 缝）
+//   POST /api/wiki-steward/hindsight/toggle     L1 启停写面（专属写缝=HINDSIGHT_EDITABLE_PATHS）
+//   POST /api/wiki-steward/hindsight/settings    面板专属写面（schedule.enabled/time 等 3 叶；R-29 唯一写入口）
 // API 形与鉴权缝与 ingest-routes 同款：成功 {data}、失败 {error:{code,message}}，每条 handler 第一行过
 // authGate（connection.requestRejection）+ methodGuard。控制面逻辑（createSyncStarter）与采集面
 // （collectStatus / readDiagnoseConfig）为真实现；I/O 边界（fetch/文件/configEditor）经缝注入。
@@ -143,13 +144,14 @@ export function readSyncLogLines(logFile) {
  * @param {object} deps
  * @param {{requestRejection: Function}} deps.connection 鉴权缝（ingest-routes 同款）
  * @param {()=>object} deps.getConfig 热改现读 config
- * @param {(patch:object)=>Promise<object>} [deps.applyPatch] settings 写缝（缺=toggle 503 如实）
+ * @param {(patch:object)=>Promise<object>} [deps.applyHindsightPatch] hindsight 专属写缝（createApplyPatch+
+ *   HINDSIGHT_EDITABLE_PATHS 白名单；R-29 唯一写入口——通用 EDITABLE_PATHS 已摘 3 叶；缺=写端点 503 如实）
  * @param {()=>{started:boolean,reason:string,note:string}} deps.startSync createSyncStarter 形
  * @param {()=>Promise<object>} deps.statusProbe 状态采集缝（生产=collectStatus 形；测试注入）
  * @param {string} deps.syncLogFile 同步日志文件（data/hindsight-sync-log.jsonl）
  * @param {(line:string)=>void} [deps.warn]
  */
-export function createHindsightHandlers({ connection, getConfig, applyPatch = null, startSync, statusProbe, syncLogFile, warn = () => {} }) {
+export function createHindsightHandlers({ connection, getConfig, applyHindsightPatch = null, startSync, statusProbe, syncLogFile, warn = () => {} }) {
   // GET status —— 状态分析（diagnose/sync_status 口径聚合）+ 插件面（L1/定时配置现值）
   const statusGet = async (req, res) => {
     if (!authGate(connection, req, res)) return
@@ -209,11 +211,11 @@ export function createHindsightHandlers({ connection, getConfig, applyPatch = nu
     sendJson(res, 200, { data: { lines: filtered, count: filtered.length, skipped } })
   }
 
-  // POST toggle —— L1 启停写面（settings 持久化同一机制=applyPatch 白名单缝；roundtrip 回读一致）
+  // POST toggle —— L1 启停写面（hindsight 专属写缝=HINDSIGHT_EDITABLE_PATHS 白名单；roundtrip 回读一致）
   const togglePost = async (req, res) => {
     if (!authGate(connection, req, res)) return
     if (!methodGuard(req, res, ['POST'])) return
-    if (typeof applyPatch !== 'function') {
+    if (typeof applyHindsightPatch !== 'function') {
       return fail(res, 503, 'write_unavailable', '配置写入缝缺失（configEditor 服务未挂载；本部署暂只读）')
     }
     try {
@@ -221,7 +223,7 @@ export function createHindsightHandlers({ connection, getConfig, applyPatch = nu
       if (typeof body?.enabled !== 'boolean') {
         return fail(res, 400, 'bad_request', 'enabled 须为布尔值')
       }
-      const r = await applyPatch({ hindsight: { enabled: body.enabled } }) // applyPatch 收裸 patch（settingsPost 同款：body.patch 直传）
+      const r = await applyHindsightPatch({ hindsight: { enabled: body.enabled } }) // 收裸 patch（settingsPost 同款）
       if (!r?.ok) {
         const code = r?.code ?? 'internal'
         const status = code === 'not_editable' || code === 'bad_patch' || code === 'invalid' ? 400 : code === 'no_entry' ? 409 : 500
@@ -235,6 +237,30 @@ export function createHindsightHandlers({ connection, getConfig, applyPatch = nu
     }
   }
 
+  // POST settings —— 面板专属写面（R-29 唯一写入口）：patch 白名单=HINDSIGHT_EDITABLE_PATHS 3 叶
+  //（hindsight.enabled / sync.schedule.enabled / sync.schedule.time）；通用 POST /settings 已摘 3 叶整单拒
+  const hsSettingsPost = async (req, res) => {
+    if (!authGate(connection, req, res)) return
+    if (!methodGuard(req, res, ['POST'])) return
+    if (typeof applyHindsightPatch !== 'function') {
+      return fail(res, 503, 'write_unavailable', '配置写入缝缺失（configEditor 服务未挂载；本部署暂只读）')
+    }
+    try {
+      const body = await readJsonBody(req)
+      const r = await applyHindsightPatch(body?.patch)
+      if (!r?.ok) {
+        const code = r?.code ?? 'internal'
+        const status = code === 'not_editable' || code === 'bad_patch' || code === 'invalid' ? 400 : code === 'no_entry' ? 409 : 500
+        return fail(res, status, code, r?.message ?? '配置写入失败')
+      }
+      return sendJson(res, 200, { data: { ok: true, config: r.config } })
+    } catch (e) {
+      const status = typeof e?.status === 'number' ? e.status : 500
+      warn(`[wiki-steward] Hindsight 设置写入失败：${e?.message ?? e}`)
+      return fail(res, status, typeof e?.code === 'string' ? e.code : 'internal', String(e?.message ?? e))
+    }
+  }
+
   return async function hindsightDispatch(req, res) {
     const p = pathnameOf(req)
     if (!p.startsWith(`${API_PREFIX}/hindsight/`)) return false
@@ -242,6 +268,7 @@ export function createHindsightHandlers({ connection, getConfig, applyPatch = nu
     if (p === `${API_PREFIX}/hindsight/sync`) { await syncPost(req, res); return true }
     if (p === `${API_PREFIX}/hindsight/sync-log`) { await syncLogGet(req, res); return true }
     if (p === `${API_PREFIX}/hindsight/toggle`) { await togglePost(req, res); return true }
+    if (p === `${API_PREFIX}/hindsight/settings`) { await hsSettingsPost(req, res); return true }
     return false // 未提供路径→交静态面（404 如实）
   }
 }

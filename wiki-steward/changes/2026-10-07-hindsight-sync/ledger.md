@@ -158,3 +158,50 @@
 - t15 completed（F1(a) 调度面+L1 门禁/热改补跑/单飞/effect 零残留 6 测试；F2 短哈希分名——队长 node 直调 bankFileBase 实测三 bank 互异：cc928dc9/a3906a67/ad942f05；F3 文档补注；463/463=455+8）。t16 复审接棒。
 - **R-22 amend 交接缝隙**：amend 后派单提示的 acceptance 仍是旧快照（3 条），成员按旧报被机械拒、改按新 6 条过——**机制待改进：派单提示应随 amend 同步**（插件层面问题，记 U4 候选）；成员踩坑留痕=正确处置。
 - dist 重建时机留痕：t15 的 verify pnpm build 顺带修复了 dist 相对 web/src 的陈旧（含 t14 改动未重建）——t14 声称重建过但 t15 发现仍陈旧，t16 复审以重建后状态为准核 md5。
+
+## R-23 t16 pass——本波质量门闭环 + 收口 commit（2026-10-08 19:2x）
+- t16 verdict=pass：F1/F2/F3 全收口（变异 N1/N3/N4/N5/N6 恰红实证）；发布物 md5 与 t13 钉死值一致（9cc97b2d/cc1db681 两轮恒等=src↔dist 字节同源）；463/463 零回退；真 vault raw/06-hindsight 仍 0 文件。
+- backlog（不阻塞）：F4（schedule 单飞测试被 firedKey 去重遮蔽，守卫由 t9④ 覆盖无缺口，建议下波改观察面或改名如实）+ O1（skip 态 frontmatter 易变字段滞后）+ O2（同步日志无轮转）+ O4（发版后真 HTTP 冒烟）+ O5（旧名文件孤儿素材——真 vault 当前 0 无迁移问题）+ R-13 12 条告警 + R-22 amend 派单提示不同步（AgentTeams 插件改进候选）。
+- **收口 commit 7e566a5**（37 文件 +4900/-710）：只入本波路径（lib/test/web/cordis.patch.yml/changes/2026-10-07-hindsight-sync），历史遗留 ??（changes/2026-09-2x、.cp-* 状态件）不动。commit 链：e7a6ae7（W1+N2+t2）→ 000a7d6（F3+F-1）→ 7e566a5（Hindsight 面）。均未 push 未 tag——发版五步待用户逐次确认。
+
+## R-24 v0.8.0 发版安装 + 重启后验证 + 凭据切换（2026-10-08/09 交接波）
+- **发版五步完成**：冒烟四关先测（.testenv 463/463+load 10/10）→ bump 0.8.0 → CHANGELOG/README/check-release PASS → commit 4e10846 + tag wiki-steward-v0.8.0 + push + Release 上线。
+- **生产安装**（LRN-044 remove+重 add）：安装位 version 0.8.0、lib+dist 逐字节一致、层合成正常。
+- **重启后验证（post-restart-verify ①②③）**：服务起；`hindsight/status`+`sync-log` 401（authGate 拦住=路由注册活，重启前 404）；`settings` 旧端点 401 零回退；`hindsight/settings` 静态兜底 404。④⑤（真 vault 同步/GUI 六控件）留给用户点击或夜间 cron。
+- **R-25 凭据阻塞解除**：headless profile `cordis.patch.yml` 补 `llm-pi-ai`（xiaomi-token-plan provider+models，照搬 web 权威块）+ `agent-default-model → xiaomi-token-plan/mimo-v2.6-flash`（备份 .bak-20261009 在案，改前 md5 7390256202c2…）。dump-config 层合成验证 PASS；**实跑 hourly-check 正常返回探测报告、MISSING_CREDENTIAL 消失**（11 天阻塞解除）。
+- **引擎生产位直调验证**：syncBank('coding-agent::dsh-plugins') → 420 facts → 2 文件（2026-09:81 / 2026-10:339），frontmatter 六字段+sha256 齐、机械转录声明在场（vaultRoot/dataDir 全 mkdtemp 注入，真 vault 零写入）。
+- 教训（R-19 家族）：两次 CLI 直调瞎猜 API 被机械拦（`sync is not a function`/`dataDir`）——**读导出面再调**（syncAll/syncBank/listBanks 在 lib:315 返回对象）。
+
+## R-26 同步链路运行分析（2026-10-09 08:4x，用户问「插件是否正常运行同步」——查盘非推断）
+- **同步链路全绿（4/4 面）**：①真 vault 产物 4 文件在（双 bank×双月，777 权限=NFS/CIFS 面，记 backlog O6）②同步日志 4 行=2 轮×2 bank，与文件 mtime **时区对齐后精确一致**（log ts=UTC / mtime=CST，17:04:49Z↔01:04:49、19:25:00Z↔03:25:00）③**定时触发真实工作**：`03:25:00.324` 秒级时点=配置 `time=03:25` 准点（`schedule.enabled:true`/`hindsight.enabled:true` 已开）④幂等双态正确：03:25 轮 dsh-plugins `updated`(facts 619 增长) / 公共 `skipped`(sha 同零写盘)。
+- hourly-check 稳定性：1001-1008 每日 24 次 MISSING_CREDENTIAL → **1009 仅剩 1 次（00:40 切换前旧失败）**，mimo 切换后零失败。
+- **ingest 最后一环验证中**：00:25 日志是切配置前旧失败；08:45 后台触发一次真编译（493 存量+4 同步素材，mimo-flash）——结果 follow。
+- 告警账本无同步相关新告警（仅 root-lint 12 条既有白名单外）。
+- 教训：时区混读一次（mtime=CST vs log=UTC），对平靠秒级 mtime ↔ schedule time；**跨源对时先统一时区**（R-19 家族）。
+
+## R-27 ingest 首跑诊断（2026-10-09 08:42 实跑，mimo-flash）——链路卡点定位
+- mimo LLM 链路✅（reasoning 正常、诊断专业、守住红线零空页零动 raw）。
+- **① headless 写权限阻塞（机制级）**：headless 会话文件策略=workspace-write，vault+/root=EROFS，升级审批 fail-closed 无通道 → 蒸馏任务**能分析不能落笔**（写 wiki/INDEX/sha256 回写/kb-alerts 清空全断）。→ 并入 t17 侦察面（cron/headless 机制去留的核心判据之一）。
+- **② t8 引擎 bug（本波引入，必修）**：`sha256: "..."` 带引号 vs parse_frontmatter 不去引号 → 4 个 06-hindsight 文件恒报 re_ingest。双子责：引擎应写无引号裸值（与 wiki/ 既有 frontmatter 惯例一致）+ ingest 脚本解析去引号（双保险）。修法=0.8.1 小卡。
+- **③499 积压分层**：真正核心=17 fix-notes + 31 近期 session；178 kanban（机器产物）+ 269 legacy re_ingest（57 个 compiled_to 目标页已不存在=历史债）需单独裁决（存量冻结补章/批量重编译）。④pipeline mismatch 永不回写=「增量归零」不可达（脚本缺口，t17 带评）。
+- U4 候选累积：O6 产物权限 777、O7 frontmatter 引号归一规范、O8 headless 沙箱策略审计。
+
+## R-28 t17 结论：cron **不取代**（0.5.0 否决延续，rc.2 复验通过）
+- 总判（队长+scout 三方对盘）：dsh-experimental-schedule-bundle 0.2.0-rc.2 仍是**原会话提醒投递器**，不是 headless 执行器。
+- 硬论据（队长亲手复核）：①执行体 `agent.followup→sessions.flush`，2910 行 spawn/child_process 零命中 ②生产 `~/.dsh/storages/schedule.json` 不存在=零任务 ③wiki-steward 两个 schedule 本就 spawn 同一 wrapper=同通道双触发器，架构自洽无空缺 ④四项门槛（headless 执行体/执行回执/暂停/跨进程 flock）rc.1→rc.2 一项未补。
+- 8 条 0.5.0 复核：6 仍否决 + 1 条件成立（framing 中性化，只利好会话内提醒）+ 0 可取代。
+- **落点裁定**：wiki-ingest/hourly-check/wiki-lint 留 cron+dsh-cron.sh+headless 四件套（干净上下文/flock/exit code/kb-alerts）；插件内 timer 留自管；schedule 通道定位=人可见会话内交互提醒（周报/发布确认类），不接蒸馏。
+- NEEDS_HUMAN 4 条转 U4/用户面（实测 framing 需 web UI 窗口；上游 HEAD 跟踪；迁移须硬切换+空档；告警口径另设计）。
+
+## R-35 设置页波 Phase 2 定形 + 实现卡进队（2026-10-09 09:2x）
+- 依据 t17（R-28 cron 不取代）+ t18（设置页审计，P0 已队长复验坐实：client.js:77-79 与面板双写+config 挂载只拉一次=后写覆盖先写）。
+- 方案落盘 solution-design-settings.md：R-29 摘 rows 三行（面板唯一入口）｜R-30 保存粒度不变｜R-31 四泳道逻辑图（真实落点无凭据）｜R-32 首屏第2位｜R-33 纯文本载体（零依赖）｜R-34 order 撞号记 U4。
+- 卡链：t19 P0 修复（coder）→ t20 六组重排+逻辑图（artist）→ t21 整面终审（reviewer-pro）。
+- 波次归并决策：0.8.1（引擎 sha256 引号 bug，R-27②）优先单独发；本波 UI=0.9.0。
+
+## R-36 t19 完成 + R-29 漏计纠偏（2026-10-09 09:3x）
+- t19 completed：摘 rows 三行+契约四处同步+**补全我漏算的第 5 面**——R-29 只算到「摘白名单叶+两测试」，漏了**面板原写路穿通用白名单**（toggle→applyPatch、save-time→POST /settings 会被 not_editable 整单拒=面板写入断）。coder 补 `HINDSIGHT_EDITABLE_PATHS` 专属写缝 + `POST /hindsight/settings` 端点 + api.js 改道 + 4 条随缝测试（专属 roundtrip/通用面 400 判死/写面不放大 503）。**成员纠队长裁定漏算=正确姿势**（合同有坑要喊，不能照跳）。
+- 教训（合同纪律第 4 例）：裁定「摘写入口」必须连带审**该入口的写链路**（谁在消费被摘的键）——R-29 死了「3 处契约」没死写面。后续 amend/建卡时对「摘除类」改动强制列消费方清单。
+- 队长抽验 4/4（463/463/专属缝 grep/端点/dist 字面）。「3+N 补全」并入 t21 终审面。
+
+- R-27②（t22，0.8.1）**raw/ 只增不改（INV-1）例外申报——同步产物自愈 migration（事前说明）**：raw/06-hindsight/ 4 文件（dsh-plugins×2、公共×2）frontmatter `sha256` 行由带引号改裸值——**只改该行的值引号（2 字节/文件），其余字节零动**（mark.js 字节手术纪律）。理由：该 4 文件=同步产物非人工素材（R-6 口径）；引号形致 ingest-pipeline parse 出的 stored≠实算，恒报 re_ingest 假阳性（首跑诊断 R-27②）。同波三块：主责=脚本 parse_frontmatter 去引号（全 vault frontmatter 通用面）、次责=引擎 sha256 改裸值、本 migration=存量自愈。改前 ingest-pipeline.py 已备份 .bak-20261009（md5 f30c04a06d08686785e7d03d6f461015→改后 4baa76f74671d03c92f6dbb35f3ef56f）。

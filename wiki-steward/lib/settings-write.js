@@ -16,8 +16,12 @@ export const EDITABLE_PATHS = Object.freeze([
   Object.freeze(['secrets', 'enabled']),
   Object.freeze(['ingest', 'schedule', 'enabled']),
   Object.freeze(['ingest', 'schedule', 'time']),
-  // 2026-10-07 波（t9，solution-design §5 四处同步面）：Hindsight 同步可热改三项——
-  // L1 启停 + 定时同步开关/时间；与 Config/cordis.patch.yml/client.js EDITABLE_FIELDS 四处同集（一致性测试钉住）。
+])
+// ⚠️ R-29（solution-design-settings.md，t19 P0 双源根治）：hindsight 三项**摘出**通用白名单——
+// 通用设置面（rows 表单 / POST /settings）对 hindsight 键整单拒写；唯一写入口=Hindsight 面板六控件
+// （专属写缝走 HINDSIGHT_EDITABLE_PATHS，lib/hindsight-routes.js /hindsight/* 端点消费）。
+// 原双源症状（rows 显旧值 + 底部保存后写覆盖先写）自协议层根除。
+export const HINDSIGHT_EDITABLE_PATHS = Object.freeze([
   Object.freeze(['hindsight', 'enabled']),
   Object.freeze(['hindsight', 'sync', 'schedule', 'enabled']),
   Object.freeze(['hindsight', 'sync', 'schedule', 'time']),
@@ -66,9 +70,9 @@ function getPath(obj, path) {
 }
 
 /** 按白名单从 patch 抽出最小写入形（只含白名单叶子；未含的键绝不落盘） */
-function projectEditable(patch) {
+function projectEditable(patch, editablePaths = EDITABLE_PATHS) {
   const out = {}
-  for (const p of EDITABLE_PATHS) {
+  for (const p of editablePaths) {
     const v = getPath(patch, p)
     if (v === undefined) continue
     let node = out
@@ -84,13 +88,13 @@ function projectEditable(patch) {
  * @param {object} patch 本次补丁
  * @returns {{ok:true} | {ok:false, code:string, message:string}}
  */
-export function checkPatchEditable(patch) {
+export function checkPatchEditable(patch, editablePaths = EDITABLE_PATHS) {
   if (!isPlainObject(patch)) return { ok: false, code: 'bad_patch', message: 'patch 必须是对象' }
   const leaves = leafPaths(patch).filter((p) => p.length > 0)
   if (leaves.length === 0) return { ok: false, code: 'bad_patch', message: 'patch 为空（无可改叶子）' }
   for (const p of leaves) {
-    if (!isEditablePath(p)) {
-      return { ok: false, code: 'not_editable', message: `字段 ${p.join('.')} 不在可改白名单（仅可改：${EDITABLE_PATHS.map((x) => x.join('.')).join('、')}）` }
+    if (!editablePaths.some((x) => samePath(x, p))) {
+      return { ok: false, code: 'not_editable', message: `字段 ${p.join('.')} 不在可改白名单（仅可改：${editablePaths.map((x) => x.join('.')).join('、')}）` }
     }
   }
   return { ok: true }
@@ -102,10 +106,10 @@ export function checkPatchEditable(patch) {
  * @param {import('zod').ZodType} Config 插件 Config（zod）
  * @returns {{ok:true, config:object, parsed:object} | {ok:false, code:string, message:string}}
  */
-export function applyEditablePatch({ inherited = {}, current = {}, patch }, Config) {
-  const pre = checkPatchEditable(patch)
+export function applyEditablePatch({ inherited = {}, current = {}, patch, editablePaths = EDITABLE_PATHS }, Config) {
+  const pre = checkPatchEditable(patch, editablePaths)
   if (!pre.ok) return pre
-  const minimal = projectEditable(patch) // 白名单外的键绝不进写入形（双保险：上面已整单拒）
+  const minimal = projectEditable(patch, editablePaths) // 白名单外的键绝不进写入形（双保险：上面已整单拒）
   const effective = mergeInto(structuredClone(inherited), structuredClone(current))
   mergeInto(effective, minimal)
   const parsed = Config.safeParse(effective)
@@ -124,10 +128,10 @@ export function applyEditablePatch({ inherited = {}, current = {}, patch }, Conf
  * @param {object} args.Config zod Config
  * @returns {(patch:object)=>Promise<{ok:boolean, config?:object, code?:string, message?:string}>}
  */
-export function createApplyPatch({ configEditor, entryId, Config }) {
+export function createApplyPatch({ configEditor, entryId, Config, editablePaths = EDITABLE_PATHS }) {
   return async function applyPatch(patch) {
     try {
-      const pre = checkPatchEditable(patch) // 白名单预检：不可改字段绝不触达持久化缝
+      const pre = checkPatchEditable(patch, editablePaths) // 白名单预检：不可改字段绝不触达持久化缝
       if (!pre.ok) return pre
       const entries = typeof configEditor?.entries === 'function' ? configEditor.entries() : []
       const entry = entries.find((e) => e?.options?.id === entryId)
@@ -136,7 +140,7 @@ export function createApplyPatch({ configEditor, entryId, Config }) {
       }
       let applied = null
       await configEditor.edit(entry, (current, inherited) => {
-        const r = applyEditablePatch({ inherited: inherited ?? {}, current: current ?? {}, patch }, Config)
+        const r = applyEditablePatch({ inherited: inherited ?? {}, current: current ?? {}, patch, editablePaths }, Config)
         if (!r.ok) {
           const err = new Error(r.message)
           err.code = r.code

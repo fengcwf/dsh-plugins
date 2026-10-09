@@ -65,22 +65,28 @@ window.__ModuleLoader__.load({
       return fetch(url, init)
     }
 
-    // 可改白名单（客户端副本，只控表单；服务端 lib/settings-write.js 为权威判据，双侧一致）
+    // 可改白名单（客户端副本，只控表单；服务端 lib/settings-write.js 为权威判据，双侧一致）。
+    // group=字段级分组元数据（kb-context 形制 kb-context/lib/client.js:47-94：仅加元数据**不动 rows
+    // 数组顺序**——ingest-routes.test.mjs data.editable 顺序断言零影响；渲染面 addRow 按组插 h4）。
     var EDITABLE_FIELDS = [
-      { path: ['capture', 'enabled'], kind: 'boolean', label: '捕获开关（turn-stopping 双轨落盘）' },
-      { path: ['capture', 'bufferRounds'], kind: 'number', label: '缓冲轮数（每 N 轮强制 flush）' },
-      { path: ['queue', 'maxRetries'], kind: 'number', label: '队列重试上限' },
-      { path: ['queue', 'ttlDays'], kind: 'number', label: '队列条目 TTL（天）' },
-      { path: ['secrets', 'enabled'], kind: 'boolean', label: '脱敏开关（落盘/注入前哨兵中和）' },
-      { path: ['ingest', 'schedule', 'enabled'], kind: 'boolean', label: '定时蒸馏开关（启用后每日到点触发 headless 蒸馏任务）', note: '开启后若当日无跑记录会补触发一次（重启/启用即按补跑判据收口）；执行改动约 1 分钟内热生效，无需重启。' },
-      { path: ['ingest', 'schedule', 'time'], kind: 'time', label: '定时蒸馏执行时间（HH:MM）', note: '系统 cron 仍在 00:25 触发，flock 防重入；如需单一时间源请运维侧停用该行' },
-      { path: ['hindsight', 'enabled'], kind: 'boolean', label: 'Hindsight 记忆同步开关（L1 启停，热改立即生效）', note: '关闭即停同步行为（手动/定时均不跑）；同步=机械转录记忆到 raw/06-hindsight/，不做语义编译。' },
-      { path: ['hindsight', 'sync', 'schedule', 'enabled'], kind: 'boolean', label: 'Hindsight 定时同步开关', note: '开启后每日到点触发记忆机械转录（与定时蒸馏错峰，缺省 03:25）。' },
-      { path: ['hindsight', 'sync', 'schedule', 'time'], kind: 'time', label: 'Hindsight 定时同步时间（HH:MM）', note: '缺省 03:25——在 wiki-ingest 00:25 之后错峰执行。' },
+      { path: ['capture', 'enabled'], kind: 'boolean', group: '会话捕获', label: '捕获开关（turn-stopping 双轨落盘）' },
+      { path: ['capture', 'bufferRounds'], kind: 'number', group: '会话捕获', label: '缓冲轮数（每 N 轮强制 flush）' },
+      { path: ['queue', 'maxRetries'], kind: 'number', group: '写入队列与安全', label: '队列重试上限' },
+      { path: ['queue', 'ttlDays'], kind: 'number', group: '写入队列与安全', label: '队列条目 TTL（天）' },
+      { path: ['secrets', 'enabled'], kind: 'boolean', group: '写入队列与安全', label: '脱敏开关（落盘/注入前哨兵中和）' },
+      { path: ['ingest', 'schedule', 'enabled'], kind: 'boolean', group: 'Ingest·蒸馏', label: '定时蒸馏开关（启用后每日到点触发 headless 蒸馏任务）', note: '开启后若当日无跑记录会补触发一次（重启/启用即按补跑判据收口）；执行改动约 1 分钟内热生效，无需重启。' },
+      // ⚠️ 双源提示归一面板（t20，P2「双源提示两处重复一并消」）：本行原 note 的 cron/双源/flock 说明
+      // 与 Hindsight 面板提示重复（P2 噪音）——该说明统一收敛进面板提示位（唯一处，dist 字面判据锁），
+      // 本行只留执行语义（不再重复双源说明）。
+      { path: ['ingest', 'schedule', 'time'], kind: 'time', group: 'Ingest·蒸馏', label: '定时蒸馏执行时间（HH:MM）', note: '每日到点执行时间（HH:MM）；改动约 1 分钟内热生效，无需重启。' },
+      // ⚠️ R-29（t19 P0 双源根治）：hindsight 三行（enabled / sync.schedule.enabled / sync.schedule.time）已摘——
+      // 面板六控件（WikiStewardHindsightMount 挂载缝 view:'hindsight'）为唯一写入口；被摘 note 文案已迁移
+      // 进面板提示位（HindsightSyncPanel 唯一入口说明），此处不保留镜像行（双源永存=P0 无法靠刷新根治）。
     ]
+    // 只读展示（组 6「部署信息」，灰置——kind readonly 已有形：值文本/disabled Switch，另加 muted 卡）
     var READONLY_FIELDS = [
-      { path: ['vaultRoot'], kind: 'string', label: 'vault 根路径（只读展示）' },
-      { path: ['write', 'readOnly'], kind: 'boolean', label: '写侧只读（INV-7：语义勿动，动手需显式开启）' },
+      { path: ['vaultRoot'], kind: 'string', group: '部署信息（只读）', label: 'vault 根路径（只读展示）' },
+      { path: ['write', 'readOnly'], kind: 'boolean', group: '部署信息（只读）', label: '写侧只读（INV-7：语义勿动，动手需显式开启）' },
     ]
 
     function getPath(obj, path) {
@@ -128,6 +134,16 @@ window.__ModuleLoader__.load({
       '.wiki-steward-settings-error{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary)}',
       '.wiki-steward-history-mount{min-height:120px}',
       '.wiki-steward-hindsight-mount{min-height:160px;margin:12px 0 0}',
+      // 六组重排（t20）：组标题 h4 + 运行逻辑图（R-33 纯文本步骤链）+ 只读组灰置——色板仍唯一来源=token
+      '.wiki-steward-settings-group{margin:16px 0 0;font-size:12px;font-weight:500;line-height:18px;color:var(--dsw-alias-label-secondary)}',
+      '.wiki-steward-settings-rowCardMuted{opacity:.6}',
+      '.wiki-steward-flow{margin:0;padding:12px 14px;border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);border-radius:var(--dsw-radius-xl)}',
+      '.wiki-steward-flow-summary{cursor:pointer;font-size:14px;font-weight:500;line-height:22px;color:var(--dsw-alias-label-primary)}',
+      '.wiki-steward-flow-lanes{display:flex;flex-direction:column;gap:10px;margin:10px 0 0}',
+      '.wiki-steward-flow-lane{display:flex;flex-direction:column;gap:4px}',
+      '.wiki-steward-flow-laneName{font-family:var(--ds-font-family-code);font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
+      '.wiki-steward-flow-steps{font-family:var(--ds-font-family-code);font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary);word-break:break-all}',
+      '.wiki-steward-flow-arrow{padding:0 4px;color:var(--dsw-alias-state-business-primary)}',
     ].join('')
 
     /** 样式注入（幂等 + document 守卫）：Node/测试环境无 document 直接跳过，绝不炸模块加载。 */
@@ -203,7 +219,7 @@ window.__ModuleLoader__.load({
             react.createElement('span', { className: 'wiki-steward-settings-rowName' }, field.label),
             control)
         : react.createElement('span', { className: 'wiki-steward-settings-rowName' }, field.label)
-      return react.createElement('div', { className: 'wiki-steward-settings-rowCard' },
+      return react.createElement('div', { className: 'wiki-steward-settings-rowCard' + (props.muted === true ? ' wiki-steward-settings-rowCardMuted' : '') },
         head,
         react.createElement('div', { className: 'wiki-steward-settings-field' },
           field.kind === 'boolean' ? null : control,
@@ -213,10 +229,76 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 运行逻辑图（R-31 四泳道全链 + R-33 载体裁定）：零依赖 createElement 纯文本步骤链
+     * （不引 mermaid/第三方、不手绘 SVG）；折叠=原生 details/summary 语义（R-32 首屏第 2 位，
+     * 折叠对冲首屏变长）；节点标注真实落点（vault 路径/脚本/任务文件/端口——素材=phase0/
+     * scout-settings-layout.md §5 全实证），**不画凭据与 key**（红线）。
+     */
+    var FLOW_LANES = [
+      {
+        key: 'A',
+        name: 'A 会话捕获 → raw/',
+        steps: [
+          '会话事件（session/event + agent/turn-stopping）',
+          '每 N 轮强制 flush（capture.bufferRounds，缺省 3）',
+          'raw/04-session_logs/<标题> - YYYY-MM-DD-HH-MM.md ／ raw/projects/<项目>/changes/<变更>/conversation.md',
+          '失败 → kb-index/queue/（重试 3 次 / TTL 7 天）→ kb-alerts.md 告警',
+        ],
+      },
+      {
+        key: 'B',
+        name: 'B raw/ → wiki/（增量编译）',
+        steps: [
+          'ingest-pipeline.py scan（SCAN_DIRS 含 06-hindsight）',
+          'kb_mark sha256 三态（created/updated/skipped）',
+          'dsh-cron.sh wiki-ingest（00:25）→ dsh --profile headless（/root/bin/tasks/21-wiki-ingest.md）',
+          'wiki_write / wiki_validate → <vaultRoot>/wiki/',
+        ],
+      },
+      {
+        key: 'C',
+        name: 'C Hindsight 记忆 → raw/06-hindsight/',
+        steps: [
+          'Hindsight API（http://127.0.0.1:8888）',
+          '机械转录 raw/06-hindsight/<bank-slug>-<hash8>-<YYYY-MM>.md（纯机械不 LLM）',
+          '并入 B 扫描面（SCAN_DIRS）→ wiki/',
+        ],
+      },
+      {
+        key: 'D',
+        name: 'D 运维（定时/告警）',
+        steps: [
+          'crontab ／ 插件 timer（到点 spawn 同一 wrapper，共用 flock 防重入）',
+          'dsh-cron.sh（每任务一把锁，失败追加 kb-alerts.md）',
+          'headless 执行（dsh --profile headless）',
+        ],
+      },
+    ]
+    function WikiStewardFlowBlock() {
+      var lanes = []
+      for (var li = 0; li < FLOW_LANES.length; li++) {
+        var lane = FLOW_LANES[li]
+        var parts = []
+        for (var si = 0; si < lane.steps.length; si++) {
+          if (si > 0) parts.push(react.createElement('span', { key: lane.key + '-a' + si, className: 'wiki-steward-flow-arrow' }, '→'))
+          parts.push(react.createElement('span', { key: lane.key + '-s' + si, className: 'wiki-steward-flow-step' }, lane.steps[si]))
+        }
+        lanes.push(react.createElement('div', { key: lane.key, className: 'wiki-steward-flow-lane', 'data-ws-lane': lane.key },
+          react.createElement('span', { className: 'wiki-steward-flow-laneName' }, lane.name),
+          react.createElement('div', { className: 'wiki-steward-flow-steps' }, parts)))
+      }
+      return react.createElement('details', { className: 'wiki-steward-flow', open: true },
+        react.createElement('summary', { className: 'wiki-steward-flow-summary' }, '四泳道全链（捕获 → 编译 → Hindsight → 运维；点击折叠/展开）'),
+        react.createElement('div', { className: 'wiki-steward-flow-lanes' }, lanes))
+    }
+
+    /**
      * 设置面贡献组件（settings.section）：配置展示/可改 + 历史记录入口 + 手动 ingest 动作。
      * 载入=GET api/wiki-steward/settings（文档相对）；保存=POST 同址 {patch}（只发变更叶子）。
      * 失败/拒绝=容器内如实报错（not_editable/invalid 服务端判据原文），绝不静默。
-     * 结构（Task F2 §3.2）：节容器 > 标题/引言 > 历史入口 > 手动动作 > rows（rowCard 列表）> 保存/提示。
+     * 结构（t20 六组重排，solution-design-settings.md §3）：节容器 > 标题/引言 > 运行逻辑图（首屏第 2 位）>
+     * rows（组 2 会话捕获 / 组 3 写入队列与安全 / 组 4 Ingest·蒸馏 含动作+历史入口）> 组 5 Hindsight 面板 >
+     * 组 6 部署信息（只读灰置）> 保存/提示。
      */
     function WikiStewardSettingsSection() {
       var pair = react.useState({ status: 'loading', data: null, error: null, draft: {}, saving: false, notice: null, historyOpen: false, actions: { scan: { status: 'idle', text: '' }, distill: { status: 'idle', text: '' } } })
@@ -345,38 +427,60 @@ window.__ModuleLoader__.load({
       }
       var cfg = (state.data && state.data.config) || {}
       var writable = state.data && state.data.writable === true
+      // 六组重排（t20，kb-context group 形制）：rows 数组顺序零变动（EDITABLE_FIELDS/READONLY_FIELDS
+      // 原序），仅按 field.group 元数据插 h4 组标题；Ingest 组内并入动作两按钮+历史入口（§3 组 4）。
       var rows = []
+      var lastGroup = null
+      function addRow(el, field) {
+        if (field.group && field.group !== lastGroup) {
+          rows.push(react.createElement('h4', { key: 'g-' + field.group, className: 'wiki-steward-settings-group' }, field.group))
+          lastGroup = field.group
+          if (field.group === 'Ingest·蒸馏') {
+            rows.push(react.createElement(WikiStewardManualActions, {
+              key: 'ingest-actions',
+              scan: state.actions.scan,
+              distill: state.actions.distill,
+              onScan: function () { runAction('scan', INGEST_SCAN_URL) },
+              onDistill: function () { runAction('distill', INGEST_DISTILL_URL) },
+            }))
+            rows.push(react.createElement(WikiStewardHistoryEntry, {
+              key: 'ingest-history',
+              open: state.historyOpen === true,
+              onToggle: toggleHistory,
+            }))
+          }
+        }
+        rows.push(el)
+      }
       for (var i = 0; i < EDITABLE_FIELDS.length; i++) {
-        rows.push(react.createElement(SettingsRow, {
+        addRow(react.createElement(SettingsRow, {
           key: 'e' + i,
           field: EDITABLE_FIELDS[i],
           value: draftValue(EDITABLE_FIELDS[i]),
           readOnly: !writable,
           onChange: (function (f) { return function (v) { onChange(f, v) } })(EDITABLE_FIELDS[i]),
-        }))
+        }), EDITABLE_FIELDS[i])
       }
+      // 组 5：Hindsight 记忆同步面板（P1 主次颠倒修正：从第 2 位降至 Ingest 之后）——
+      // t14 挂载缝 view:'hindsight' → web/dist Hindsight-only 面；R-29 后=该三键唯一写入口。
+      rows.push(react.createElement('h4', { key: 'g-hindsight', className: 'wiki-steward-settings-group' }, 'Hindsight 记忆同步'))
+      rows.push(react.createElement(WikiStewardHindsightMount, { key: 'hindsight-mount' }))
       for (var j = 0; j < READONLY_FIELDS.length; j++) {
-        rows.push(react.createElement(SettingsRow, {
+        addRow(react.createElement(SettingsRow, {
           key: 'r' + j,
           field: READONLY_FIELDS[j],
           value: getPath(cfg, READONLY_FIELDS[j].path),
           readOnly: true,
+          muted: true,
           onChange: function () {},
-        }))
+        }), READONLY_FIELDS[j])
       }
       return react.createElement('div', { className: 'wiki-steward-settings', 'data-dsh-plugin': 'wiki-steward' },
         react.createElement('h3', { className: 'wiki-steward-settings-title' }, 'wiki-steward · 设置'),
-        react.createElement('p', { className: 'wiki-steward-settings-intro' }, '可改项即时热生效（写路径=官方路由面 api/wiki-steward/settings → configEditor 持久化缝）；只读项语义勿动。'),
-        // t14 六控件可达性收口：Hindsight 同步面板（状态/同步/日历/时间/L1/L2 六控件）直接
-        // 挂在设置节渲染面（非弹层），挂载缝 view:'hindsight' → web/dist Hindsight-only 面。
-        react.createElement(WikiStewardHindsightMount, null),
-        react.createElement(WikiStewardHistoryEntry, { open: state.historyOpen === true, onToggle: toggleHistory }),
-        react.createElement(WikiStewardManualActions, {
-          scan: state.actions.scan,
-          distill: state.actions.distill,
-          onScan: function () { runAction('scan', INGEST_SCAN_URL) },
-          onDistill: function () { runAction('distill', INGEST_DISTILL_URL) },
-        }),
+        react.createElement('p', { className: 'wiki-steward-settings-intro' }, '会话捕获 → raw/ 素材 → 编译蒸馏 → wiki/ 知识库；Hindsight 记忆同步同链并入 raw/06-hindsight/。可改项即时热生效，只读项语义勿动。'),
+        // R-32：运行逻辑图=首屏第 2 位（总览之后、操作之前——先见图再操作的心智；折叠对冲首屏变长）
+        react.createElement('h4', { key: 'g-flow', className: 'wiki-steward-settings-group' }, '运行逻辑图'),
+        react.createElement(WikiStewardFlowBlock, null),
         react.createElement('div', { className: 'wiki-steward-settings-rows' }, rows),
         writable
           ? react.createElement(ui.Button, {

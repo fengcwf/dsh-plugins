@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url'
 
 const { registerIngestRoutes, API_PREFIX } = await import('../lib/ingest-routes.js')
 const { createHindsightHandlers, createSyncStarter, collectStatus, readDiagnoseConfig, readSyncLogLines } = await import('../lib/hindsight-routes.js')
-const { EDITABLE_PATHS, createApplyPatch } = await import('../lib/settings-write.js')
+const { EDITABLE_PATHS, HINDSIGHT_EDITABLE_PATHS, createApplyPatch } = await import('../lib/settings-write.js')
 const { Config } = await import('../lib/index.js')
 
 const CLIENT_PATH = fileURLToPath(new URL('../lib/client.js', import.meta.url))
@@ -56,13 +56,13 @@ function mkReq({ method = 'GET', url = '/', body } = {}) {
 }
 
 /** 真对真：真 registerIngestRoutes 单 prefix 注册 + 真 hindsight 分发缝 → 打真 handler */
-function mkSetup(t, { getConfig = () => Config.parse({}), applyPatch = null, startSync, statusProbe, syncLogFile, rejection } = {}) {
+function mkSetup(t, { getConfig = () => Config.parse({}), applyPatch = null, applyHindsightPatch = null, startSync, statusProbe, syncLogFile, rejection } = {}) {
   const host = mkHost({ rejection })
   const dir = mkTmp(t)
   const handlers = createHindsightHandlers({
     connection: host.connection,
     getConfig,
-    applyPatch,
+    applyHindsightPatch,
     startSync: startSync ?? (() => ({ started: false, reason: 'noop', note: '' })),
     statusProbe: statusProbe ?? (async () => ({ diagnose: null, sync_status: null, banks: [], warnings: [] })),
     syncLogFile: syncLogFile ?? path.join(dir, 'hindsight-sync-log.jsonl'),
@@ -127,10 +127,14 @@ test('② 双侧一致性：settings-write EDITABLE_PATHS ↔ client.js EDITABLE
   )
   const serverPaths = EDITABLE_PATHS.map((p) => p.join('.'))
   assert.deepEqual(clientPaths, serverPaths, '双侧同集同序（服务端权威判据 ↔ 客户端表单副本）')
-  assert.equal(serverPaths.length, 10, '10 叶子（7 既有 + hindsight 三项）')
+  // 断言修订理由（2026-10-07 波 t19，R-29 P0 双源根治）：hindsight 三叶**随摘**（10→7）——
+  // 唯一写入口=面板六控件（HINDSIGHT_EDITABLE_PATHS 专属写缝）；rows/客户端表单副本同摘（双源永存教训）。
+  assert.equal(serverPaths.length, 7, '7 叶子（hindsight 三项已摘——R-29）')
   for (const p of ['hindsight.enabled', 'hindsight.sync.schedule.enabled', 'hindsight.sync.schedule.time']) {
-    assert.ok(serverPaths.includes(p), `hindsight 可热改叶在列：${p}`)
+    assert.ok(!serverPaths.includes(p), `hindsight 叶已摘（通用面整单拒）：${p}`)
+    assert.ok(!clientPaths.includes(p), `client.js EDITABLE_FIELDS 同摘：${p}`)
   }
+  assert.deepEqual(HINDSIGHT_EDITABLE_PATHS.map((x) => x.join('.')), ['hindsight.enabled', 'hindsight.sync.schedule.enabled', 'hindsight.sync.schedule.time'], '专属写面白名单 3 叶（面板唯一入口）')
   // cordis.patch.yml 默认值面（四处同步第三处）：hindsight 块在且键齐
   const yml = fs.readFileSync(fileURLToPath(new URL('../cordis.patch.yml', import.meta.url)), 'utf8')
   for (const key of ['hindsight:', 'enabled: false', "apiUrl: 'http://127.0.0.1:8888'", 'banks: []', 'schedule:', "time: '03:25'"]) {
@@ -273,16 +277,15 @@ test('⑥ toggle roundtrip：真 applyPatch（configEditor 最小缝）→ GET s
   // 真持久化缝（宿主最小形 entries/edit）：overlay=当前覆盖层，change 回调真跑 applyEditablePatch
   let overlay = {}
   let editCalls = 0
-  const applyPatch = createApplyPatch({
-    configEditor: {
-      entries: () => [{ options: { id: 'wiki-steward' } }],
-      edit: async (entry, change) => { editCalls += 1; overlay = change(overlay, {}) },
-    },
-    entryId: 'wiki-steward',
-    Config,
-  })
+  const configEditor = {
+    entries: () => [{ options: { id: 'wiki-steward' } }],
+    edit: async (entry, change) => { editCalls += 1; overlay = change(overlay, {}) },
+  }
+  // R-29：面板写路径走专属写缝（HINDSIGHT_EDITABLE_PATHS 3 叶）；通用面（EDITABLE_PATHS 7 叶）另注一份做判死
+  const applyHindsightPatch = createApplyPatch({ configEditor, entryId: 'wiki-steward', Config, editablePaths: HINDSIGHT_EDITABLE_PATHS })
+  const applyPatch = createApplyPatch({ configEditor, entryId: 'wiki-steward', Config })
   const getConfig = () => Config.parse(structuredClone(overlay))
-  const { host } = mkSetup(t, { getConfig, applyPatch })
+  const { host } = mkSetup(t, { getConfig, applyPatch, applyHindsightPatch })
   // 判死探针：非默认值（enabled:true）save → load 回读一致
   let res = await call(host, { method: 'POST', url: '/api/wiki-steward/hindsight/toggle', body: { enabled: true } })
   assert.equal(res.status, 200)
@@ -302,9 +305,25 @@ test('⑥ toggle roundtrip：真 applyPatch（configEditor 最小缝）→ GET s
   res = await call(host, { method: 'POST', url: '/api/wiki-steward/hindsight/toggle', body: { enabled: 'yes' } })
   assert.equal(res.status, 400, 'enabled 须为布尔值')
   assert.equal(res.json().error.code, 'bad_request')
+  // POST /hindsight/settings（R-29 面板专属写面）：schedule.time 写入 roundtrip 回读一致
+  res = await call(host, { method: 'POST', url: '/api/wiki-steward/hindsight/settings', body: { patch: { hindsight: { sync: { schedule: { time: '03:30' } } } } } })
+  assert.equal(res.status, 200, '面板专属写面（schedule.time）写入')
+  res = await call(host, { url: '/api/wiki-steward/settings' })
+  assert.equal(res.json().data.config.hindsight.sync.schedule.time, '03:30', 'schedule.time roundtripPreserved（save→load 回读一致）')
+  // 双源根治判死：通用 POST /settings 写 hindsight 键=整单拒（not_editable）——rows/通用面不再可写
+  res = await call(host, { method: 'POST', url: '/api/wiki-steward/settings', body: { patch: { hindsight: { enabled: true } } } })
+  assert.equal(res.status, 400, '通用面写 hindsight 键整单拒（R-29 摘叶——后写覆盖先写根除）')
+  assert.equal(res.json().error.code, 'not_editable')
+  res = await call(host, { url: '/api/wiki-steward/settings' })
+  assert.equal(res.json().data.config.hindsight.enabled, false, '被拒写不落盘（roundtrip 判死双侧）')
+  // 专属面同样受 3 叶白名单约束（不放大写面）
+  res = await call(host, { method: 'POST', url: '/api/wiki-steward/hindsight/settings', body: { patch: { capture: { enabled: false } } } })
+  assert.equal(res.status, 400, '专属面 3 叶之外整单拒（写面不放大）')
   // 缺写缝=503 如实（不装可写）
   const { host: host2 } = mkSetup(t, { getConfig })
   res = await call(host2, { method: 'POST', url: '/api/wiki-steward/hindsight/toggle', body: { enabled: true } })
   assert.equal(res.status, 503)
   assert.equal(res.json().error.code, 'write_unavailable')
+  res = await call(host2, { method: 'POST', url: '/api/wiki-steward/hindsight/settings', body: { patch: { hindsight: { sync: { schedule: { time: '03:40' } } } } } })
+  assert.equal(res.status, 503, '专属写面缺缝同样 503 如实')
 })
