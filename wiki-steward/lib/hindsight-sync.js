@@ -122,7 +122,7 @@ export function renderFrontmatter({ title, month, bankSlug: slug, factCount, sha
     `tags: [hindsight, memories, ${yq(slug)}]`,
     'source: hindsight',
     `fact_count: ${factCount}`,
-    `sha256: ${yq(sha256)}`,
+    `sha256: ${sha256}`, // 裸值（0.8.1 t22，R-27② 次责面）：纯 hex 无需引号——与 mark.js「key: value 形」既定口径一致
     `latest_timestamp: ${yq(latestTimestamp)}`,
     `stale_count: ${staleCount}`,
     '---',

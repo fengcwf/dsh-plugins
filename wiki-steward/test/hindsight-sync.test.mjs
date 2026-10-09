@@ -136,7 +136,7 @@ test('③ 聚合落盘：bank+月 → <bank-slug>-<hash8>-<YYYY-MM>.md（禁日�
   assert.match(oct, /^tags: \[hindsight, memories, "coding-agent--dsh-plugins"\]$/m, 'tags')
   assert.match(oct, /^source: hindsight$/m, 'source: hindsight')
   assert.match(oct, /^fact_count: 2$/m, 'fact_count')
-  assert.match(oct, /^sha256: "[0-9a-f]{64}"$/m, 'sha256（body 哈希）')
+  assert.match(oct, /^sha256: [0-9a-f]{64}$/m, 'sha256（body 哈希，裸值——0.8.1 t22 R-27②：纯 hex 不加引号）')
   assert.match(oct, /^latest_timestamp: "2026-10-07T15:44:55Z"$/m, '易变 timestamp 只进 frontmatter')
   assert.match(oct, /^stale_count: 2$/m, '易变 is_stale 只进 frontmatter（计数）')
   // 易变字段绝不进 body（否则每夜 re_ingest）
@@ -147,7 +147,7 @@ test('③ 聚合落盘：bank+月 → <bank-slug>-<hash8>-<YYYY-MM>.md（禁日�
   assert.match(body, /### m-oct-1\n\n十月的记忆内容甲条/, '机械转录 id+text')
   assert.match(body, /- context: conversation of m-oct-2/, 'context 转录')
   assert.match(body, /- meta: fact_type=world; document_id=conversation:session-m-oct-2; entities=user, knowledge:x/, '稳定 meta 转录')
-  const fmHash = /^sha256: "([0-9a-f]{64})"/m.exec(oct)[1]
+  const fmHash = /^sha256: ([0-9a-f]{64})/m.exec(oct)[1]
   assert.equal(fmHash, sha256Hex(body), 'frontmatter sha256 = body 实测哈希（与 ingest 三态同口径）')
   const sorted = [...body.matchAll(/^### (\S+)$/gm)].map((m) => m[1])
   assert.deepEqual(sorted, [...sorted].sort(), 'body 确定性排序（id 升序——二次同步同序）')
