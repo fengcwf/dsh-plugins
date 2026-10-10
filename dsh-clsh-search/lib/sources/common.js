@@ -152,6 +152,45 @@ function isBlockedHostname(hostname) {
 }
 
 /**
+ * 代理地址选取（US-13/US-21）：池非空取池首项（走哪套 = 池首项；逐源选套 proxyId 属 backlog B2）；
+ * 空池返回 undefined（T-A2 产品裁定 2026-10-10：空池勾选 = 自动直连 + 降级标志，不抛错）。
+ * @param {object} config - Config.parse 产物（proxies 组）。
+ * @returns {string | undefined} 代理地址（host:port 或 http://host:port）；池空 = undefined。
+ */
+export function pickProxyAddress(config) {
+  const pool = Array.isArray(config?.proxies) ? config.proxies : []
+  return pool.length > 0 ? pool[0].address : undefined
+}
+
+/**
+ * 代理降级态探测（T-A2 产品裁定 2026-10-10，可被 UI 与 diagnostics probe 探测）：
+ * 勾选走代理但池为空 = 自动直连 + `degraded` 标志（明示降级，非静默）——供 UI 提示
+ * 「已勾选但未配代理地址，当前直连」。
+ * @returns {{wantProxy: boolean, active: boolean, degraded: boolean, reason?: string}}
+ */
+export function proxyStatus(config, id) {
+  const wantProxy = config?.sources?.useProxy?.[id] === true
+  const pool = Array.isArray(config?.proxies) ? config.proxies : []
+  if (!wantProxy) return { wantProxy: false, active: false, degraded: false }
+  if (pool.length === 0) return { wantProxy: true, active: false, degraded: true, reason: 'proxy-pool-empty' }
+  return { wantProxy: true, active: true, degraded: false }
+}
+
+/**
+ * 每源代理解析（US-23 / K-23，T-A2 修订）：sources.useProxy.<id> 勾选为唯一事实源（R21 生效面）。
+ * 勾选开 + 池非空 → 池首项；勾选开 + 池空 → undefined（自动直连 + proxyStatus 降级标志可探测）；
+ * 勾选关/未知源 → undefined（fetchHtml 走既有直连路径）。
+ * @param {object} config - Config.parse 产物（sources.useProxy 组 + proxies 组）。
+ * @param {string} id - 源 id（内置四源或自定义源 id）。
+ * @returns {{address: string} | undefined}
+ */
+export function resolveProxyFor(config, id) {
+  const status = proxyStatus(config, id)
+  if (!status.active) return undefined
+  return { address: pickProxyAddress(config) }
+}
+
+/**
  * 出站门禁（INV-15 / K-16）：强制 https + 拒非公网目标；fetchHtml 与 CONNECT 目标一律必经。
  * @param {string} url - 目标 URL（绝对地址）。
  * @param {{lookup?: (hostname: string, opts: {all: true}) => Promise<Array<{address: string}>>}} [options]
@@ -561,6 +600,19 @@ export async function requestViaTunnel(url, options = {}) {
   }
 }
 
+/** 202 豁免判据（INV-24 / K-24，R6 拍板）：probeParse 出 ≥3 条且标题/URL 双字段非空；
+ *  解析器抛错 / 非数组 / 不足 3 条 / 字段空 → false（fail-closed，照旧 blocked）。 */
+function probeUsable(probeParse, html) {
+  try {
+    const items = probeParse(html)
+    if (!Array.isArray(items)) return false
+    return items.filter((item) => item && typeof item.title === 'string' && item.title.trim().length > 0
+      && typeof item.url === 'string' && item.url.trim().length > 0).length >= 3
+  } catch {
+    return false
+  }
+}
+
 /**
  * 抓取一页 HTML 文本（GET 为唯一默认形；出网内容 = URL 内的查询词与检索参数）。
  * @param {string} url - 已构造好的请求 URL（只含查询词与检索参数）。
@@ -574,9 +626,11 @@ export async function requestViaTunnel(url, options = {}) {
  *   - lookup 可选 DNS 解析器（透传给出站门禁的解析后 IP 同段核验，INV-15）
  *   - proxy 可选代理（{address}）：在场即走 HTTPS-over-CONNECT 隧道（INV-17/18，P-9~P-12）
  *   - tunnelSeams 测试 seam（{dial, upgrade, requestImpl}，缺省真 net/tls/https；测试文件零 socket 模块字面）
+ *   - probeParse 可选解析器回调（(html) => [{url,title}]，由调用方注入自己的解析器——202 条件化
+ *     豁免判定用；fetchHtml 不反向依赖任何源解析器（P-17/K-8 单向分层）；缺省未传 = fail-closed）
  * @returns {Promise<string>} 响应 HTML 文本。
  */
-export async function fetchHtml(url, { timeoutMs, retries, retryBackoffMs, maxResponseBytes, signal, method = 'GET', headers = {}, body, lookup, proxy, tunnelSeams = {} } = {}) {
+export async function fetchHtml(url, { timeoutMs, retries, retryBackoffMs, maxResponseBytes, signal, method = 'GET', headers = {}, body, lookup, proxy, tunnelSeams = {}, probeParse } = {}) {
   if (typeof url !== 'string' || url.length === 0) throw new TypeError('fetchHtml: url 必须是非空字符串')
   if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new TypeError('fetchHtml: timeoutMs 必须是正数（来自 Config.timeoutMs，K-9）')
@@ -655,7 +709,13 @@ export async function fetchHtml(url, { timeoutMs, retries, retryBackoffMs, maxRe
       // 反爬 body 判定（W4-BLOCK-BODY-UNREACHABLE 关闭点）：2xx 响应体命中挑战页/验证码页/
       // 异常页特征即抛 blocked 错误（INV-5 命中即停：调用方不重试、不切源）；classifyBlock
       // 的 body 分支在此可达——202/4xx 状态类判定仍由聚合层读 err.status 兜底。
-      const classification = classifyBlock({ status: response.status, body: html })
+      //
+      // 202 条件化（INV-24 / K-24，K-5 受控修订，R4/R5/R6）：202 先经注入的 probeParse 试解析
+      // （豁免短路发生在调 classifyBlock **之前**，P-18 禁先判 blocked 再翻案）——达标即豁免
+      // 「① 202 状态」类目（status 置 undefined 使状态类不判）；②③④ body 类目照判（三类
+      // 无条件，挑战页/验证码页/异常页不受豁免影响）。缺省未传 probeParse = fail-closed 照旧 blocked。
+      const exempt202 = response.status === 202 && typeof probeParse === 'function' && probeUsable(probeParse, html)
+      const classification = classifyBlock({ status: exempt202 ? undefined : response.status, body: html })
       if (classification.blocked) {
         throw toBlockedError(classification, { status: response.status })
       }

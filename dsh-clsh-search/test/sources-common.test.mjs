@@ -30,7 +30,7 @@ function stubFetch(t) {
 test('retryBackoffMs 默认 300（Config schema）且驱动指数退避：两段时间间隔随基数递增', async (t) => {
   const cfg = Config.parse({})
   assert.equal(cfg.retryBackoffMs, 300, '默认 300（R32，schema 唯一定义处）')
-  assert.equal(cfg.maxResponseBytes, 1048576, '默认 1MiB（R32）')
+  assert.equal(cfg.maxResponseBytes, 2097152, '默认 2MiB（K-26：baidu 真实 0.91-1.04MiB 不被误拦）')
 
   const { calls, setScript } = stubFetch(t)
   setScript([

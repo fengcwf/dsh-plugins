@@ -6,6 +6,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile, readdir } from 'node:fs/promises'
 
+// 测试面显式直连（R21 默认 ddg/bing 勾选走代理；本组用例不测代理 → 显式关闭，避免空池明示错误 K-23）
+const DIRECT = { sources: { useProxy: { ddg: false, bing: false, so360: false, baidu: false } } }
+
 import { Config } from '../lib/index.js'
 import { CHROME_UA } from '../lib/sources/common.js'
 import { createSource, parseSerp } from '../lib/sources/ddg.js'
@@ -69,22 +72,22 @@ test('无结果样本：空数组不抛异常', () => {
 })
 
 test('统一源接口：{name, enabled, search} 形状与 Config 开关联动（K-9 源开关面）', () => {
-  const source = createSource(Config.parse({}))
+  const source = createSource(Config.parse({ ...DIRECT }))
   assert.equal(source.name, 'ddg')
   assert.equal(source.enabled, true, '默认四源全开（R1）')
   assert.equal(typeof source.search, 'function')
 
-  const disabled = createSource(Config.parse({ sources: { ddg: false } }))
+  const disabled = createSource(Config.parse({ ...DIRECT, sources: { ...DIRECT.sources, ddg: false } }))
   assert.equal(disabled.enabled, false, '单源开关从 Config.sources 读')
 
   assert.throws(() => createSource(undefined), TypeError, '缺 Config 必须拒（K-9 单一事实源）')
   assert.throws(() => createSource({}), TypeError, '裸对象必须拒（未经 Config.parse 回填）')
-  assert.throws(() => createSource(Config.parse({}).sources), TypeError, '缺 timeoutMs/retries 必须拒')
+  assert.throws(() => createSource(Config.parse({ ...DIRECT }).sources), TypeError, '缺 timeoutMs/retries 必须拒')
 })
 
 test('search：payload 只含查询词 + Chrome UA + GET（K-4 行为断言），返回 {sources}', async (t) => {
   const calls = stubFetch(t, () => new Response(SAMPLE, { status: 200 }))
-  const source = createSource(Config.parse({ timeoutMs: 5000, retries: 1 }))
+  const source = createSource(Config.parse({ ...DIRECT, timeoutMs: 5000, retries: 1 }))
   const out = await source.search('测试 query & more')
 
   assert.deepEqual(Object.keys(out), ['sources'], '统一返回 {sources}（TECH.md §1）')
@@ -114,7 +117,7 @@ test('超时经 AbortSignal 生效：timeoutMs 从 Config 读且单次尝试（K
       opts.signal.addEventListener('abort', () => reject(opts.signal.reason), { once: true })
     })
   })
-  const source = createSource(Config.parse({ timeoutMs: 30, retries: 0 }))
+  const source = createSource(Config.parse({ ...DIRECT, timeoutMs: 30, retries: 0 }))
   const started = Date.now()
   await assert.rejects(() => source.search('timeout probe'), (error) => error.name === 'TimeoutError')
   assert.ok(Date.now() - started < 3000, '超时应在 timeoutMs 量级触发，而非挂死')
@@ -125,14 +128,14 @@ test('网络失败重试：总尝试 = 1 + Config.retries（K-9 重试面）', a
   const calls = stubFetch(t, () => {
     throw new TypeError('fetch failed')
   })
-  const source = createSource(Config.parse({ timeoutMs: 1000, retries: 2 }))
+  const source = createSource(Config.parse({ ...DIRECT, timeoutMs: 1000, retries: 2 }))
   await assert.rejects(() => source.search('probe'), (error) => error.message === 'fetch failed')
   assert.equal(calls.length, 3, '1 次首发 + retries=2 次重试')
 })
 
 test('4xx 不重试：反爬类状态码立即抛（交 Task 8 ratelimit 分类）', async (t) => {
   const calls = stubFetch(t, () => new Response('blocked', { status: 403 }))
-  const source = createSource(Config.parse({ timeoutMs: 1000, retries: 3 }))
+  const source = createSource(Config.parse({ ...DIRECT, timeoutMs: 1000, retries: 3 }))
   await assert.rejects(() => source.search('probe'), (error) => error.status === 403)
   assert.equal(calls.length, 1, '403 立即抛，不消耗重试次数')
 })
@@ -177,7 +180,7 @@ test('K-4 静态断言：lib/sources/*.js 无凭据/上下文注入标识，且�
 
 test('同形批统一源接口契约：四源 {name, enabled, search}→{sources} 逐源一致（TECH.md §1，供 T10 聚合器消费）', async (t) => {
   const modules = { ddg: { createSource, parseSerp }, bing: bingSource, so360: so360Source, baidu: baiduSource }
-  const config = Config.parse({})
+  const config = Config.parse({ ...DIRECT })
   const calls = []
   t.mock.method(globalThis, 'fetch', async (url, opts) => {
     calls.push({ url: String(url), opts })
@@ -198,7 +201,7 @@ test('同形批统一源接口契约：四源 {name, enabled, search}→{sources
     assert.ok(['q', 'wd'].includes([...url.searchParams.keys()][0]), `${id}: 查询词参数名为 q/wd`)
   }
   // 独立开关：关一家不影响其余三家（聚合层按 enabled 跳过的输入面）
-  const withOff = Config.parse({ sources: { so360: false } })
+  const withOff = Config.parse({ ...DIRECT, sources: { ...DIRECT.sources, so360: false } })
   assert.deepEqual(
     Object.entries(modules).map(([id, mod]) => [id, mod.createSource(withOff).enabled]),
     [['ddg', true], ['bing', true], ['so360', false], ['baidu', true]],

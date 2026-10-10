@@ -1,5 +1,39 @@
 # CHANGELOG — dsh-clsh-search
 
+## 0.2.1 — 2026-10-10
+
+修复波（clsh Phase 0-8，计划 Task 1-10；基线 0.2.0 = tag `dsh-clsh-search-v0.2.0`）：0.2.0 栽坑修复 + 用户诉求 6 项 + 2 项追加（US-18~US-23），零新增依赖（K-8）。
+
+### 修复与新能力（US-18~US-23 逐条）
+
+- **代理真接线到内置四源（US-21/US-23，主菜）**：ddg/bing/so360/baidu 的 `fetchHtml` 调用全部传 `proxy` 参数，`sources.useProxy.<id>` 每源勾选成为唯一事实源、**真实生效**（0.2.0 只在 UI 显示未接运行时的坑）；不按 host 自动判定夺走用户勾选权（K-23）。落点：`lib/sources/{common,ddg,bing,so360,baidu}.js`；测试 = 桩 tunnel 四断言（走/不走/池空明示/逐源接线，K-27 离线绿，零真连）。
+- **空池自动直连 + 可探测降级标志（K-23 修订，用户 2026-10-10 产品裁定）**：勾选开而代理池空 → **自动直连不抛错**（恢复开箱即用，不再让无代理用户 ddg/bing 全废），并回传可探测降级标志 `proxyStatus → {degraded:true, reason:'proxy-pool-empty'}`，**禁止无标志静默回落**。落点：`lib/index.js`、诊断/源健康面三面互证。
+- **so360 端点修复（US-22，K-25）**：`https://www.so.com/search` → **`https://www.so.com/s`**，解析器零改动；ENDPOINT 字面 + 出网 URL 行为双断言（t59 补，BLOCKER-2 闭合；队长变异测试验牙——改坏即红、还原复绿）。
+- **baidu 响应体上限 1MiB → 2MiB（US-22，K-26）**：`maxResponseBytes` 默认 2097152（Config 可配不变）；cap 仍先于 classifyBlock 判定的顺序锁在场。
+- **ddg 202 条件化（US-22，K-24 = 对 K-5 的受控修订）**：仅当 probeParse 解析出 ≥3 条且标题/URL 双字段非空才豁免 blocked；**缺省未传 probeParse 仍 blocked（fail-closed）**；豁免判断在 `classifyBlock` **之前**（P-17，禁先判后翻案）；挑战页/异常 HTML 仍命中即停、不重试。
+- **源管理三卡合并（US-19/US-20）**：源管理卡一源一行（源名 + 启停 + 代理勾选 + 健康测试 + 最近结果，`SourceRow` 行内两段式），**代理地址独立成卡**，原源健康行卡并入源管理（`SourceHealthList` 删除）；**排序降级按钮**（无 drag 环境可按钮调序，无障碍回归修复）。落点：`web/src/components/{SourceCard,SourceRow,ProxyCard}.vue`、`web/src/App.vue`；`web/dist` 随 src 重建（LRN-045，独立重建 cmp 零差异）。
+- **三处新锁（本波新增机械判据）**：K-25 so360 端点字面断言；K-26 禁调序（cap 先判）；K-28 `sources.useProxy` 现状断言（schema 禁改，`.prefault({})` 现状 = `{ddg:true,bing:true,so360:false,baidu:false}`）。
+
+### 实测基线（BLOCKER-1 如实记 —— 不伪装"四源全绿"）
+
+- **四源真探针（产品同路径，`healthTimeoutMs=5000`）直连下 3/4 可用**：
+  - ✅ **bing** ~656ms / 10 条；✅ **so360** ~885ms / 6 条；✅ **ddg** 直连 3 次全通（5964 / 681 / 701ms）
+  - ❗ **baidu** 站点风控（验证码页，体积上限修复已生效）→ 健康测试**如实显示"疑似反爬"** —— 这是 INV-5 命中即停的**正确行为、非缺陷**；按用户 2026-10-10 裁定不加对抗手段。
+- 代理复测事实翻转：配置代理 `192.168.0.41:7890` 后 ddg 仍 5003ms 超时（15s 窗亦超时，`proxyStatus` 降级/标记回传正确），**直连反而通** —— 推翻 t42「ddg 必须走代理」旧结论（真因见 backlog B10）。
+- 质量面：全量 `node --test` **353/353/0**（> 0.2.0 基线 328）+ load 冒烟 7/7 + boot 冒烟四关全过 + K-18/K-15/K-16 等机械锁续命。
+
+### backlog（本波不做，记录不丢 —— 详见 `backlog.md`）
+
+- **B10 ddg 首次冷启动慢**（t58 发现）：直连首测 ~6s > 5s 探针窗、后两次 <1s；修法 = `healthTimeoutMs` 5s→10s 一行（含键面锁翻修）。
+- **B9 CONNECT 隧道对特定 host 挂在 HTTP 响应层**：CONNECT 7ms + TLS 216ms（authorized）成功、`https.request` 发请求那步挂（ddg 走代理 15s 超时、Google 4 次超时）；同一条隧道手写 HTTP/1.1 正常 582ms，同隧道对照组 bing/example 全通；**根因未定位**，疑与 ddg 代理超时同源。
+- **B8 Google 搜索源 Spike = 结论 C 不可做**：直连 5 变体全超时/429；代理 302 `/sorry/index` → 429 reCAPTCHA（IP 级风控）、零可解析 SERP（11 次响应全 `hasH3:false`）；**推翻前提** = 换干净出口 IP 后重测（非代码问题）。证据：`tasks/task-M-google-spike-report.md`。
+
+### 版本引用证据（质量面出处）
+
+- 逐卡验证与总验证：`dsh-clsh-search/changes/20261009-phase0/tester-report.md`（T-I 9 项中 7 项 PASS + 2 BLOCKER 处置记录）与 `dispatch-record.md` §十二~十五（BLOCKER-1/2 闭合、代理复测事实翻转、Google Spike）。
+- **版本三处一致**：`package.json` `version = 0.2.1` = 本节 `## 0.2.1` = 根 `README.md` 版本表 `dsh-clsh-search 0.2.1`；体检 `bash scripts/check-release.sh dsh-clsh-search`（**发布树落位**，t39 教训）→ `[VERDICT] PASS`（输出原文见 `changes/20261009-phase0/tasks/task-10-report.md`）。
+- **发版第⑤步（commit + tag `dsh-clsh-search-v0.2.1` + push + `gh release create` + 生产安装/重启）= NEEDS_HUMAN**，须用户逐次确认后由队长执行（P-8），本卡零执行。
+
 ## 0.2.0 — 2026-10-09
 
 第二变更波（clsh Phase 0-8 全流程，计划 Task 1-30；基线 0.1.0 = tag `dsh-clsh-search-v0.1.0`）：用户 8 项诉求 + 追加代理 + 6 项技术债全落点（US-8~US-17），零新增依赖（仍仅 zod，K-8）。

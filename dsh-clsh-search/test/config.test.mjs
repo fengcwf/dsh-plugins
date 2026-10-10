@@ -5,6 +5,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import os from 'node:os'
 import path from 'node:path'
+import { readFile } from 'node:fs/promises'
 
 const { Config } = await import('../lib/index.js')
 
@@ -13,7 +14,7 @@ const HOME = os.homedir()
 /** R5 确认表逐字面（12000 / 3 / 30000 / 8 / 600000 / 15 / auto / 四源 true / priority=ddg,bing,so360,baidu / 三落点）
  * + 0.2.x 扩键面（INV-19 / K-20，R24/R32/R21/R23/R17 确认值）：
  * sources.custom 空 / sources.useProxy 境外走国内直连 / proxies 空 /
- * retryBackoffMs 300 / maxResponseBytes 1048576 / logCapacity 200 / healthTimeoutMs 5000。 */
+ * retryBackoffMs 300 / maxResponseBytes 2097152（K-26：2MiB，baidu 真实 0.91-1.04MiB 不再被误拦） / logCapacity 200 / healthTimeoutMs 5000。 */
 const R5 = {
   sources: {
     ddg: true,
@@ -30,7 +31,7 @@ const R5 = {
   retryBackoffMs: 300,
   chainBudgetMs: 30000,
   maxResults: 8,
-  maxResponseBytes: 1048576,
+  maxResponseBytes: 2097152,
   cacheTtlMs: 600000,
   egoBudget: 15,
   logCapacity: 200,
@@ -150,7 +151,7 @@ test('0.2.x 新键默认值与 R24/R32/R21/R23 确认值逐项一致（INV-19 �
   assert.deepEqual(cfg.sources.useProxy, { ddg: true, bing: true, so360: false, baidu: false }, '境外源默认走代理、国内源默认直连（R21）')
   assert.deepEqual(cfg.proxies, [], 'proxies 默认空数组（默认全直连）')
   assert.equal(cfg.retryBackoffMs, 300, '重试退避基数 300ms（R32）')
-  assert.equal(cfg.maxResponseBytes, 1048576, '响应体上限 1MiB（R32）')
+  assert.equal(cfg.maxResponseBytes, 2097152, '响应体上限 2MiB（K-26：baidu 真实 0.91-1.04MiB 不被误拦）')
   assert.equal(cfg.logCapacity, 200, '日志环容量 200（INV-11）')
   assert.equal(cfg.healthTimeoutMs, 5000, '健康测试超时 5s（R23，短于主链）')
   assert.ok(cfg.healthTimeoutMs < cfg.timeoutMs, '健康测试超时必须短于主链 timeoutMs（R23 语义）')
@@ -224,4 +225,19 @@ test('sources.useProxy 单源可覆盖：勾选独立生效（R21/US-13）', () 
   assert.equal(cfg.sources.useProxy.bing, true, '未触达回落默认')
   assert.equal(cfg.sources.useProxy.baidu, false, '未触达回落默认')
   assert.throws(() => Config.parse({ sources: { useProxy: { ddg: 'yes' } } }), '勾选必须是 boolean')
+})
+
+test('K-26：maxResponseBytes 默认 2MiB + cap 先于 classifyBlock（禁调序机械锁）', async () => {
+  const cfg = Config.parse({})
+  assert.equal(cfg.maxResponseBytes, 2097152, '默认 2MiB（INV-26；baidu 真实 0.91-1.04MiB 分布不被误拦）')
+  // 顺序机械锁：fetchHtml 体内 readBodyCapped（cap）调用必须先于 classifyBlock 调用出现——
+  // 反爬大页先按体积判（cap 先判），调换顺序即红（K-26 禁调序；行为面佐证 = sources-common.test 超限用例
+  // 断言 blocked≠true 且非 HTML 体先得 RESPONSE_TOO_LARGE）。
+  const src = await readFile(new URL('../lib/sources/common.js', import.meta.url), 'utf8')
+  const fn = src.slice(src.indexOf('export async function fetchHtml'))
+  const capAt = fn.indexOf('await readBodyCapped(')
+  const classifyAt = fn.indexOf('classifyBlock({')
+  assert.ok(capAt > 0, 'fetchHtml 内 cap 调用在场')
+  assert.ok(classifyAt > 0, 'fetchHtml 内 classifyBlock 调用在场')
+  assert.ok(capAt < classifyAt, 'cap 先判（K-26：禁止调换 cap 与 classifyBlock 执行顺序）')
 })

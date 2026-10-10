@@ -12,6 +12,9 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 
+// 测试面显式直连（R21 默认 ddg/bing 勾选走代理；本组用例不测代理 → 显式关闭，避免空池明示错误 K-23）
+const DIRECT = { sources: { useProxy: { ddg: false, bing: false, so360: false, baidu: false } } }
+
 import { assertContentBlocks, assertSearchProvider, createFakeCtx } from './helpers/fake-ctx.mjs'
 import { Config, apply, createSearchRuntime, renderToolBlocks } from '../lib/index.js'
 import { createSource as createDdgSource } from '../lib/sources/ddg.js'
@@ -130,7 +133,7 @@ test('US-4：全源失败 → 明示错误块含逐源原因、发生时间与�
 test('K-5/INV-5：集成链反爬命中即停——不重试不切源，明示块上行', async () => {
   const challenge = await readFile(path.join(FIXTURES, 'challenge-sample.html'), 'utf8')
   const fixture = createFakeCtx({ searchProviderId: '' })
-  const ddg = createDdgSource(Config.parse({}))
+  const ddg = createDdgSource(Config.parse({ ...DIRECT }))
   const bing = fakeSource('bing', async () => ({ sources: [{ url: 'https://bing.example/1', title: 't' }] }))
   apply(fixture.ctx, {}, { sources: [ddg, bing] })
   assertSearchProvider(fixture, 'dsh-clsh-search')
@@ -221,7 +224,7 @@ test('T13 装配面：自定义源进 sourceList + priority 动态词表——�
       },
     })
     // 动态词表边界：未知 id 仍拒（superRefine），自定义 id 放行
-    assert.throws(() => Config.parse({ sources: { custom: [], priority: ['ghost'] } }), '未知 id 拒')
+    assert.throws(() => Config.parse({ ...DIRECT, sources: { ...DIRECT.sources, custom: [], priority: ['ghost'] } }), '未知 id 拒')
     const runtime = createSearchRuntime(config, {})
     assert.deepEqual([...runtime.sourcesById().keys()], ['ddg', 'bing', 'so360', 'baidu', 'my-src'], '内置四源 + 自定义源同表（R25 混排）')
     // 端到端：真装配（无注入）→ 混排首源（my-src）真出网命中

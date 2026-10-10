@@ -1,6 +1,6 @@
 {
   "name": "dsh-clsh-search",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "DeepSeek Harness 的免 key 多源聚合搜索插件：DDG/Bing/360/百度四源聚合接管 web_search（patch 指针 + registerSearchProvider），并注入工具调用顺序策略（vault+记忆 → web_search → web_fetch → ego-browser 仅兜底）",
   "type": "module",
   "main": "lib/index.js",

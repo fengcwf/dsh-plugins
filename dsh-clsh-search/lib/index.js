@@ -156,8 +156,8 @@ const Config = z.object({
   chainBudgetMs: z.number().int().positive().default(30000),
   /** 单次搜索返回条数，越界截断到 1-10（clamp，非静默放行）。 */
   maxResults: z.number().int().transform((v) => Math.min(10, Math.max(1, v))).default(8),
-  /** 响应体上限（字节；W3-3 技术债，超限=普通失败不入 blocked，决策回填第 2 项 = 1MiB）。 */
-  maxResponseBytes: z.number().int().positive().default(1048576),
+  /** 响应体上限（字节；超限=普通失败不入 blocked，K-26：默认 2MiB 且 cap 仍先于 classifyBlock 判定——上限放宽使反爬大页可达分类面，顺序禁调）。 */
+  maxResponseBytes: z.number().int().positive().default(2097152),
   /** 查询缓存 TTL（毫秒，10 分钟）。 */
   cacheTtlMs: z.number().int().min(0).default(600000),
   /** ego-browser 兜底单任务上限（次，熔断守卫 INV-6）。 */

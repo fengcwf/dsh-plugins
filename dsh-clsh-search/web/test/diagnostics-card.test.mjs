@@ -22,21 +22,24 @@ test('机械面：DiagnosticsCard ≤300 行、零 v-if、零自造色（K-11/K-
   assert.equal(rgbPattern.test(CARD), false, '组件出现硬编码 rgb/hsl')
 })
 
-test('卡序（INV-21）：五卡序 = 源管理→性能预算→接管与隐私→代理配置→诊断；源健康行在诊断之后', () => {
+test('卡序（INV-21）：五卡序 = 源管理→性能预算→接管与隐私→代理配置→诊断；源健康行已收编零残留', () => {
   const iSave = APP.indexOf('保存更改')
   const iSource = APP.indexOf('<SourceCard')
   const iBudget = APP.indexOf('<BudgetCard')
   const iTakeover = APP.indexOf('<TakeoverCard')
   const iProxy = APP.indexOf('<ProxyCard')
   const iDiag = APP.indexOf('<DiagnosticsCard')
-  const iHealth = APP.indexOf('<SourceHealthRow')
   assert.ok(iSave > -1 && iSource > iSave, 'SourceCard 不得前置保存按钮')
   assert.ok(iBudget > iSource, '性能预算须在源管理之后')
   assert.ok(iTakeover > iBudget, '接管与隐私须在性能预算之后')
   assert.ok(iProxy > iTakeover, '代理配置须在接管与隐私之后（Task 23 五卡序）')
   assert.ok(iDiag > iProxy, '诊断卡须在代理配置之后（INV-21 五卡序）')
   assert.ok(iDiag > iSave, '诊断卡不得前置保存按钮（INV-21）')
-  assert.ok(iHealth > iDiag, '源健康行须在诊断卡之后（队长 2026-10-09 挂载裁定）')
+  assert.equal(APP.includes('SourceHealthRow'), false, '源健康行已并入源管理大卡（T-E/R14），App 不得再挂载')
+  // T-G 六段卡序收尾：诊断之后 = 触发日志弹层 + 页脚（TECH.md §2-⑤）
+  const iFooter = APP.lastIndexOf('<p class="cs-page-foot">')
+  assert.ok(iFooter > iDiag, '页脚须在诊断卡之后（六段卡序收尾）')
+  assert.ok(APP.indexOf('<LogModal') > iDiag, '触发日志弹层挂载在诊断卡之后')
 })
 
 test('日志弹层接线（Task 21）：LogModal 挂载且走 logOpen 开合缝', () => {

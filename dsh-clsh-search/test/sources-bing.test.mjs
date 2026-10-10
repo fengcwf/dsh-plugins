@@ -6,6 +6,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
+// 测试面显式直连（R21 默认 ddg/bing 勾选走代理；本组用例不测代理 → 显式关闭，避免空池明示错误 K-23）
+const DIRECT = { sources: { useProxy: { ddg: false, bing: false, so360: false, baidu: false } } }
+
 import { Config } from '../lib/index.js'
 import { CHROME_UA } from '../lib/sources/common.js'
 import { createSource, parseSerp } from '../lib/sources/bing.js'
@@ -50,17 +53,17 @@ test('无结果样本：空数组不抛异常', () => {
 })
 
 test('统一源接口：{name, enabled, search} 与 Config 开关联动', () => {
-  const source = createSource(Config.parse({}))
+  const source = createSource(Config.parse({ ...DIRECT }))
   assert.equal(source.name, 'bing')
   assert.equal(source.enabled, true, '默认四源全开（R1）')
   assert.equal(typeof source.search, 'function')
-  assert.equal(createSource(Config.parse({ sources: { bing: false } })).enabled, false, '开关从 Config.sources 读')
+  assert.equal(createSource(Config.parse({ ...DIRECT, sources: { ...DIRECT.sources, bing: false } })).enabled, false, '开关从 Config.sources 读')
   assert.throws(() => createSource({}), TypeError, '裸对象必须拒（未经 Config.parse，K-9）')
 })
 
 test('search：payload 只含查询词 q + Chrome UA，返回 {sources}（K-4 行为断言）', async (t) => {
   const calls = stubFetch(t, () => new Response(SAMPLE, { status: 200 }))
-  const source = createSource(Config.parse({ timeoutMs: 5000, retries: 1 }))
+  const source = createSource(Config.parse({ ...DIRECT, timeoutMs: 5000, retries: 1 }))
   const out = await source.search('bing 测试')
 
   assert.deepEqual(Object.keys(out), ['sources'])
@@ -77,7 +80,7 @@ test('search：payload 只含查询词 q + Chrome UA，返回 {sources}（K-4 �
 
 test('空查询与缺配置：TypeError 即刻拒绝（不触网）', async (t) => {
   const calls = stubFetch(t, () => new Response(SAMPLE, { status: 200 }))
-  const source = createSource(Config.parse({}))
+  const source = createSource(Config.parse({ ...DIRECT }))
   await assert.rejects(() => source.search('   '), TypeError)
   await assert.rejects(() => source.search(undefined), TypeError)
   assert.equal(calls.length, 0, '非法查询词不发起任何出网请求')

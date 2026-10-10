@@ -6,7 +6,7 @@
 //   INV-16 选择器只经 lib/selector.js 受限子集（零脚本能力），超集选择器 factory 期即拒（fail-closed）；
 //   K-4 出网只含查询词：URL 模板唯一变量位 = {query}（R34），展开经 encodeURIComponent；
 //   R25 混排：自定义源与内置源同形参与优先级链（顺序由 sources.priority 动态全排列承载）。
-import { assertConfig, cleanText, fetchHtml, makeResult } from './common.js'
+import { assertConfig, cleanText, fetchHtml, makeResult, pickProxyAddress } from './common.js'
 import { SUPPORTED_SELECTOR_SYNTAX, queryAll, validateSelector } from '../selector.js'
 
 /** 查询词占位符（R34 拍板）：URL 模板唯一变量位。 */
@@ -76,17 +76,22 @@ export function parseCustomSerp(html, item, { baseUrl = 'https://invalid.example
   return results
 }
 
-/** 代理解析（US-13）：勾选走代理但池为空 = 明示错误不静默回落直连（TECH.md §2-④）。 */
+/** 代理解析（US-13，T-A2 修订）：勾选开 + 池非空 → 池首项；池空 → undefined（自动直连，
+ *  降级态经 proxyStatusForItem 可探测——明示降级非静默）。池语义单源 = common.pickProxyAddress。 */
 export function resolveProxyForItem(item, config) {
   if (item.useProxy !== true) return undefined
-  const pool = Array.isArray(config.proxies) ? config.proxies : []
-  if (pool.length === 0) {
-    throw Object.assign(new Error('custom: 该源勾选走代理但 proxies 池为空——明示错误，不静默回落直连'), {
-      code: 'PROXY_UNAVAILABLE',
-    })
-  }
-  // 「走哪套」的逐源下拉面留 T23 UI 卡；当前口径 = 主力代理（池首项）
-  return { address: pool[0].address }
+  // 「走哪套」的逐源下拉面留 B2（backlog）；当前口径 = 主力代理（池首项）
+  const address = pickProxyAddress(config)
+  return address ? { address } : undefined
+}
+
+/** 自定义源代理降级态（T-A2，可被 UI 与 diagnostics probe 探测）：勾选开 + 池空 = 直连 + degraded。 */
+export function proxyStatusForItem(item, config) {
+  const wantProxy = item?.useProxy === true
+  if (!wantProxy) return { wantProxy: false, active: false, degraded: false }
+  return pickProxyAddress(config)
+    ? { wantProxy: true, active: true, degraded: false }
+    : { wantProxy: true, active: false, degraded: true, reason: 'proxy-pool-empty' }
 }
 
 /**
@@ -123,6 +128,9 @@ export function createCustomSource(item, config) {
         maxResponseBytes: config.maxResponseBytes,
         signal,
         ...(proxy ? { proxy } : {}),
+        tunnelSeams: config.tunnelSeams,
+        // 202 条件化（INV-24）：注入本源解析器（闭包捕获 shape/baseUrl），fetchHtml 零反向依赖（P-17）
+        probeParse: (page) => parseCustomSerp(page, shape, { baseUrl: url }),
       })
       return { sources: parseCustomSerp(html, shape, { baseUrl: url }) }
     },

@@ -6,7 +6,6 @@ import SourceCard from './components/SourceCard.vue'
 import BudgetCard from './components/BudgetCard.vue'
 import TakeoverCard from './components/TakeoverCard.vue'
 import DiagnosticsCard from './components/DiagnosticsCard.vue'
-import SourceHealthRow from './components/SourceHealthRow.vue'
 import LogModal from './components/LogModal.vue'
 import CustomSourceCard from './components/CustomSourceCard.vue'
 import ProxyCard from './components/ProxyCard.vue'
@@ -32,6 +31,21 @@ function onOpenLog() {
 const chipText = computed(() => (saved.value ? '已保存' : '未保存更改'))
 /** 自定义源数（0.2.x sources.custom；接 SourceCard 计数面，R25 混排词汇见 allSourceIds）。 */
 const customCount = computed(() => (Array.isArray(settings.custom) ? settings.custom.length : 0))
+/**
+ * 空池降级清单（T-G / K-23：明示降级，禁止无标志静默回落；T-A2 产品裁定口径）：
+ * 勾选走代理但代理池为空 → 列出该源，源管理卡下方出「已勾选但未配代理地址，当前直连」提示。
+ * 口径 = lib/sources/common.js 的 proxyStatus / proxyStatusForItem 镜像——common.js 顶层含原生
+ * socket 层静态导入（K-18 白名单文件专属面）不可进浏览器包，故在 App 侧镜像；口径断言由 web/test/source-card.test 钉住。
+ */
+const degradedSources = computed(() => {
+  const pool = Array.isArray(settings.proxies) ? settings.proxies : []
+  if (pool.length > 0) return []
+  const ids = ['ddg', 'bing', 'so360', 'baidu'].filter((id) => settings.useProxy?.[id] === true)
+  for (const item of settings.custom ?? []) {
+    if (item?.useProxy === true) ids.push(item.label ?? item.id)
+  }
+  return ids
+})
 
 function applyPatch(patch) {
   const { fieldError, ...rest } = patch
@@ -108,22 +122,26 @@ onMounted(loadSettings)
     <p class="cs-page-foot cs-error">{{ errorText }}</p>
 
     <SourceCard
+      :api="props.api"
       :sources="settings.sources"
       :priority="settings.priority"
-      :custom-count="customCount"
+      :custom="settings.custom"
+      :use-proxy="settings.useProxy"
       :error="errors.sources || errors.priority || ''"
       @change="applyPatch"
     />
+    <!-- T-G/K-23 空池降级明示：紧贴源管理卡，勾选开而池空时可见（v-show 零条件渲染重交互）。 -->
+    <p v-show="degradedSources.length > 0" class="cs-hint cs-error">
+      已勾选但未配代理地址，当前直连：{{ degradedSources.join('、') }}（在「代理配置」卡添加地址即恢复走代理）
+    </p>
     <!-- 自定义源编辑器（Task 22）：置源管理卡之后（V4 行内展开形制），混排序号取统一 priority（R25）。 -->
     <CustomSourceCard :custom="settings.custom" :priority="settings.priority" @change="applyPatch" />
     <BudgetCard :values="settings" :errors="errors" @change="applyPatch" />
     <TakeoverCard :take-over="settings.takeOver" @change="applyPatch" />
     <!-- 代理配置卡（Task 23）：五卡序 = 源管理→性能预算→接管与隐私→代理配置→诊断（INV-21）。 -->
-    <ProxyCard :proxies="settings.proxies" :use-proxy="settings.useProxy" :custom="settings.custom" @change="applyPatch" />
+    <ProxyCard :proxies="settings.proxies" @change="applyPatch" />
     <!-- 诊断卡（Task 19）：INV-21 置三卡与代理配置之后、不前置保存按钮。 -->
     <DiagnosticsCard :api="props.api" @open-log="onOpenLog" />
-    <!-- 源健康行（Task 20，队长补认挂载）：置诊断卡之后，保持诊断在源健康之前。 -->
-    <SourceHealthRow :api="props.api" />
     <!-- 触发日志弹层（Task 21）：DiagnosticsCard「查看触发日志」→ logOpen 开合；v-show 零条件渲染。 -->
     <LogModal :api="props.api" :open="logOpen" @close="logOpen = false" />
 

@@ -7,7 +7,8 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import path from 'node:path'
 
-import { assertPublicHttps } from './sources/common.js'
+import { assertPublicHttps, proxyStatus } from './sources/common.js'
+import { proxyStatusForItem } from './sources/custom.js'
 
 /** 真联网测试总上限（R30 拍板：10s；独立小上限，非 Config 管控键）。 */
 export const ONLINE_TOTAL_BUDGET_MS = 10000
@@ -94,17 +95,26 @@ export function createDiagnostics(deps) {
     }
   }
 
-  /** 单源探针（INV-14 仅按钮）：绕过缓存与 guard，单源超时 = Config.healthTimeoutMs。 */
+  /** 单源探针（INV-14 仅按钮）：绕过缓存与 guard，单源超时 = Config.healthTimeoutMs。
+   *  T-A2：结果带 proxyDegraded 降级标志（勾选走代理但池空 = 自动直连，与真实取数一致，
+   *  供 UI 提示「已勾选但未配代理地址，当前直连」）。 */
   async function probe(sourceId) {
     const started = Date.now()
     const source = sourcesById().get(String(sourceId))
-    if (!source) return { source: String(sourceId), ok: false, elapsedMs: 0, resultCount: 0, detail: '未知源' }
+    // T-A2 降级态：内置源走 proxyStatus(config, id)；自定义源按描述项 useProxy 逐项判（proxyStatusForItem）
+    const customItem = Array.isArray(config?.sources?.custom)
+      ? config.sources.custom.find((item) => item?.id === String(sourceId))
+      : undefined
+    const proxy = customItem
+      ? proxyStatusForItem(customItem, config)
+      : proxyStatus(config, source?.name ?? String(sourceId))
+    if (!source) return { source: String(sourceId), ok: false, elapsedMs: 0, resultCount: 0, detail: '未知源', proxyDegraded: proxy.degraded }
     try {
       const result = await source.search(PROBE_QUERY, AbortSignal.timeout(config.healthTimeoutMs))
       const count = Array.isArray(result?.sources) ? result.sources.length : 0
-      return { source: source.name, ok: true, elapsedMs: Date.now() - started, resultCount: count, detail: `命中 ${count} 条` }
+      return { source: source.name, ok: true, elapsedMs: Date.now() - started, resultCount: count, detail: `命中 ${count} 条`, proxyDegraded: proxy.degraded }
     } catch (error) {
-      return { source: source.name ?? String(sourceId), ok: false, elapsedMs: Date.now() - started, resultCount: 0, detail: String(error?.code ?? error?.message ?? 'probe failed') }
+      return { source: source.name ?? String(sourceId), ok: false, elapsedMs: Date.now() - started, resultCount: 0, detail: String(error?.code ?? error?.message ?? 'probe failed'), proxyDegraded: proxy.degraded }
     }
   }
 

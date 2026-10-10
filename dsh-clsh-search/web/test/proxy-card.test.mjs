@@ -7,7 +7,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { Config } from '../../lib/index.js'
-import { resolveProxyForItem } from '../../lib/sources/custom.js'
+import { proxyStatusForItem, resolveProxyForItem } from '../../lib/sources/custom.js'
 
 const WEB_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const SRC_DIR = path.join(WEB_DIR, 'src')
@@ -31,13 +31,16 @@ test('K-19 文字面：「不支持代理认证」明示 + user:pass@ 拒收在�
   assert.match(CARD, /includes\('@'\)/, '凭据形态判定缺位')
 })
 
-test('形制：代理池增删改 + 每源独立开关 + 空池明示错误 + proxyId backlog 注记', () => {
+test('形制（T-F 瘦身后）：代理池增删改 + 每源勾选零残留 + 空池明示原文 + proxyId backlog 注记', () => {
   assert.match(CARD, /@click="onSubmit"/, '池提交（增/改）缺位')
   assert.match(CARD, /@click="onEdit\(item\)"/, '池编辑缺位')
   assert.match(CARD, /@click="onDelete\(item\.id\)"/, '池删除缺位')
-  assert.match(CARD, /@click="onToggleSource\('ddg'\)/, '内置源开关缺位（ddg）')
-  assert.match(CARD, /@click="onToggleCustom\(item\.id\)/, '自定义源开关缺位')
-  assert.match(CARD, /不静默回落直连/, '空池明示错误文案缺位（诚实面）')
+  // T-F：每源代理勾选已移至源管理卡（SourceCard/SourceRow）——本卡零残留
+  assert.doesNotMatch(CARD, /onToggleSource|onToggleCustom/, '每源开关函数已移出本卡')
+  assert.equal(/use-proxy|useProxy/.test(CARD), false, '每源代理勾选字面零残留')
+  assert.doesNotMatch(CARD, /role="switch"/, '开关控件零残留')
+  assert.match(CARD, /每源是否走代理已移至源管理卡/, '卡片说明缺「已移至源管理卡」指引（用户不迷路）')
+  assert.match(CARD, /不静默回落直连/, '空池明示错误文案缺位（0.2.0 poolError 原文·诚实面）')
   assert.match(CARD, /proxyId/, 'proxyId backlog 注记缺位')
   assert.match(CARD, /INV-19/, 'INV-19 不自扩键注记缺位')
 })
@@ -58,12 +61,14 @@ test('INV-18/R20 行为面：proxyItem 双 refine——凭据形态与畸形地�
   assert.throws(() => Config.parse({ proxies: [base, { ...base }] }), 'id 重复应拒')
 })
 
-test('诚实面：resolveProxyForItem 空池明示错误（PROXY_UNAVAILABLE）+ 池首项主力口径', () => {
+test('诚实面：resolveProxyForItem 空池自动直连 + 降级标志（T-A2 产品裁定）+ 池首项主力口径', () => {
   assert.equal(resolveProxyForItem({ useProxy: false }, { proxies: [] }), undefined, '未勾选应回直连')
-  assert.throws(
-    () => resolveProxyForItem({ useProxy: true }, { proxies: [] }),
-    (error) => error?.code === 'PROXY_UNAVAILABLE',
-    '空池勾选应明示错误不静默回落',
+  // T-A2（产品裁定 2026-10-10）：空池勾选 = 自动直连 + 可探测降级标志（替代旧 PROXY_UNAVAILABLE 抛错）
+  assert.equal(resolveProxyForItem({ useProxy: true }, { proxies: [] }), undefined, '空池勾选自动直连（不抛，开箱即用不破）')
+  assert.deepEqual(
+    proxyStatusForItem({ useProxy: true }, { proxies: [] }),
+    { wantProxy: true, active: false, degraded: true, reason: 'proxy-pool-empty' },
+    '降级标志可探测（UI 提示「已勾选但未配代理地址，当前直连」）',
   )
   const pool = [
     { id: 'p1', label: '主力', address: '192.168.0.41:7890' },
@@ -72,9 +77,9 @@ test('诚实面：resolveProxyForItem 空池明示错误（PROXY_UNAVAILABLE）+
   assert.deepEqual(resolveProxyForItem({ useProxy: true }, { proxies: pool }), { address: '192.168.0.41:7890' }, '当前口径=池首项主力')
 })
 
-test('保存链 + 挂载（P-6）：emit 整替形制 + App 五卡序（代理配置在接管与隐私之后、诊断之前）', () => {
+test('保存链 + 挂载（P-6）：emit 整替形制（勾选写回已移出）+ App 五卡序（代理配置在接管与隐私之后、诊断之前）', () => {
   assert.match(CARD, /emit\('change', \{ proxies:/, '池写回应 emit proxies 整替')
-  assert.match(CARD, /emit\('change', \{ useProxy:/, '勾选写回应 emit useProxy 整替')
+  assert.doesNotMatch(CARD, /emit\('change', \{ useProxy:/, '勾选写回已移出本卡（T-F 瘦身）')
   assert.match(APP, /<ProxyCard/, 'App.vue 挂载缺位（不挂载=半成品，队长 P-6 裁定）')
   const iTakeover = APP.indexOf('<TakeoverCard')
   const iProxy = APP.indexOf('<ProxyCard')

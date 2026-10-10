@@ -80,3 +80,20 @@ test('空查询：TypeError 即刻拒绝（不触网）', async (t) => {
   await assert.rejects(() => source.search(''), TypeError)
   assert.equal(calls.length, 0, '非法查询词不发起任何出网请求')
 })
+
+test('K-25 机械判据（T-C3）：ENDPOINT 字面 = https://www.so.com/s（读源断言）+ 出网拼接形（行为断言）', async (t) => {
+  // A：读源锁端点常量——端点被改即红；不依赖 fixture 页自然含串（fixture 换页即失效，不构成断言）。
+  const src = await readFile(new URL('../lib/sources/so360.js', import.meta.url), 'utf8')
+  assert.match(src, /const ENDPOINT = 'https:\/\/www\.so\.com\/s'/, 'ENDPOINT 字面须 = https://www.so.com/s（K-25/INV-25）')
+  assert.doesNotMatch(src, /const ENDPOINT = 'https:\/\/www\.so\.com\/search'/, '旧端点 /search 在常量位零残留')
+  // B：行为锁拼接形——出网 URL 必以 https://www.so.com/s?q= 起始（?q= 参数形，K-25）。
+  const calls = stubFetch(t, () => new Response(SAMPLE, { status: 200 }))
+  const source = createSource(Config.parse({ timeoutMs: 5000, retries: 1 }))
+  await source.search('test')
+  assert.equal(calls.length, 1, 'search 恰一次出网')
+  assert.ok(
+    calls[0].url.startsWith('https://www.so.com/s?q='),
+    `出网 URL 须以 https://www.so.com/s?q= 起始（实得 ${calls[0].url}）`,
+  )
+  assert.equal(new URL(calls[0].url).searchParams.get('q'), 'test', 'q 参数 = 查询词')
+})

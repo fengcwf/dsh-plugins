@@ -3,7 +3,7 @@
 // `h3 > a` 取题链 → `div.c-abstract` / `span.content-right*` 取摘要；
 // 结果 URL 优先取容器 `mu="…"` 真实地址——百度题链是 `/link?url=` 站内跳转，mu 才是落地页）。
 // 统一源接口（TECH.md §1）：createSource(config) → {name, enabled, search(query, signal)} → {sources}。
-import { assertConfig, cleanText, fetchHtml, firstAnchor, firstTagInner, firstTagOfAnyClass, makeResult, normalizeHref } from './common.js'
+import { assertConfig, cleanText, fetchHtml, firstAnchor, firstTagInner, firstTagOfAnyClass, makeResult, normalizeHref, resolveProxyFor } from './common.js'
 
 /** 源 id：与 Config.sources.baidu 键同源。 */
 export const name = 'baidu'
@@ -58,7 +58,7 @@ export function createSource(config) {
     async search(query, signal) {
       const q = typeof query === 'string' ? query.trim() : ''
       if (q.length === 0) throw new TypeError('baidu.search: query 必须是非空字符串')
-      const html = await fetchHtml(buildUrl(q), { timeoutMs: config.timeoutMs, retries: config.retries, retryBackoffMs: config.retryBackoffMs, maxResponseBytes: config.maxResponseBytes, signal })
+      const html = await fetchHtml(buildUrl(q), { timeoutMs: config.timeoutMs, retries: config.retries, retryBackoffMs: config.retryBackoffMs, maxResponseBytes: config.maxResponseBytes, signal, proxy: resolveProxyFor(config, name), tunnelSeams: config.tunnelSeams, probeParse: parseSerp })
       return { sources: parseSerp(html) }
     },
   }

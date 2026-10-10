@@ -8,6 +8,7 @@ import {
   buildSearchUrl,
   createCustomSource,
   parseCustomSerp,
+  proxyStatusForItem,
   resolveProxyForItem,
 } from '../lib/sources/custom.js'
 import { createSource as createDdgSource } from '../lib/sources/ddg.js'
@@ -137,13 +138,15 @@ test('INV-15 门禁必经：内网/明文模板目标被拒且零出网（fetchH
   }
 })
 
-test('代理解析（US-13）：useProxy 缺省直连；勾选无池明示错误不静默回落；有池取主力', () => {
+test('代理解析（US-13，T-A2 修订）：useProxy 缺省直连；勾选无池自动直连 + 降级标志；有池取主力', () => {
   assert.equal(resolveProxyForItem(ITEM, Config.parse({})), undefined, '默认直连')
   assert.equal(resolveProxyForItem({ ...ITEM, useProxy: undefined }, Config.parse({})), undefined)
-  assert.throws(
-    () => resolveProxyForItem({ ...ITEM, useProxy: true }, Config.parse({})),
-    (error) => error.code === 'PROXY_UNAVAILABLE' && /不静默回落直连/.test(error.message),
-    '勾选走代理但池为空 = 明示错误（TECH.md §2-④）',
+  // T-A2（产品裁定 2026-10-10）：空池勾选 = 自动直连 + 可探测降级标志（不再抛错，开箱即用不破）
+  assert.equal(resolveProxyForItem({ ...ITEM, useProxy: true }, Config.parse({})), undefined, '勾选无池 = 自动直连（不抛）')
+  assert.deepEqual(
+    proxyStatusForItem({ ...ITEM, useProxy: true }, Config.parse({})),
+    { wantProxy: true, active: false, degraded: true, reason: 'proxy-pool-empty' },
+    '降级标志可探测（明示非静默）',
   )
   const config = Config.parse({ proxies: [{ id: 'main', label: '主力', address: '192.168.0.41:7890' }, { id: 'bak', label: '备用', address: '192.168.0.41:7891' }] })
   assert.deepEqual(resolveProxyForItem({ ...ITEM, useProxy: true }, config), { address: '192.168.0.41:7890' }, '主力代理=池首项（逐源下拉留 T23）')

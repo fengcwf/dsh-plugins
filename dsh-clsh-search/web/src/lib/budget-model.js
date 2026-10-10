@@ -39,7 +39,7 @@ export function clampMaxResults(value) {
 /** 七组新键默认值（= Config schema 默认；custom/useProxy 平铺，写回时归位 sources 子键）。 */
 export const EXTRA_KEY_DEFAULTS = {
   retryBackoffMs: 300,
-  maxResponseBytes: 1048576,
+  maxResponseBytes: 2097152,
   logCapacity: 200,
   healthTimeoutMs: 5000,
   proxies: [],

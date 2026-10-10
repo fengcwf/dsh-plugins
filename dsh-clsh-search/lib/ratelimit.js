@@ -5,7 +5,10 @@
 // 判 HTML）；body 类判定（挑战页/验证码页/异常 HTML）为独立 API，供持有原始 body 的调用方
 // （抓取层 / Task 11 熔断 / 测试）复用。
 //
-// INV-5 类目封顶 = 202 状态 / 挑战页 / 验证码页 / 异常 HTML 四类「命中即停」信号；
+// INV-5 类目封顶（K-5 受控修订，INV-24）= 挑战页 / 验证码页 / 异常 HTML 三类无条件「命中即停」
+// + 202 状态一类条件化（调用方注入 probeParse 解析出 ≥3 条可用结果即豁免 202 类目；豁免短路在
+// fetchHtml 调 classifyBlock **之前**，P-17/P-18 禁先判 blocked 再翻案）；本文件特征表本体
+// 零改动，202 判据代码原样——未豁免的 202 照旧即停（fail-closed，K-24）。
 // 403/429 等其余 4xx 属普通失败（US-2 切换下一家，W3 已零重试立即抛），不进即停类目——
 // 切换到别家源不构成对拦截方的「硬刚」，硬刚风险由零重试 + 整链预算（K-6）承载。
 
@@ -66,7 +69,9 @@ export function classifyBlock(input = {}) {
   if (body !== undefined && typeof body !== 'string') {
     throw new TypeError(`classifyBlock: body 必须是字符串，got ${typeName(body)}`)
   }
-  // ① 202 状态：接受但未产出（反爬等待/挑战的经典信号）
+  // ① 202 状态：接受但未产出（反爬等待/挑战的经典信号）——条件化类目（K-5 修订/INV-24）：
+  //    豁免达标后调用方置 status=undefined 不送进来（豁免只免「状态类」）；本判据仅对未豁免
+  //    的 202 生效，②③④ body 类目照判（三类无条件，挑战页/验证码页/异常页不受豁免影响）。
   if (status === 202) {
     return { blocked: true, kind: 'status-202', reason: 'HTTP 202 接受但未产出结果（疑似反爬等待/挑战）' }
   }

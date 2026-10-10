@@ -88,9 +88,9 @@ test('0.2.x 七组新键三面镜像：EXTRA_KEY_DEFAULTS 与词汇表 == Config
   for (const field of EXTRA_KEY_FIELDS) {
     assert.ok(field.label && field.desc, `${field.key} 缺 label/desc 词汇`)
   }
-  // 默认值语义抽样（R32/R5 拍板值）
+  // 默认值语义抽样（R32/R5/K-26 拍板值）
   assert.equal(EXTRA_KEY_DEFAULTS.retryBackoffMs, 300)
-  assert.equal(EXTRA_KEY_DEFAULTS.maxResponseBytes, 1048576)
+  assert.equal(EXTRA_KEY_DEFAULTS.maxResponseBytes, 2097152, '2MiB（K-26：baidu 真实 0.91-1.04MiB 不被误拦）')
   assert.equal(EXTRA_KEY_DEFAULTS.logCapacity, 200)
   assert.equal(EXTRA_KEY_DEFAULTS.healthTimeoutMs, 5000)
 })
@@ -103,7 +103,7 @@ test('写回面（保存即不丢）：extraPatch 含七组新键且 custom/useP
     assert.ok(key in patch, `写回 patch 缺 ${key}（保存即丢）`)
   }
   assert.equal(patch.retryBackoffMs, 100, '在场键透传')
-  assert.equal(patch.maxResponseBytes, 1048576, '缺键回默认（保存不把服务端已配值清空）')
+  assert.equal(patch.maxResponseBytes, 2097152, '缺键回默认（保存不把服务端已配值清空；K-26 默认 2MiB）')
   assert.deepEqual(patch.sources.custom, [customItem], 'custom 归位 sources 子键')
   assert.ok(patch.sources.useProxy && typeof patch.sources.useProxy === 'object', 'useProxy 归位 sources 子键')
   assert.ok(Array.isArray(patch.proxies), 'proxies 数组形')

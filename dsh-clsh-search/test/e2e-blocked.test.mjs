@@ -7,6 +7,9 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+// 测试面显式直连（R21 默认 ddg/bing 勾选走代理；本组用例不测代理 → 显式关闭，避免空池明示错误 K-23）
+const DIRECT = { sources: { useProxy: { ddg: false, bing: false, so360: false, baidu: false } } }
+
 import { createAggregator } from '../lib/aggregate.js'
 import { BLOCK_CODE, classifyBlock, isBlocked } from '../lib/ratelimit.js'
 import { createSource as createDdgSource } from '../lib/sources/ddg.js'
@@ -46,9 +49,9 @@ function spySource(name) {
 
 test('e2e 即停：200+挑战页 → body 反爬判定命中，不重试不切源明示（W4-BLOCK-BODY-UNREACHABLE）', async () => {
   const challengeHtml = await readFile(path.join(FIXTURES, 'challenge-sample.html'), 'utf8')
-  const ddg = createDdgSource(Config.parse({}))
+  const ddg = createDdgSource(Config.parse({ ...DIRECT }))
   const bing = spySource('bing')
-  const { aggregate } = createAggregator(Config.parse({}), [ddg, bing])
+  const { aggregate } = createAggregator(Config.parse({ ...DIRECT }), [ddg, bing])
 
   await withStubFetch(
     async () => ({ ok: true, status: 200, text: async () => challengeHtml }),
@@ -67,9 +70,9 @@ test('e2e 即停：200+挑战页 → body 反爬判定命中，不重试不切�
 })
 
 test('e2e 状态类即停：HTTP 202 → err.status 判定命中，不重试不切源（K-5）', async () => {
-  const ddg = createDdgSource(Config.parse({}))
+  const ddg = createDdgSource(Config.parse({ ...DIRECT }))
   const bing = spySource('bing')
-  const { aggregate } = createAggregator(Config.parse({}), [ddg, bing])
+  const { aggregate } = createAggregator(Config.parse({ ...DIRECT }), [ddg, bing])
   await withStubFetch(
     // W4R-N1 关闭：stub 真实化——真实 fetch 对 2xx 返回 ok:true（原 ok:false 与 2xx 语义失真）；
     // 202 命中走 ok 分支后的 classifyBlock({status, body}) 状态类判定（与真实响应一致）。
@@ -93,8 +96,8 @@ test('e2e 正常 SERP 不误报：四源 fixtures 全部非 blocked（分类回�
   }
   // 真源全链：200+正常 SERP → 正常解析收口（body 判定不干扰成功路径）
   const sample = await readFile(path.join(FIXTURES, 'ddg-sample.html'), 'utf8')
-  const ddg = createDdgSource(Config.parse({}))
-  const { aggregate } = createAggregator(Config.parse({}), [ddg])
+  const ddg = createDdgSource(Config.parse({ ...DIRECT }))
+  const { aggregate } = createAggregator(Config.parse({ ...DIRECT }), [ddg])
   await withStubFetch(
     async () => ({ ok: true, status: 200, text: async () => sample }),
     async () => {
