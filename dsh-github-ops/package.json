@@ -1,6 +1,6 @@
 {
   "name": "dsh-github-ops",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "DeepSeek Harness 的 GitHub 集成：GitHub 相关命令强制走 token 模式（curl 自动注入 $(gh auth token)、git clone 走 gh）+ web_fetch 匿名抓 API 门禁 + 11 个仓库管理工具（gh 后端）",
   "type": "module",
   "main": "lib/index.js",

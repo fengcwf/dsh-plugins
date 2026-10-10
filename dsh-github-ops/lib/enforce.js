@@ -35,9 +35,11 @@ export function gateWebFetch(url) {
     return {
       action: 'deny',
       reason:
-        `web_fetch 对 ${host} 只能匿名访问（无法携带 GitHub token，匿名限额 60/h 且本机代理出口已耗尽）。` +
+        `web_fetch 对 ${host} 无法携带 GitHub token（dsh-web-fetch-http provider 结构性匿名：` +
+        '请求不带浏览器 cookie 与任何环境凭据，工具入参也只有 url、无法带 headers），' +
+        '因此抓 GitHub API/原始文件只可能走匿名通道。' +
         '请改用带认证的通道：github_repo_* 工具，或 bash 里 `gh api <path>` / `gh api repos/OWNER/REPO/contents/PATH`。' +
-        '(确实需要匿名抓取时可临时用 bash 的 curl 并带 `Authorization: Bearer $(gh auth token)` 头。)',
+        '(确实需要 HTTP 抓取时可临时用 bash 的 curl 并带 `Authorization: Bearer $(gh auth token)` 头。)',
     }
   }
   return { action: 'allow' }

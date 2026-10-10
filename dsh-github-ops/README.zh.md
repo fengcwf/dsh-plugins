@@ -5,7 +5,7 @@
 
 ## 为什么需要它
 
-GitHub 匿名 API 限额仅 **60/h**（实测本机代理出口已耗尽），认证后 **5000/h**。但 dsh 的现实约束是：
+GitHub 匿名 API 的平台限额远低于认证后的 5000/h。但 dsh 的现实约束是：
 `GH_TOKEN`/`GITHUB_TOKEN` 环境变量会被子进程凭据擦除（`/KEY|PASSWORD|SECRET|TOKEN/i`），
 `web_fetch` 硬性匿名、不带凭据——所以"默认带 token"必须由插件在**两条存活路径**上强制执行：
 ① `gh` CLI（hosts.yml 免配置认证）；② `$(gh auth token)` 命令替换（**token 值不落入命令字符串** → 不进日志/rtk recall/会话记录）。
@@ -15,7 +15,7 @@ GitHub 匿名 API 限额仅 **60/h**（实测本机代理出口已耗尽），�
 | 层 | 机制 | 行为 |
 |---|---|---|
 | ① 命令强制层 | `ctx.shell.resolve()` 缝（模型驱动调用） | `curl`/`wget` 打 `api.github.com`/`*.githubusercontent.com` → 注入 `Authorization: Bearer $(gh auth token)` 头；`git clone https://github.com/o/r` → `gh repo clone o/r`；已认证/`gh`/复杂形式一律放行（fail-open） |
-| ② web_fetch 门禁 | `tools/pre-execute`（allow/ask/deny） | 抓 API/原始文件主机 → **deny** 并指路 `github_repo_*`/`gh api`（可配 `ask` 交用户审批、`off` 关闭） |
+| ② web_fetch 门禁 | `tools/pre-execute`（allow/ask/deny） | 抓 API/原始文件主机 → **deny** 并指路 `github_repo_*`/`gh api`（可配 `ask` 交用户审批、`off` 关闭）。deny 文案只陈述结构性约束（web_fetch 无法携带 GitHub token），不复述会过期的实时限额观测 |
 | ③ 仓库管理工具 | `defineTool` 注册（≈2k token schema） | 11 个工具全走 `gh`，输出经 `--jq` 投影裁剪；危险操作双重门禁 |
 
 ## 工具集（11 个）

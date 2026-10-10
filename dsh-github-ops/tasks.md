@@ -2,7 +2,7 @@
 
 > 格式: 每个任务使用 `## Task N: [标题]` 开头，包含角色、技能、验收标准等字段。
 > 状态标记: ⬜ 待开始 | 🔄 进行中 | ✅ 已完成 | ❌ 已阻塞
-> 当前变更：`changes/20260929-phase0/`（2026-09-29 设置栏目：token 维护 + 访问检验 + 可维护性分析）
+> 当前变更：`changes/20261010-webfetch-gate-copy/`（2026-10-10 Phase 8 R2：web_fetch 门禁 deny 文案去硬编码 + 哨兵结构化加固）
 > 派发路径：PATH A 具名委派（沿用 obsidian-web 先例 Ruling；subagent_scout 具名行 maxDepth:0 实测拒派 → 通用 subagent + 契约内联降级路径）
 
 ---
@@ -398,6 +398,81 @@
 | 18 | P8-R1 诊断（归档缺口） | Phase 8 | ✅ | scout |
 | 19 | P8-R1 修复（归档补正） | Phase 8 | ✅ | coder |
 | 20 | P8-R1 审查（一致性复核） | Phase 8 | ✅ | reviewer |
+
+## Task 21: Phase 8 R2 — web_fetch 门禁 deny 文案去硬编码（文案修复，语义零回归）
+
+- status: ✅
+- phase: Phase 8 R2
+- role: coder
+- skills: dsh-plugin-ops / clsh-project
+- depends: 无（Phase 7 已归档；R2 = 用户实测反馈开轮）
+- covers: 消除误导性硬编码文案（旧：匿名限额 60/h 且本机代理出口已耗尽 → 实测已失真致其他会话误判与 2FA 有关）
+- 派发标识: subagent（通用行 + coder 契约内联；具名 implementer 行 maxDepth:0 拒派）
+- 报告: changes/20261010-webfetch-gate-copy/task-01-report.md
+
+**验收标准**:
+
+- [x] 新文案只陈述结构性约束（web_fetch 无法携带 token），不复述任何实时观测
+- [x] `${host}` 插值 / API_HOSTS / deny-ask-off 三态 / 尾缀拦截面 / index.js 接线逐字节未动
+- [x] node --test 112 → 115/115（含 load 真 import 冒烟）
+- [x] 四处版本对齐 0.3.1 + check-release.sh VERDICT PASS
+- [x] 越界写零（仅 7 个 inScope 文件 + 报告；~/.dsh/ 零写入）
+
+## Task 21-V: Phase 8 R2 — Task 21 独立验证（tester）
+
+- status: ✅
+- phase: Phase 8 R2
+- role: tester
+- skills: -
+- depends: Task 21
+- covers: IL-2（NO SELF-JUDGMENT ON QUALITY）
+- 派发标识: subagent（通用行 + tester 契约内联；具名 tester 行 maxDepth:0 拒派）
+- 报告: changes/20261010-webfetch-gate-copy/tester-report.md
+
+**验收标准**:
+
+- [x] V1 测试真绿 115/115（load 冒烟 ok 84 在列，单跑也绿）
+- [x] V2 mutation 探针：/tmp 副本注入「60」坏形态 → 3 个新测试精确红，还原回全绿（排除假保险）
+- [x] V3 六主机程序化自证（deny + 无过期观测 + 三指路 + host 插值 + token 零明文）
+- [x] V4 语义零回归（diff 仅 reason 4 行；index.js diff 空）
+- [x] V5 越界写零 + ~/.dsh/plugins 3h 内 0 写入
+- [x] V6 四处 0.3.1 对齐；V7 check-release VERDICT PASS
+
+## Task 21-R1: Phase 8 R2 — Task 21 双轴审查（代码/安全 + 文档/流程）
+
+- status: ✅
+- phase: Phase 8 R2
+- role: reviewer
+- skills: code-review-and-quality
+- depends: Task 21
+- covers: 五轴审查（原单卡 5 轴 14 项派发连续两次 run failed → 按铁律 7 拆两张窄卡）
+- 派发标识: 代码/安全轴 = subagent（通用行 + reviewer 契约内联）；文档/流程轴 = 队长亲自跑（D1-D4 全只读 bash/grep）
+- 报告: changes/20261010-webfetch-gate-copy/review-code.md + review-docs.md
+
+**验收标准**:
+
+- [x] 代码轴 verdict pass（0 blocker / 0 high），双导入实测 action 分歧 0/19、命令改写 0/31、边界高危用例无回归
+- [x] 文档轴 D1 四处对齐且说法与实测一致 / D2 README.zh 零残留 / D3 本卡无越界写 / D4 未提前 commit/tag/release
+- [x] 产出 finding F-1（medium）：哨兵 `STALE_OBSERVATION = /60|耗尽/` 是字面枚举，不防"新数字复辟"
+- [→] 文档轴 verdict needs_revision：唯一 requiredFix = 补齐发版第五步（F-DOC-1 根 README 已宣称 0.3.1 而插件未发版）+ F-DOC-2 报用户确认
+
+## Task 22: Phase 8 R2 — 修 F-1：哨兵升级为三族结构规则
+
+- status: ✅
+- phase: Phase 8 R2
+- role: coder
+- skills: dsh-plugin-ops
+- depends: Task 21-R1（finding F-1）
+- covers: 消除"只防旧数字、不防新数字复辟"的假保险
+- 派发标识: subagent（通用行 + coder 契约内联）
+- 报告: changes/20261010-webfetch-gate-copy/task-02-report.md
+
+**验收标准**:
+
+- [x] `lib/enforce.js` 逐字读过确认零数字零状态断言 → 未改它（改它属 Scope Creep）
+- [x] 哨兵升级三族结构规则：A 定量断言（数字+量纲）/ B 配额语境裸数字 / C 实时状态断言（观测标记或状态词与基础设施/配额主体同现）
+- [x] node --test 115 → 120/120；version 仍 0.3.1 未 bump；check-release VERDICT PASS
+- [x] 队长独立 mutation 复现三坏形态：5000/h → 5 fail / 60/h → 5 fail / 本机代理出口已耗尽 → 4 fail，还原回 120/120
 
 ## 阶段里程碑 / Phase Milestones
 
