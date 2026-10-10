@@ -225,7 +225,8 @@ test('控件细节锁：单一克制强调色消费面=A2 选中淡底（树选�
 
 // ── ⑤ 派生色 AA 比值复测（脚本算比值；推导式与声明逐值同）──────────────────────
 test('派生色推导式落码（dir-a A1/A2/A4/A5/A6/A7 + 错误卡保留面）：声明=color-mix 逐值，非第二套色板', () => {
-  assert.match(STYLES, /--ow-side-bg:\s*color-mix\(in srgb, var\(--dsw-alias-bg-base, Canvas\), black 2\.5%\)/, 'A1 明=side-bg（侧栏底）')
+  assert.match(STYLES, /--ow-app-bg:\s*color-mix\(in srgb, var\(--dsw-alias-label-primary, CanvasText\), white 98\.2%\)/, 'C4 明=app-bg（自有统一底，label-primary 派生）')
+  assert.match(STYLES, /--ow-side-bg:\s*color-mix\(in srgb, var\(--dsw-alias-label-primary, CanvasText\), white 96\.5%\)/, 'C4 明=side-bg（侧栏底，同源派生）')
   assert.match(STYLES, /--ow-accent-tint:\s*color-mix\(in srgb, var\(--dsw-alias-state-business-primary, Highlight\), transparent 88%\)/, 'A2 明=主色淡底')
   assert.match(STYLES, /--ow-shadow-accent:\s*0 1px 2px color-mix\(in srgb, var\(--dsw-alias-state-business-primary, Highlight\), transparent 72%\)/, 'A3 明=同相轻影')
   assert.match(STYLES, /--ow-highlight-top:\s*inset 0 1px 0 color-mix\(in srgb, var\(--dsw-alias-bg-base, Canvas\), transparent 45%\)/, 'A5 明=按钮内高光 45%')
@@ -242,8 +243,9 @@ test('派生色推导式落码（dir-a A1/A2/A4/A5/A6/A7 + 错误卡保留面）
 
 test('派生色比值复测·明态：A1/A2/A4/A6/A7 + 派生①②③ 逐对 ≥AA 4.5:1（合成底口径）', () => {
   const bg = L['--dsw-alias-bg-base']
-  const docBg = bg // 文档面（A 分栏下正文底=bg-base）
-  const sideBg = mixAxis(bg, 'black', 0.025) // A1 明侧栏底
+  const fg = L['--dsw-alias-label-primary'] // C4 背景族基准（前景色相）
+  const docBg = mixAxis(fg, 'white', 0.982) // C4 文档面（app-bg=label-primary+white 98.2%）
+  const sideBg = mixAxis(fg, 'white', 0.965) // C4 明侧栏底（label-primary + white 96.5%）
   const accentText = mixAxis(L['--dsw-alias-state-business-primary'], 'black', 0.15)
   assert.equal(accentText, '#3764c4', 'A7 派生值=推导值')
   // A2 淡底叠于侧栏底（树/菜单当前项都在侧栏面上）
@@ -251,7 +253,7 @@ test('派生色比值复测·明态：A1/A2/A4/A6/A7 + 派生①②③ 逐对 �
   const codeBg = L['--dsw-alias-markdown-code-block']
   // A6 引文淡底 = color-mix(label-primary, transparent 96%) over 文档面
   const quoteBg = tintOver(L['--dsw-alias-label-primary'], docBg, 0.04)
-  assert.equal(quoteBg, '#f5f5f6', 'A6 明引文淡底派生值（label-primary #0f1115 4% over #fff：B 通道 255→246）')
+  assert.equal(quoteBg, '#f2f2f2', 'A6 明引文淡底派生值（C4 背景族基线 label-primary + #fff 96% 合成；随 token 快照重算锁定）')
   const errorBg = tintOver(L['--dsw-alias-state-error-primary'], docBg, 0.04)
   const savedFg = mixAxis(L['--dsw-alias-state-success-primary'], 'black', 0.4)
   const savedBg = tintOver(L['--dsw-alias-state-success-primary'], sideBg, 0.12)
@@ -336,9 +338,10 @@ test('派生色比值复测·暗态：A1/A2/A4/A6/A7 + 派生①②③ 逐对 �
 })
 
 // ── ⑥ 明暗双态独立推导锁（暗分支独立推导非反转）────────────────────────────────
-test('明暗双态锁：暗分支逐条独立推导（A1 white 3% / A5 label-primary 92% / A3 黑轴 55% / A7 直用 / A4 #fff 24%）', () => {
+test('明暗双态锁：暗分支逐条独立推导（C4 app/side 黑轴派生 / A5 label-primary 92% / A3 黑轴 55% / A7 直用 / A4 #fff 24%）', () => {
   const dark = darkBlock()
-  assert.match(dark, /--ow-side-bg:\s*color-mix\(in srgb, var\(--dsw-alias-bg-base, Canvas\), white 3%\)/, 'A1 暗=white 3%')
+  assert.match(dark, /--ow-app-bg:\s*color-mix\(in srgb, var\(--dsw-alias-label-primary, CanvasText\), black 96\.5%\)/, 'C4 暗=app-bg（label-primary 黑轴派生）')
+  assert.match(dark, /--ow-side-bg:\s*color-mix\(in srgb, var\(--dsw-alias-label-primary, CanvasText\), black 89\.5%\)/, 'C4 暗=side-bg（同源派生）')
   assert.match(dark, /--ow-accent-text:\s*var\(--dsw-alias-state-business-primary, Highlight\)/, 'A7 暗=直用 token')
   assert.match(dark, /--ow-highlight-top:\s*inset 0 1px 0 color-mix\(in srgb, var\(--dsw-alias-label-primary, CanvasText\), transparent 92%\)/, 'A5 暗=label-primary 92% 内高光')
   assert.match(dark, /--ow-shadow-accent:\s*0 1px 2px color-mix\(in srgb, black, transparent 55%\)/, 'A3 暗=黑轴同相影（mock [data-theme=dark] .btn-primary 55%）')
@@ -499,7 +502,7 @@ test('G-8 锁：@media (prefers-reduced-motion: reduce) 动效收敛（WCAG 2.3.
 // ── ⑨ A1-A7 派生式注释锁（红线：A1-A7 派生式逐条注释，暗分支独立推导）────────────
 test('A1-A7 派生式注释锁：推导式逐条在场（含暗分支），与声明值同源', () => {
   for (const [tag, formula] of [
-    ['A1', 'A1 侧栏底（菜单轨/树/大纲同底）= color-mix(bg-base, black 2.5%)（明）/ color-mix(bg-base, white 3%)（暗）'],
+    ['A1', 'C4 自有背景族：app-bg=color-mix(label-primary, white 98.2%)（明）/ black 96.5%（暗）；side-bg=同源 white 96.5% / black 89.5%'],
     ['A2', 'A2 主色淡底 = color-mix(business-primary, transparent 88%)'],
     ['A3', 'A3 同色相轻影 = 0 1px 2px color-mix(business-primary, transparent 72%)'],
     ['A4', 'A4 徽标语义底 = color-mix(semantic, transparent 88%)（明）/ 84%（暗）'],

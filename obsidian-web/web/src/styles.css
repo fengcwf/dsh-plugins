@@ -85,9 +85,14 @@
      合成底注：color-mix(…, transparent N%)=N% 不透明度叠于所在面，AA 比值复测按合成底算
      （test/web-visual-token.test.mjs ⑤）；渲染正本=dir-a-light.png / dir-a-dark.png（像素采样核对）── */
 :root {
-  /* A1 侧栏底（菜单轨/树/大纲同底）= color-mix(bg-base, black 2.5%)（明）/ color-mix(bg-base, white 3%)（暗）
-     ——分栏以底色分界（dir-a .menu/.tree/.toc 共 --ow-side-bg） */
-  --ow-side-bg: color-mix(in srgb, var(--dsw-alias-bg-base, Canvas), black 2.5%);
+  /* C4 插件自有统一背景（2026-10-10 用户裁决：不跟随宿主，解决与 dsh 背景重叠的视觉不统一）：
+     app-bg 与 side-bg 均由**前景色相**（label-primary）固定推导，恒定不随宿主 bg-base 漂移；
+     分栏界不再靠底色差（2.5% 那套让位），改由 border/hairline 承担（--ow-side-line）。
+     ——仍守 ARC-5「dsh token 唯一色相来源」：两个底色都是 color-mix(label-primary, …) 派生，推导式入注释
+     A1 派生式：C4 自有背景族：app-bg=color-mix(label-primary, white 98.2%)（明）/ black 96.5%（暗）；side-bg=同源 white 96.5% / black 89.5% */
+  --ow-app-bg: color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), white 98.2%);
+  --ow-side-bg: color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), white 96.5%);
+  --ow-side-line: 1px solid color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), transparent 88%);
   /* A2 主色淡底 = color-mix(business-primary, transparent 88%)（树选中行/菜单当前项；mock aria-current 逐值） */
   --ow-accent-tint: color-mix(in srgb, var(--dsw-alias-state-business-primary, Highlight), transparent 88%);
   /* A3 同色相轻影 = 0 1px 2px color-mix(business-primary, transparent 72%)（主按钮档，mock .btn-primary） */
@@ -134,7 +139,9 @@
        dir-a 源件写字面 #000，此处按 ARC-5 混色轴记法 black 书写=同值）；
        A4 徽标底 84% 透明 + 文字 color-mix(semantic, #fff 24%)；A7 accent 文字直用 token；
        A2/A6/A4 底与行内件微影两态同式（mock 未分档） */
-    --ow-side-bg: color-mix(in srgb, var(--dsw-alias-bg-base, Canvas), white 3%);
+    --ow-app-bg: color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), black 96.5%);
+    --ow-side-bg: color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), black 89.5%);
+    --ow-side-line: 1px solid color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), transparent 75%);
     --ow-highlight-top: inset 0 1px 0 color-mix(in srgb, var(--dsw-alias-label-primary, CanvasText), transparent 92%);
     --ow-shadow-accent: 0 1px 2px color-mix(in srgb, black, transparent 55%);
     --ow-accent-text: var(--dsw-alias-state-business-primary, Highlight);
@@ -233,7 +240,7 @@ body {
   font-size: var(--dsh-content-font-size, 16px);
   line-height: 1.6;
   color: var(--dsw-alias-label-primary, CanvasText);
-  background: var(--dsw-alias-bg-base, Canvas);
+  background: var(--ow-app-bg);
   /* dir-a 精致细节：字形平滑 + 优化可读性（macOS/SF 面渲染质感） */
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -247,7 +254,7 @@ body {
   grid-template-columns: var(--ow-menu-width) var(--ow-tree-width) minmax(0, 1fr) var(--ow-toc-width);
   height: 100vh;
   overflow: hidden;
-  background: var(--dsw-alias-bg-base, Canvas);
+  background: var(--ow-app-bg);
 }
 
 /* 菜单轨（dir-a .menu 文字瓦片：11.5px/500/0.06em 居中字片 + A1 侧栏底 + border-l1 右缘）：
@@ -255,7 +262,7 @@ body {
 .ob-menu {
   padding: 16px 10px; /* mock .menu 16px 10px */
   background: var(--ow-side-bg);
-  border-right: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  border-right: var(--ow-side-line);
 }
 
 .ob-menu .el-menu {
@@ -292,7 +299,7 @@ body {
   overflow: auto;
   padding: 18px 12px; /* mock .tree 18px 12px */
   background: var(--ow-side-bg);
-  border-right: 1px solid var(--dsw-alias-border-l1, ButtonBorder);
+  border-right: var(--ow-side-line);
 }
 
 .ob-tree .el-tree-node__content {

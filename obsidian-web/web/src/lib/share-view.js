@@ -92,3 +92,33 @@ export function buildRolePayload(form) {
   }
   return payload
 }
+
+/** 未授权分享的展示兜底形（服务端从不回传半截 share：管理面必是既有 entry，故此行上战场即缺陷信号） */
+const UNKNOWN_SHARE = Object.freeze({
+  revoked: true, // 状态列走 revoked（醒目「已撤销」）而非 active 假象——错误必须可见
+  target: '（未知目标）',
+  targetType: 'file',
+  role: 'read',
+  accessCount: 0,
+  lastAccessAt: null,
+  links: null,
+})
+
+/**
+ * 列表行视图模型（C3）：**把形态缺陷挡在展示层之外**——`targetType` 非法形一律归 'file'
+ * （否则服务端畸形数据让同一行渲染出两个「目录」标记：路径格标签 + 状态未定），
+ * 并补齐状态派生所需字段。合法 entry 原对象原样返回（零复制、零改写——列表引用稳定）。
+ * @param {object} share 服务端下发的 share entry（{target,targetType,role,links,...}）
+ * @returns {object} 规范化后的行（target/targetType/links 恒可用）
+ */
+export function shareRowView(share) {
+  // 非对象/数组一律兜底（数组 typeof 也是 'object' 但不是 share entry——放进来会渲成空行）
+  if (!share || typeof share !== 'object' || Array.isArray(share)) return UNKNOWN_SHARE
+  if (share.targetType !== 'dir') return { ...share, targetType: 'file' } // 缺省/畸形 → 笔记形（安全默认）
+  return share
+}
+
+/** 分享形态展示标签（单一来源）：目录=「目录」（可浏览子项），其余=「笔记」 */
+export function targetTypeLabel(targetType) {
+  return targetType === 'dir' ? '目录' : '笔记'
+}

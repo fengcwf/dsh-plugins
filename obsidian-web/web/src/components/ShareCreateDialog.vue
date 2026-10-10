@@ -19,11 +19,23 @@ function blank() {
 }
 const form = ref(blank())
 
+// 表单重置口径（C3 缺陷修复，真渲染实测三段根因的最后一段）：
+// 「弹层打开时以 defaultTarget 重置表单」必须写成 **{ immediate: true, flush: 'sync' }**。
+// ⚠️ 三条被真 Chromium 探针证伪/证实的写法（本机 2026-10-10）：
+//   ① `watch(() => props.visible, ...)`（默认 pre flush）→ 弹层空目标（form.target=''）。
+//   ② `watch([() => props.visible, () => props.defaultTarget], ...)` → 观察器**整体不触发**
+//      （实测 visible=true / defaultTarget='notes' / form.target=''）。
+//   ③ 加 flush:'sync' 仍不触发 —— 真相：本弹层**总是挂在 DOM 上**（el-dialog 常驻），
+//      树右键场景下它带着 `visible=true` **首次挂载**：watch 建立时值已是终态，
+//      非 immediate 的观察器永远等不到「变化」（探针 log=[] 即此证）。
+// immediate: true：挂载即按当下 props 认领一次（带 true 挂载 = 首帧就是打开态）。
+// sync flush：visible 变化与 props.defaultTarget 同批落位时，立即用已更新的目标重置。
 watch(
   () => props.visible,
   (v) => {
     if (v) form.value = { ...blank(), target: props.defaultTarget }
   },
+  { immediate: true, flush: 'sync' },
 )
 watch(
   () => form.value.role,
