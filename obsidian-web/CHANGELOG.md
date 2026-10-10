@@ -1,5 +1,10 @@
 # Changelog — obsidian-web
 
+## 0.3.1 — 2026-10-10
+- **修大纲被挤到左下**：0.3.0 引入的定位错误——新增大纲子项后 `styles.css` 的 grid 列数仍是旧值（接线漏改，C1），auto-placement 换行把 TocPanel 挤到左下角。修=grid 列数与 7 个子项一一对应（+ `--ow-resizer-width` token + shell `is-narrow` 联动）。
+- **连带修测试 harness 与真实布局同构**：测试里的同构 shell 补齐同样 7 子项（此前假红 60s 亦同根）；锁形改 1 处。
+- 证据：全量测试 **656/656/0/0**；Playwright 托管真 dist 实测 toc x=1026=最右列、shellCols 与子项一一对应。
+
 ## 0.3.0 — 2026-10-10
 - **目录右键菜单（行内三按钮退役）**：树/大纲任意行 `contextmenu` 唤出自绘菜单（`TreeContextMenu.vue` 205 行 + `context-menu.js` 120 行纯逻辑），项=改名/下载/删除/分享（分享对文件与目录均启用）；国标交互齐备——`role=menu`/`menuitem`、打开即聚焦首项且当前项高亮、方向键/Home/End 环移、Enter/Space 触发、Escape/外部点击/Tab 关闭且焦点归位、**视口边缘自动翻转**。伴随 **NoteTree 行内下载/改名/删除三按钮退役**（保留单击选中/双击打开/窄屏「目录」抽屉按钮；M1 两态工具位按「形态随交互改版」改形）。卡内修 bug：焦点漂出菜单时 Escape 失效关不掉（守卫收口到 document 捕获层）+ `itemEls` 挂载时序二次打开失效。
 - **三栏拖拽分隔条**：`PaneResizer.vue` 118 行 + `pane-resize.js` 52 行（clamp/守恒/键盘步进/命中区纯函数）。国标 GB/T 37835-2019 六要素全落——条宽 6px（4-8px 区间）、命中区 `::before inset 0 -9px`=**24px**（≥24px）、`cursor: col-resize`、**双击复位**（三栏回默认值）、**键盘可达**（`role=separator`/`aria-orientation=vertical`/`aria-valuenow/min/max`、方向键 ±16px·Shift ±64px、Home/End 极值）、**触屏降级**（`touch-action:none` + pointer capture，触摸不认 button 不抢滚动）。约束：只改相邻两栏且**总和守恒**（饱和时返回 null 保持原宽）；**列宽不持久化**（用户口径，刷新回默认）；narrow 模式两个分隔条禁用。保守取舍：menu|tree 与 tree|center 分隔条本波不放开（拖 tree 挤中心阅读列，收益低风险高）。修自身 3 缺陷：钳位错钳当前值违反守恒、`NaN` 未拦返回脏状态、`inHitZone` 把 zone 当半宽（命中区实为 48px 超国标）。

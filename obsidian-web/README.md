@@ -9,13 +9,13 @@ DeepSeek Harness（DSH）的 **Obsidian vault Web 管理插件**：在 dsh web �
 - **分享面（0.2.0 双模式，默认零自有端口）**：唯一公开放行面 `/ob_share/<token>`，默认挂 `ctx.webServer`（dsh web 3080 同域）；可选独立 listener（`server.sharePort:number`）；对外契约 `3500 /ob_share/<token>` 由 login-gate/nginx 直通反代保持（PATH 契约非端口契约，OW-INV-2）；`share.enabled=false` 全 404 可单独关停。
 - **写安全**：保存带 mtime/etag 乐观锁 + 冲突 diff undo（OW-INV-3）；改名/移动多文件 journal 事务（OW-INV-4）；删除 .trash 可逆（OW-INV-5）。
 
-> 当前 0.3.0（已发版）含 T1-T14 全业务面 + 0.1.1 boot 失败修复（索引开库失败 fail-open + 索引库迁出 CIFS 落本地盘 `indexDir`）+ 0.2.0 fix-ui-port（分享面双模式默认挂 webServer 根治 3500/login-gate 冲突与 watchdog 掉服务 + 客户端面板菜单）+ 0.3.0 交互面（三栏拖拽分隔条 / 目录右键菜单 / 目录分享 / 插件自有统一背景）：阅读/搜索/分屏编辑/改名事务/可逆删除/下载导出/分享（live 面+管理面，含目录 target）/索引三保险/vault 目录档案/同页面板 UI/侧栏面板入口。
+> 当前 0.3.1（已发版）含 T1-T14 全业务面 + 0.1.1 boot 失败修复（索引开库失败 fail-open + 索引库迁出 CIFS 落本地盘 `indexDir`）+ 0.2.0 fix-ui-port（分享面双模式默认挂 webServer 根治 3500/login-gate 冲突与 watchdog 掉服务 + 客户端面板菜单）+ 0.3.0 交互面（三栏拖拽分隔条 / 目录右键菜单 / 目录分享 / 插件自有统一背景）+ 0.3.1 修 0.3.0 引入的大纲被挤到左下（grid 列数接线漏改，7 子项 vs 4 列 → auto-placement 换行；连带修测试 harness 与真实布局同构，测试 656/656/0/0）：阅读/搜索/分屏编辑/改名事务/可逆删除/下载导出/分享（live 面+管理面，含目录 target）/索引三保险/vault 目录档案/同页面板 UI/侧栏面板入口。
 
 ## 安装（钉版本）
 
 ```bash
 # 安装/升级 = 钉版本 git 快照（升级 = 换新 tag 重执行同一条命令）
-dsh plugin --profile web add 'github:fengcwf/dsh-plugins#obsidian-web-v0.3.0&path:obsidian-web'
+dsh plugin --profile web add 'github:fengcwf/dsh-plugins#obsidian-web-v0.3.1&path:obsidian-web'
 /root/.dsh/start-dsh.sh        # 重启生效（会闪断会话，选空档执行）
 
 # 卸载
