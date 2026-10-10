@@ -178,8 +178,10 @@ import NoteTree from './src/components/NoteTree.vue'
 import './src/styles.css'
 window.__c2 = { last: null }
 createApp({
+  // 子项结构须与真实 App.vue shell 一致（C1 后 7 列 grid：menu/R1/tree/R2/center/R3/toc），
+  // 否则 auto-placement 会把 NoteTree 塞进 resizer 列（6px）→ 节点不可见 → 选择器超时。
   render: () => h('div', { class: 'ob-shell', style: 'height:100vh' }, [
-    h('div'),
+    h('div'), h('div'),                                    // menu, R1
     h(NoteTree, {
       model: window.__C2_MODEL,
       selected: '',
@@ -189,7 +191,7 @@ createApp({
       onDelete: (n) => { window.__c2.last = 'delete:' + n.key },
       onShare: (n) => { window.__c2.last = 'share:' + n.key },
     }),
-    h('div'), h('div'),
+    h('div'), h('div'), h('div'), h('div'),               // R2, center, R3, toc
   ]),
 }).mount('#app')
 `)

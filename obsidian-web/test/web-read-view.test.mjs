@@ -94,7 +94,8 @@ test('专注模式落码锁：收起三侧 + 阅读列独占 + 入口=阅读头�
   assert.match(STYLES, /\.ob-shell\.is-focus \{[^}]*grid-template-columns: minmax\(0, 1fr\)/, '阅读列独占')
   assert.match(STYLES, /\.ob-shell\.is-focus \.ob-menu,\s*\.ob-shell\.is-focus \.ob-tree,\s*\.ob-shell\.is-focus \.ob-toc \{[^}]*display: none/, '三侧收起')
   const app = fs.readFileSync(`${WEB_SRC}/App.vue`, 'utf8')
-  assert.match(app, /:class="\{ 'is-focus': focusMode \}"/, 'class 切换零 v-if')
+  // C1 后 shell class 含 is-focus + is-narrow（后者驱动 resizer 列窄屏塌陷）
+  assert.match(app, /:class="\{[^}]*'is-focus': focusMode[^}]*\}"/, 'class 切换零 v-if（is-focus 在对象语法内）')
   assert.ok(!/keydown/i.test(app), '无快捷键（最小面）')
   const focusLines = app.split('\n').filter((l) => /focus/i.test(l))
   assert.ok(

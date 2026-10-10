@@ -14,6 +14,7 @@
    .vue 零改动（树行工具位两态=M1 保真、徽标对勾=展示层既有）。 */
 
 :root {
+  --ow-resizer-width: 6px; /* 分隔条列宽（与 PaneResizer 条宽同源） */
   --ow-menu-width: 72px;
   --ow-menu-width-narrow: 56px; /* 窄屏菜单轨（candidate-a/c 移动端：72→56px 保左） */
   --ow-tree-width: 300px;
@@ -251,7 +252,13 @@ body {
    （dir-a .shell/.menu/.tree/.center/.toc 逐值——C 波外壳沉底 C2 与面板卡 C1 整体退场）── */
 .ob-shell {
   display: grid;
-  grid-template-columns: var(--ow-menu-width) var(--ow-tree-width) minmax(0, 1fr) var(--ow-toc-width);
+  /* C1 分隔条：grid 列数=子项数（menu/R1/tree/R2/center/R3/toc = 7 列）。
+     resizer 列宽=条宽 6px；:hidden 态该列塌 0（.is-hidden>none 不够——grid 轨道仍占位） */
+  grid-template-columns:
+    var(--ow-menu-width) var(--ow-resizer-width)
+    var(--ow-tree-width) var(--ow-resizer-width)
+    minmax(0, 1fr) var(--ow-resizer-width)
+    var(--ow-toc-width);
   height: 100vh;
   overflow: hidden;
   background: var(--ow-app-bg);
@@ -1203,6 +1210,8 @@ body {
 @media (max-width: 960px) {
   .ob-shell {
     grid-template-columns: var(--ow-menu-width-narrow, 56px) minmax(0, 1fr);
+  /* narrow：resizer 列塌 0（树/大纲进抽屉，无可拖之栏） */
+  .ob-pane-resizer.is-hidden { display: none; }
     grid-template-rows: auto minmax(0, 1fr);
   }
 

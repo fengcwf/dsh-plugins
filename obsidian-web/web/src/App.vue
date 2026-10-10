@@ -221,7 +221,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="ob-shell" :class="{ 'is-focus': focusMode }"
+  <div class="ob-shell" :class="{ 'is-focus': focusMode, 'is-narrow': layoutMode === 'narrow' }"
     :style="shellStyle">
     <SideMenu :active="activePanel" @select="activePanel = $event" />
     <PaneResizer v-model="menuW" :hidden="layoutMode === 'narrow'" :pair-total="menuW + treeW" :min="48" :max="160" class="ob-resizer-1" @reset="menuW = 72" />
